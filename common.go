@@ -970,9 +970,6 @@ func (c *Config) time() time.Time {
 }
 
 func (c *Config) cipherSuites() []uint16 {
-	if needFIPS() {
-		return fipsCipherSuites(c)
-	}
 	if c.CipherSuites != nil {
 		return c.CipherSuites
 	}
@@ -994,9 +991,6 @@ const roleServer = false
 func (c *Config) supportedVersions(isClient bool) []uint16 {
 	versions := make([]uint16, 0, len(supportedVersions))
 	for _, v := range supportedVersions {
-		if needFIPS() && (v < fipsMinVersion(c) || v > fipsMaxVersion(c)) {
-			continue
-		}
 		if (c == nil || c.MinVersion == 0) &&
 			isClient && v < VersionTLS12 {
 			continue
@@ -1037,9 +1031,6 @@ func supportedVersionsFromMax(maxVersion uint16) []uint16 {
 var defaultCurvePreferences = []CurveID{X25519, CurveP256, CurveP384, CurveP521}
 
 func (c *Config) curvePreferences() []CurveID {
-	if needFIPS() {
-		return fipsCurvePreferences(c)
-	}
 	if c == nil || len(c.CurvePreferences) == 0 {
 		return defaultCurvePreferences
 	}
