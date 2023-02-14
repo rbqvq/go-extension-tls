@@ -23,22 +23,23 @@ import (
 const maxClientPSKIdentities = 5
 
 type serverHandshakeStateTLS13 struct {
-	c               *Conn
-	ctx             context.Context
-	clientHello     *clientHelloMsg
-	hello           *serverHelloMsg
-	sentDummyCCS    bool
-	usingPSK        bool
-	suite           *cipherSuiteTLS13
-	cert            *Certificate
-	sigAlg          SignatureScheme
-	earlySecret     []byte
-	sharedKey       []byte
-	handshakeSecret []byte
-	masterSecret    []byte
-	trafficSecret   []byte // client_application_traffic_secret_0
-	transcript      hash.Hash
-	clientFinished  []byte
+	c                        *Conn
+	ctx                      context.Context
+	clientHello              *clientHelloMsg
+	hello                    *serverHelloMsg
+	sentDummyCCS             bool
+	usingPSK                 bool
+	suite                    *cipherSuiteTLS13
+	certCompressionAlgorithm CertCompressionAlgorithm
+	cert                     *Certificate
+	sigAlg                   SignatureScheme
+	earlySecret              []byte
+	sharedKey                []byte
+	handshakeSecret          []byte
+	masterSecret             []byte
+	trafficSecret            []byte // client_application_traffic_secret_0
+	transcript               hash.Hash
+	clientFinished           []byte
 }
 
 func (hs *serverHandshakeStateTLS13) handshake() error {
@@ -91,6 +92,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	// supported_versions instead. See RFC 8446, sections 4.1.3 and 4.2.1.
 	hs.hello.vers = VersionTLS12
 	hs.hello.supportedVersion = c.vers
+	hs.hello.extensions = defaultExtensions
 
 	if len(hs.clientHello.supportedVersions) == 0 {
 		c.sendAlert(alertIllegalParameter)
@@ -149,16 +151,35 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	hs.hello.sessionId = hs.clientHello.sessionId
 	hs.hello.compressionMethod = compressionNone
 
-	preferenceList := defaultCipherSuitesTLS13
-	if !hasAESGCMHardwareSupport || !aesgcmPreferred(hs.clientHello.cipherSuites) {
-		preferenceList = defaultCipherSuitesTLS13NoAES
+	configCipherSuites := c.config.cipherSuites()
+	preferenceList := make([]uint16, 0, len(configCipherSuites))
+
+	var preferenceOrder []uint16
+	switch {
+	case c.config.PreferCipherSuites:
+		preferenceOrder = configCipherSuites
+	case !hasAESGCMHardwareSupport, !aesgcmPreferred(hs.clientHello.cipherSuites):
+		preferenceOrder = defaultCipherSuitesTLS13NoAES
+	default:
+		preferenceOrder = defaultCipherSuitesTLS13
 	}
+
+	for _, suiteID := range preferenceOrder {
+		for _, id := range configCipherSuites {
+			if id == suiteID {
+				preferenceList = append(preferenceList, id)
+				break
+			}
+		}
+	}
+
 	for _, suiteID := range preferenceList {
 		hs.suite = mutualCipherSuiteTLS13(hs.clientHello.cipherSuites, suiteID)
 		if hs.suite != nil {
 			break
 		}
 	}
+	
 	if hs.suite == nil {
 		c.sendAlert(alertHandshakeFailure)
 		return errors.New("tls: no cipher suite supported by both client and server")
@@ -220,6 +241,16 @@ GroupSelection:
 	if err != nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: invalid client key share")
+	}
+
+AlgorithmSelection:
+	for _, preferredAlgorithm := range c.config.certCompressionPreferences() {
+		for _, algorithm := range hs.clientHello.supportedCompressionAlgorithmsCert {
+			if algorithm == preferredAlgorithm {
+				hs.certCompressionAlgorithm = algorithm
+				break AlgorithmSelection
+			}
+		}
 	}
 
 	c.serverName = hs.clientHello.serverName
@@ -416,6 +447,7 @@ func (hs *serverHandshakeStateTLS13) doHelloRetryRequest(selectedGroup CurveID) 
 		compressionMethod: hs.hello.compressionMethod,
 		supportedVersion:  hs.hello.supportedVersion,
 		selectedGroup:     selectedGroup,
+		extensions:        hs.hello.extensions,
 	}
 
 	hs.transcript.Write(helloRetryRequest.marshal())
@@ -563,6 +595,8 @@ func (hs *serverHandshakeStateTLS13) sendServerParameters() error {
 	encryptedExtensions.alpnProtocol = selectedProto
 	c.clientProtocol = selectedProto
 
+	encryptedExtensions.extensions = hs.clientHello.extensions
+
 	hs.transcript.Write(encryptedExtensions.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, encryptedExtensions.marshal()); err != nil {
 		return err
@@ -605,8 +639,18 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 	certMsg.scts = hs.clientHello.scts && len(hs.cert.SignedCertificateTimestamps) > 0
 	certMsg.ocspStapling = hs.clientHello.ocspStapling && len(hs.cert.OCSPStaple) > 0
 
-	hs.transcript.Write(certMsg.marshal())
-	if _, err := c.writeRecord(recordTypeHandshake, certMsg.marshal()); err != nil {
+	var msg interface{ marshal() []byte } = certMsg
+	if hs.certCompressionAlgorithm != 0 {
+		var err error
+		msg, err = certMsg.compress(hs.certCompressionAlgorithm)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return errors.New("tls: CertCompressionPreferences includes unsupported compression algorithm")
+		}
+	}
+
+	hs.transcript.Write(msg.marshal())
+	if _, err := c.writeRecord(recordTypeHandshake, msg.marshal()); err != nil {
 		return err
 	}
 
@@ -789,12 +833,26 @@ func (hs *serverHandshakeStateTLS13) readClientCertificate() error {
 		return err
 	}
 
-	certMsg, ok := msg.(*certificateMsgTLS13)
-	if !ok {
+	var certMsg *certificateMsgTLS13
+	switch msg := msg.(type) {
+	case *certificateMsgTLS13:
+		certMsg = msg
+		hs.transcript.Write(msg.marshal())
+	case *compressedCertificateMsg:
+		if !c.config.supportsCertCompression(CertCompressionAlgorithm(msg.algorithm)) {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: server selected unsupported algorithm")
+		}
+		certMsg, err = msg.decompress()
+		if err != nil {
+			c.sendAlert(alertBadCertificate)
+			return err
+		}
+		hs.transcript.Write(msg.marshal())
+	default:
 		c.sendAlert(alertUnexpectedMessage)
-		return unexpectedMessageError(certMsg, msg)
+		return unexpectedMessageError(msg, msg)
 	}
-	hs.transcript.Write(certMsg.marshal())
 
 	if err := c.processCertsFromClient(certMsg.certificate); err != nil {
 		return err

@@ -68,41 +68,60 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 	}
 
 	hello := &clientHelloMsg{
-		vers:                         clientHelloVersion,
-		compressionMethods:           []uint8{compressionNone},
-		random:                       make([]byte, 32),
-		sessionId:                    make([]byte, 32),
-		ocspStapling:                 true,
-		scts:                         true,
-		serverName:                   hostnameInSNI(config.ServerName),
-		supportedCurves:              config.curvePreferences(),
-		supportedPoints:              []uint8{pointFormatUncompressed},
-		secureRenegotiationSupported: true,
-		alpnProtocols:                config.NextProtos,
-		supportedVersions:            supportedVersions,
+		vers:                               clientHelloVersion,
+		compressionMethods:                 []uint8{compressionNone},
+		random:                             make([]byte, 32),
+		sessionId:                          make([]byte, 32),
+		ocspStapling:                       true,
+		scts:                               true,
+		serverName:                         hostnameInSNI(config.ServerName),
+		supportedCompressionAlgorithmsCert: config.certCompressionPreferences(),
+		supportedPoints:                    []uint8{pointFormatUncompressed},
+		secureRenegotiationSupported:       true,
+		alpnProtocols:                      config.NextProtos,
+		supportedVersions:                  supportedVersions,
 	}
 
 	if c.handshakes > 0 {
 		hello.secureRenegotiation = c.clientFinished[:]
 	}
 
-	preferenceOrder := cipherSuitesPreferenceOrder
-	if !hasAESGCMHardwareSupport {
-		preferenceOrder = cipherSuitesPreferenceOrderNoAES
-	}
 	configCipherSuites := config.cipherSuites()
 	hello.cipherSuites = make([]uint16, 0, len(configCipherSuites))
 
+	var preferenceOrder []uint16
+	switch {
+	case config.PreferCipherSuites:
+		preferenceOrder = configCipherSuites
+	case hasAESGCMHardwareSupport:
+		preferenceOrder = cipherSuitesPreferenceOrder
+	default:
+		preferenceOrder = cipherSuitesPreferenceOrderNoAES
+	}
+
 	for _, suiteId := range preferenceOrder {
+		if isGREASE(suiteId) {
+			hello.cipherSuites = append(hello.cipherSuites, c.GREASE())
+			continue
+		}
+
 		suite := mutualCipherSuite(configCipherSuites, suiteId)
-		if suite == nil {
+		suite13 := mutualCipherSuiteTLS13(configCipherSuites, suiteId)
+		switch {
+		case suite != nil:
+			// Don't advertise TLS 1.2-only cipher suites unless
+			// we're attempting TLS 1.2.
+			if hello.vers < VersionTLS12 && suite.flags&suiteTLS12 != 0 {
+				continue
+			}
+		case suite13 != nil:
+			if config.maxSupportedVersion(true) < VersionTLS13 {
+				continue
+			}
+		default:
 			continue
 		}
-		// Don't advertise TLS 1.2-only cipher suites unless
-		// we're attempting TLS 1.2.
-		if hello.vers < VersionTLS12 && suite.flags&suiteTLS12 != 0 {
-			continue
-		}
+
 		hello.cipherSuites = append(hello.cipherSuites, suiteId)
 	}
 
@@ -126,22 +145,55 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 	}
 
 	var key *ecdh.PrivateKey
-	if hello.supportedVersions[0] == VersionTLS13 {
-		if hasAESGCMHardwareSupport {
-			hello.cipherSuites = append(hello.cipherSuites, defaultCipherSuitesTLS13...)
-		} else {
-			hello.cipherSuites = append(hello.cipherSuites, defaultCipherSuitesTLS13NoAES...)
+	for _, curveID := range config.curvePreferences() {
+		if isGREASE(uint16(curveID)) {
+			hello.supportedCurves = append(hello.supportedCurves, CurveID(c.GREASE()))
+			if config.maxSupportedVersion(true) >= VersionTLS13 {
+				hello.keyShares = append(hello.keyShares, keyShare{group: CurveID(c.GREASE()), data: []byte{0}})
+			}
+			continue
 		}
 
-		curveID := config.curvePreferences()[0]
 		if _, ok := curveForCurveID(curveID); !ok {
 			return nil, nil, errors.New("tls: CurvePreferences includes unsupported curve")
 		}
+		hello.supportedCurves = append(hello.supportedCurves, curveID)
+
+		if config.maxSupportedVersion(true) < VersionTLS13 || key != nil {
+			continue
+		}
+
 		key, err = generateECDHEKey(config.rand(), curveID)
 		if err != nil {
 			return nil, nil, err
 		}
-		hello.keyShares = []keyShare{{group: curveID, data: key.PublicKey().Bytes()}}
+
+		hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: key.PublicKey().Bytes()})
+	}
+
+	grease_extensions_ids := make([]uint16, 0)
+	for _, extension := range c.config.getExtensions() {
+		switch extension := extension.(type) {
+		case *GREASEExtension:
+			switch len(grease_extensions_ids) {
+			case 0:
+				extension.Id = c.GREASE()
+			case 1:
+				extension.Id = c.GREASE()
+				if extension.Id == grease_extensions_ids[0] {
+					extension.Id ^= 0x1010
+				}
+
+				extension.Data = []byte{0}
+			default:
+				return nil, nil, errors.New("at most 2 grease extensions are supported")
+			}
+			grease_extensions_ids = append(grease_extensions_ids, extension.Id)
+
+			hello.extensions = append(hello.extensions, extension)
+		default:
+			hello.extensions = append(hello.extensions, extension)
+		}
 	}
 
 	return hello, key, nil

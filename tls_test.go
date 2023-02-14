@@ -802,6 +802,10 @@ func TestCloneNonFuncFields(t *testing.T) {
 			}))
 		case "NameToCertificate":
 			f.Set(reflect.ValueOf(map[string]*Certificate{"a": nil}))
+		case "CertCompressionDisabled":
+			f.Set(reflect.ValueOf(true))
+		case "CertCompressionPreferences":
+			f.Set(reflect.ValueOf([]CertCompressionAlgorithm{Zlib}))
 		case "RootCAs", "ClientCAs":
 			f.Set(reflect.ValueOf(x509.NewCertPool()))
 		case "ClientSessionCache":
@@ -818,14 +822,20 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf(true))
 		case "MinVersion", "MaxVersion":
 			f.Set(reflect.ValueOf(uint16(VersionTLS12)))
+		case "SupportedVersions":
+			f.Set(reflect.ValueOf([]uint16{VersionTLS12}))
 		case "SessionTicketKey":
 			f.Set(reflect.ValueOf([32]byte{}))
+		case "PreferCipherSuites":
+			f.Set(reflect.ValueOf(true))
 		case "CipherSuites":
 			f.Set(reflect.ValueOf([]uint16{1, 2}))
 		case "CurvePreferences":
 			f.Set(reflect.ValueOf([]CurveID{CurveP256}))
 		case "Renegotiation":
 			f.Set(reflect.ValueOf(RenegotiateOnceAsClient))
+		case "Extensions":
+			f.Set(reflect.ValueOf([]Extension{&ServerNameIndicationExtension{}}))
 		case "mutex", "autoSessionTicketKeys", "sessionTicketKeys":
 			continue // these are unexported fields that are handled separately
 		default:
@@ -1439,8 +1449,8 @@ func TestCipherSuites(t *testing.T) {
 		t.Errorf("unexpected fallback CipherSuiteName: got %q, expected 0x0ABC", got)
 	}
 
-	if len(cipherSuitesPreferenceOrder) != len(cipherSuites) {
-		t.Errorf("cipherSuitesPreferenceOrder is not the same size as cipherSuites")
+	if len(cipherSuitesPreferenceOrder) != len(cipherSuites)+len(cipherSuitesTLS13) {
+		t.Errorf("cipherSuitesPreferenceOrder is not the same size as cipherSuites + cipherSuitesTLS13")
 	}
 	if len(cipherSuitesPreferenceOrderNoAES) != len(cipherSuitesPreferenceOrder) {
 		t.Errorf("cipherSuitesPreferenceOrderNoAES is not the same size as cipherSuitesPreferenceOrder")
@@ -1492,8 +1502,35 @@ func TestCipherSuites(t *testing.T) {
 
 		// Check that the list is sorted according to the documented criteria.
 		isBetter := func(a, b int) bool {
-			aSuite, bSuite := cipherSuiteByID(prefOrder[a]), cipherSuiteByID(prefOrder[b])
 			aName, bName := CipherSuiteName(prefOrder[a]), CipherSuiteName(prefOrder[b])
+
+			aSuite13, bSuite13 := cipherSuiteTLS13ByID(prefOrder[a]), cipherSuiteTLS13ByID(prefOrder[b])
+			switch {
+			case aSuite13 != nil && bSuite13 != nil: //Both TLS 1.3 cipher
+				// AES < ChaCha20
+				if strings.Contains(aName, "AES") && strings.Contains(bName, "CHACHA20") {
+					return i == 0 // true for cipherSuitesPreferenceOrder
+				} else if strings.Contains(aName, "CHACHA20") && strings.Contains(bName, "AES") {
+					return i != 0 // true for cipherSuitesPreferenceOrderNoAES
+				}
+				// AES-128 < AES-256
+				if strings.Contains(aName, "AES_128") && strings.Contains(bName, "AES_256") {
+					return true
+				} else if strings.Contains(aName, "AES_256") && strings.Contains(bName, "AES_128") {
+					return false
+				}
+				t.Fatalf("two ciphersuites are equal by all criteria: %v and %v", aName, bName)
+				panic("unreachable")
+			case aSuite13 != nil: // aSuite13 is TLS 1.3 cipher, bSuite13 is TLS 1.3 cipher
+				// TLS 1.3 < TLS 1.2
+				return true
+			case bSuite13 != nil: // bSuite13 is TLS 1.3 cipher, aSuite13 is TLS 1.3 cipher
+				// TLS 1.3 < TLS 1.2
+				return false
+			default: // Both TLS 1.2 cipher
+			}
+
+			aSuite, bSuite := cipherSuiteByID(prefOrder[a]), cipherSuiteByID(prefOrder[b])
 			// * < RC4
 			if !strings.Contains(aName, "RC4") && strings.Contains(bName, "RC4") {
 				return true

@@ -318,9 +318,12 @@ func (zeroSource) Read(b []byte) (n int, err error) {
 }
 
 func allCipherSuites() []uint16 {
-	ids := make([]uint16, len(cipherSuites))
-	for i, suite := range cipherSuites {
-		ids[i] = suite.id
+	ids := make([]uint16, 0, len(cipherSuitesTLS13)+len(cipherSuites))
+	for _, suite := range cipherSuitesTLS13 {
+		ids = append(ids, suite.id)
+	}
+	for _, suite := range cipherSuites {
+		ids = append(ids, suite.id)
 	}
 
 	return ids
@@ -358,13 +361,14 @@ func runMain(m *testing.M) int {
 	}
 
 	testConfig = &Config{
-		Time:               func() time.Time { return time.Unix(0, 0) },
-		Rand:               zeroSource{},
-		Certificates:       make([]Certificate, 2),
-		InsecureSkipVerify: true,
-		CipherSuites:       allCipherSuites(),
-		MinVersion:         VersionTLS10,
-		MaxVersion:         VersionTLS13,
+		Time:                    func() time.Time { return time.Unix(0, 0) },
+		Rand:                    zeroSource{},
+		Certificates:            make([]Certificate, 2),
+		InsecureSkipVerify:      true,
+		CipherSuites:            allCipherSuites(),
+		MinVersion:              VersionTLS10,
+		MaxVersion:              VersionTLS13,
+		CertCompressionDisabled: true,
 	}
 	testConfig.Certificates[0].Certificate = [][]byte{testRSACertificate}
 	testConfig.Certificates[0].PrivateKey = testRSAPrivateKey

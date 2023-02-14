@@ -57,23 +57,24 @@ const (
 
 // TLS handshake message types.
 const (
-	typeHelloRequest        uint8 = 0
-	typeClientHello         uint8 = 1
-	typeServerHello         uint8 = 2
-	typeNewSessionTicket    uint8 = 4
-	typeEndOfEarlyData      uint8 = 5
-	typeEncryptedExtensions uint8 = 8
-	typeCertificate         uint8 = 11
-	typeServerKeyExchange   uint8 = 12
-	typeCertificateRequest  uint8 = 13
-	typeServerHelloDone     uint8 = 14
-	typeCertificateVerify   uint8 = 15
-	typeClientKeyExchange   uint8 = 16
-	typeFinished            uint8 = 20
-	typeCertificateStatus   uint8 = 22
-	typeKeyUpdate           uint8 = 24
-	typeNextProtocol        uint8 = 67  // Not IANA assigned
-	typeMessageHash         uint8 = 254 // synthetic message
+	typeHelloRequest          uint8 = 0
+	typeClientHello           uint8 = 1
+	typeServerHello           uint8 = 2
+	typeNewSessionTicket      uint8 = 4
+	typeEndOfEarlyData        uint8 = 5
+	typeEncryptedExtensions   uint8 = 8
+	typeCertificate           uint8 = 11
+	typeServerKeyExchange     uint8 = 12
+	typeCertificateRequest    uint8 = 13
+	typeServerHelloDone       uint8 = 14
+	typeCertificateVerify     uint8 = 15
+	typeClientKeyExchange     uint8 = 16
+	typeFinished              uint8 = 20
+	typeCertificateStatus     uint8 = 22
+	typeKeyUpdate             uint8 = 24
+	typeCompressedCertificate uint8 = 25
+	typeNextProtocol          uint8 = 67  // Not IANA assigned
+	typeMessageHash           uint8 = 254 // synthetic message
 )
 
 // TLS compression types.
@@ -90,6 +91,7 @@ const (
 	extensionSignatureAlgorithms     uint16 = 13
 	extensionALPN                    uint16 = 16
 	extensionSCT                     uint16 = 18
+	extensionCompressCert            uint16 = 27 // compress_certificate in TLS 1.3
 	extensionSessionTicket           uint16 = 35
 	extensionPreSharedKey            uint16 = 41
 	extensionEarlyData               uint16 = 42
@@ -105,6 +107,15 @@ const (
 // TLS signaling cipher suite values
 const (
 	scsvRenegotiation uint16 = 0x00ff
+)
+
+// TLS certificate compression types.
+type CertCompressionAlgorithm uint16
+
+const (
+	Zlib   CertCompressionAlgorithm = 0x0001
+	Brotli CertCompressionAlgorithm = 0x0002
+	Zstd   CertCompressionAlgorithm = 0x0003
 )
 
 // CurveID is the type of a TLS identifier for an elliptic curve. See
@@ -437,6 +448,9 @@ type ClientHelloInfo struct {
 	// might be rejected if used.
 	SupportedVersions []uint16
 
+	// Extensions lists the TLS extensions send by the client.
+	Extensions []Extension
+
 	// Conn is the underlying net.Conn for the connection. Do not read
 	// from, or write to, this connection; that will cause the TLS
 	// connection to fail.
@@ -655,8 +669,10 @@ type Config struct {
 	// testing or in combination with VerifyConnection or VerifyPeerCertificate.
 	InsecureSkipVerify bool
 
-	// CipherSuites is a list of enabled TLS 1.0–1.2 cipher suites. The order of
-	// the list is ignored. Note that TLS 1.3 ciphersuites are not configurable.
+	// PreferCipherSuites control whether the client would follow the hardware's preference.
+	PreferCipherSuites bool
+
+	// CipherSuites is a list of enabled TLS 1.0–1.3 cipher suites.
 	//
 	// If CipherSuites is nil, a safe default list is used. The default cipher
 	// suites might change over time.
@@ -709,11 +725,28 @@ type Config struct {
 	// which is currently TLS 1.3.
 	MaxVersion uint16
 
+	// SupportedVersion is a list of TLS version that is acceptable.
+	//
+	// By default, it will auto generate from MinVersion and MaxVersion.
+	SupportedVersions []uint16
+
 	// CurvePreferences contains the elliptic curves that will be used in
 	// an ECDHE handshake, in preference order. If empty, the default will
 	// be used. The client will use the first preference as the type for
 	// its key share in TLS 1.3. This may change in the future.
 	CurvePreferences []CurveID
+
+	// CertCompressionDisabled disables TLS certificate compressions.
+	// When true, the certificate message will not be compressed.
+	//
+	// Only for TLS 1.3
+	CertCompressionDisabled bool
+
+	// CertCompressionPreferences contains the compression that will be used in
+	// a certificate message, in preference order. If empty, the default will
+	// be used. The client will use the first preference as the type for
+	// its compress certificate in TLS 1.3. This may change in the future.
+	CertCompressionPreferences []CertCompressionAlgorithm
 
 	// DynamicRecordSizingDisabled disables adaptive sizing of TLS records.
 	// When true, the largest possible TLS record size is always used. When
@@ -724,6 +757,11 @@ type Config struct {
 	// Renegotiation controls what types of renegotiation are supported.
 	// The default, none, is correct for the vast majority of applications.
 	Renegotiation RenegotiationSupport
+
+	// Extensions contains the tls extensions that will be used in client hello.
+	// If empty, the default will be used.
+	// Its can modify tls fingerprint.
+	Extensions []Extension
 
 	// KeyLogWriter optionally specifies a destination for TLS master secrets
 	// in NSS key log format that can be used to allow external programs
@@ -811,6 +849,7 @@ func (c *Config) Clone() *Config {
 		ClientAuth:                  c.ClientAuth,
 		ClientCAs:                   c.ClientCAs,
 		InsecureSkipVerify:          c.InsecureSkipVerify,
+		PreferCipherSuites:          c.PreferCipherSuites,
 		CipherSuites:                c.CipherSuites,
 		PreferServerCipherSuites:    c.PreferServerCipherSuites,
 		SessionTicketsDisabled:      c.SessionTicketsDisabled,
@@ -818,9 +857,13 @@ func (c *Config) Clone() *Config {
 		ClientSessionCache:          c.ClientSessionCache,
 		MinVersion:                  c.MinVersion,
 		MaxVersion:                  c.MaxVersion,
+		SupportedVersions:           c.SupportedVersions,
 		CurvePreferences:            c.CurvePreferences,
+		CertCompressionDisabled:     c.CertCompressionDisabled,
+		CertCompressionPreferences:  c.CertCompressionPreferences,
 		DynamicRecordSizingDisabled: c.DynamicRecordSizingDisabled,
 		Renegotiation:               c.Renegotiation,
+		Extensions:                  c.Extensions,
 		KeyLogWriter:                c.KeyLogWriter,
 		sessionTicketKeys:           c.sessionTicketKeys,
 		autoSessionTicketKeys:       c.autoSessionTicketKeys,
@@ -989,6 +1032,10 @@ const roleClient = true
 const roleServer = false
 
 func (c *Config) supportedVersions(isClient bool) []uint16 {
+	if c.SupportedVersions != nil {
+		return c.SupportedVersions
+	}
+
 	versions := make([]uint16, 0, len(supportedVersions))
 	for _, v := range supportedVersions {
 		if (c == nil || c.MinVersion == 0) &&
@@ -1011,7 +1058,14 @@ func (c *Config) maxSupportedVersion(isClient bool) uint16 {
 	if len(supportedVersions) == 0 {
 		return 0
 	}
-	return supportedVersions[0]
+
+	for _, ver := range supportedVersions {
+		if isGREASE(ver) {
+			continue
+		}
+		return ver
+	}
+	return 0
 }
 
 // supportedVersionsFromMax returns a list of supported versions derived from a
@@ -1040,6 +1094,32 @@ func (c *Config) curvePreferences() []CurveID {
 func (c *Config) supportsCurve(curve CurveID) bool {
 	for _, cc := range c.curvePreferences() {
 		if cc == curve {
+			return true
+		}
+	}
+	return false
+}
+
+var defaultCertCompressionPreferences = []CertCompressionAlgorithm{Zlib, Brotli, Zstd}
+
+func (c *Config) certCompressionPreferences() []CertCompressionAlgorithm {
+	if c == nil {
+		return defaultCertCompressionPreferences
+	}
+
+	if c.CertCompressionDisabled {
+		return nil
+	}
+
+	if len(c.CertCompressionPreferences) == 0 {
+		return defaultCertCompressionPreferences
+	}
+	return c.CertCompressionPreferences
+}
+
+func (c *Config) supportsCertCompression(algorithm CertCompressionAlgorithm) bool {
+	for _, cc := range c.certCompressionPreferences() {
+		if cc == algorithm {
 			return true
 		}
 	}
@@ -1324,6 +1404,14 @@ func (c *Config) BuildNameToCertificate() {
 			c.NameToCertificate[san] = cert
 		}
 	}
+}
+
+func (c *Config) getExtensions() []Extension {
+	if c.Extensions != nil {
+		return c.Extensions
+	}
+
+	return defaultExtensions
 }
 
 const (

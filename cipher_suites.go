@@ -15,8 +15,9 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"hash"
-	"golang.org/x/sys/cpu"
 	"runtime"
+
+	"golang.org/x/sys/cpu"
 
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -204,7 +205,7 @@ var cipherSuitesTLS13 = []*cipherSuiteTLS13{ // TODO: replace with a map.
 }
 
 // cipherSuitesPreferenceOrder is the order in which we'll select (on the
-// server) or advertise (on the client) TLS 1.0–1.2 cipher suites.
+// server) or advertise (on the client) TLS 1.0–1.3 cipher suites.
 //
 // Cipher suites are filtered but not reordered based on the application and
 // peer's preferences, meaning we'll never select a suite lower in this list if
@@ -268,6 +269,9 @@ var cipherSuitesTLS13 = []*cipherSuiteTLS13{ // TODO: replace with a map.
 //     The relative order of ECDSA and RSA cipher suites doesn't matter,
 //     as they depend on the certificate. Pick one to get a stable order.
 var cipherSuitesPreferenceOrder = []uint16{
+	// TLS 1.3
+	TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256,
+
 	// AEADs w/ ECDHE
 	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
@@ -299,6 +303,9 @@ var cipherSuitesPreferenceOrder = []uint16{
 }
 
 var cipherSuitesPreferenceOrderNoAES = []uint16{
+	// TLS 1.3
+	TLS_CHACHA20_POLY1305_SHA256, TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384,
+
 	// ChaCha20Poly1305
 	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 
@@ -315,8 +322,12 @@ var cipherSuitesPreferenceOrderNoAES = []uint16{
 	TLS_RSA_WITH_AES_256_CBC_SHA,
 	TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
 	TLS_RSA_WITH_3DES_EDE_CBC_SHA,
+
+	// CBC_SHA256
 	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256, TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
 	TLS_RSA_WITH_AES_128_CBC_SHA256,
+
+	// RC4
 	TLS_ECDHE_ECDSA_WITH_RC4_128_SHA, TLS_ECDHE_RSA_WITH_RC4_128_SHA,
 	TLS_RSA_WITH_RC4_128_SHA,
 }

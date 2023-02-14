@@ -1,0 +1,17 @@
+stages:
+  - test
+
+test:
+  stage: test
+  image: golang:latest
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+    GIT_DEPTH: 0
+    GIT_SUBMODULE_DEPTH: 0
+  only:
+    refs:
+      - pushes
+  script:
+    - go mod tidy -v
+    - go test -v
+    - go build -v

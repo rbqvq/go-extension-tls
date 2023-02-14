@@ -164,6 +164,18 @@ func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, error) {
 	c.in.version = c.vers
 	c.out.version = c.vers
 
+	for i, extension := range clientHello.extensions {
+		switch extension := extension.(type) {
+		case *UnimplementedExtension:
+			for _, ext := range c.config.getExtensions() {
+				if ext.ExtensionId() == extension.Id {
+					clientHello.extensions[i] = extension.Clone()
+					break
+				}
+			}
+		}
+	}
+
 	return clientHello, nil
 }
 
@@ -172,6 +184,7 @@ func (hs *serverHandshakeState) processClientHello() error {
 
 	hs.hello = new(serverHelloMsg)
 	hs.hello.vers = c.vers
+	hs.hello.extensions = hs.clientHello.extensions
 
 	foundCompression := false
 	// We only support null compression, so check that the client offered it.
@@ -333,14 +346,21 @@ func supportsECDHE(c *Config, supportedCurves []CurveID, supportedPoints []uint8
 
 func (hs *serverHandshakeState) pickCipherSuite() error {
 	c := hs.c
+	config := c.config
 
-	preferenceOrder := cipherSuitesPreferenceOrder
-	if !hasAESGCMHardwareSupport || !aesgcmPreferred(hs.clientHello.cipherSuites) {
+	configCipherSuites := config.cipherSuites()
+	preferenceList := make([]uint16, 0, len(configCipherSuites))
+
+	var preferenceOrder []uint16
+	switch {
+	case config.PreferCipherSuites:
+		preferenceOrder = config.CipherSuites
+	case !hasAESGCMHardwareSupport, !aesgcmPreferred(hs.clientHello.cipherSuites):
 		preferenceOrder = cipherSuitesPreferenceOrderNoAES
+	default:
+		preferenceOrder = cipherSuitesPreferenceOrder
 	}
 
-	configCipherSuites := c.config.cipherSuites()
-	preferenceList := make([]uint16, 0, len(configCipherSuites))
 	for _, suiteID := range preferenceOrder {
 		for _, id := range configCipherSuites {
 			if id == suiteID {
@@ -874,6 +894,7 @@ func clientHelloInfo(ctx context.Context, c *Conn, clientHello *clientHelloMsg) 
 		SignatureSchemes:  clientHello.supportedSignatureAlgorithms,
 		SupportedProtos:   clientHello.alpnProtocols,
 		SupportedVersions: supportedVersions,
+		Extensions:        clientHello.extensions,
 		Conn:              c.conn,
 		config:            c.config,
 		ctx:               ctx,

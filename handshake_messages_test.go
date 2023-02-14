@@ -132,13 +132,29 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 		for strings.HasSuffix(m.serverName, ".") {
 			m.serverName = m.serverName[:len(m.serverName)-1]
 		}
+		if len(m.serverName) > 0 {
+			m.extensions = append(m.extensions, &ServerNameIndicationExtension{})
+		}
 	}
-	m.ocspStapling = rand.Intn(10) > 5
+
+	if rand.Intn(10) > 5 {
+		m.ocspStapling = true
+		m.extensions = append(m.extensions, &StatusRequestExtension{})
+	}
+
 	m.supportedPoints = randomBytes(rand.Intn(5)+1, rand)
+	if len(m.supportedPoints) > 0 {
+		m.extensions = append(m.extensions, &SupportedPointsExtension{})
+	}
+
 	m.supportedCurves = make([]CurveID, rand.Intn(5)+1)
 	for i := range m.supportedCurves {
 		m.supportedCurves[i] = CurveID(rand.Intn(30000) + 1)
 	}
+	if len(m.supportedCurves) > 0 {
+		m.extensions = append(m.extensions, &SupportedGroupsExtension{})
+	}
+
 	if rand.Intn(10) > 5 {
 		m.ticketSupported = true
 		if rand.Intn(10) > 5 {
@@ -146,41 +162,73 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 		} else {
 			m.sessionTicket = make([]byte, 0)
 		}
+		m.extensions = append(m.extensions, &SessionTicketExtension{})
 	}
+
 	if rand.Intn(10) > 5 {
 		m.supportedSignatureAlgorithms = supportedSignatureAlgorithms()
+		m.extensions = append(m.extensions, &SignatureAlgorithmsExtension{})
 	}
+
 	if rand.Intn(10) > 5 {
 		m.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithms()
+		m.extensions = append(m.extensions, &SignatureAlgorithmsCertExtension{})
 	}
+
 	for i := 0; i < rand.Intn(5); i++ {
 		m.alpnProtocols = append(m.alpnProtocols, randomString(rand.Intn(20)+1, rand))
 	}
+	if len(m.alpnProtocols) > 0 {
+		m.extensions = append(m.extensions, &ALPNExtension{})
+	}
+
 	if rand.Intn(10) > 5 {
 		m.scts = true
+		m.extensions = append(m.extensions, &SCTExtension{})
 	}
+
 	if rand.Intn(10) > 5 {
 		m.secureRenegotiationSupported = true
 		m.secureRenegotiation = randomBytes(rand.Intn(50)+1, rand)
+		m.extensions = append(m.extensions, &RenegotiationInfoExtension{})
 	}
+
 	for i := 0; i < rand.Intn(5); i++ {
 		m.supportedVersions = append(m.supportedVersions, uint16(rand.Intn(0xffff)+1))
 	}
+	if len(m.supportedVersions) > 0 {
+		m.extensions = append(m.extensions, &SupportedVersionsExtension{})
+	}
+
 	if rand.Intn(10) > 5 {
 		m.cookie = randomBytes(rand.Intn(500)+1, rand)
+		m.extensions = append(m.extensions, &CookieExtension{})
 	}
+
 	for i := 0; i < rand.Intn(5); i++ {
 		var ks keyShare
 		ks.group = CurveID(rand.Intn(30000) + 1)
 		ks.data = randomBytes(rand.Intn(200)+1, rand)
 		m.keyShares = append(m.keyShares, ks)
 	}
+	if len(m.keyShares) > 0 {
+		m.extensions = append(m.extensions, &KeyShareExtension{})
+	}
+
 	switch rand.Intn(3) {
 	case 1:
 		m.pskModes = []uint8{pskModeDHE}
+		m.extensions = append(m.extensions, &PSKModesExtension{})
 	case 2:
 		m.pskModes = []uint8{pskModeDHE, pskModePlain}
+		m.extensions = append(m.extensions, &PSKModesExtension{})
 	}
+
+	if rand.Intn(10) > 5 {
+		m.earlyData = true
+		m.extensions = append(m.extensions, &EarlyExtension{})
+	}
+
 	for i := 0; i < rand.Intn(5); i++ {
 		var psk pskIdentity
 		psk.obfuscatedTicketAge = uint32(rand.Intn(500000))
@@ -188,10 +236,10 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 		m.pskIdentities = append(m.pskIdentities, psk)
 		m.pskBinders = append(m.pskBinders, randomBytes(rand.Intn(50)+32, rand))
 	}
-	if rand.Intn(10) > 5 {
-		m.earlyData = true
-	}
 
+	if len(m.pskIdentities) > 0 {
+		m.extensions = append(m.extensions, &PreSharedKeyExtension{})
+	}
 	return reflect.ValueOf(m)
 }
 
@@ -202,45 +250,56 @@ func (*serverHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	m.sessionId = randomBytes(rand.Intn(32), rand)
 	m.cipherSuite = uint16(rand.Int31())
 	m.compressionMethod = uint8(rand.Intn(256))
+
 	m.supportedPoints = randomBytes(rand.Intn(5)+1, rand)
+	m.extensions = append(m.extensions, &SupportedPointsExtension{})
 
 	if rand.Intn(10) > 5 {
 		m.ocspStapling = true
+		m.extensions = append(m.extensions, &StatusRequestExtension{})
 	}
 	if rand.Intn(10) > 5 {
 		m.ticketSupported = true
+		m.extensions = append(m.extensions, &SessionTicketExtension{})
 	}
 	if rand.Intn(10) > 5 {
 		m.alpnProtocol = randomString(rand.Intn(32)+1, rand)
+		m.extensions = append(m.extensions, &ALPNExtension{})
 	}
 
 	for i := 0; i < rand.Intn(4); i++ {
 		m.scts = append(m.scts, randomBytes(rand.Intn(500)+1, rand))
 	}
+	if len(m.scts) > 0 {
+		m.extensions = append(m.extensions, &SCTExtension{})
+	}
 
 	if rand.Intn(10) > 5 {
 		m.secureRenegotiationSupported = true
 		m.secureRenegotiation = randomBytes(rand.Intn(50)+1, rand)
+		m.extensions = append(m.extensions, &RenegotiationInfoExtension{})
 	}
 	if rand.Intn(10) > 5 {
 		m.supportedVersion = uint16(rand.Intn(0xffff) + 1)
+		m.extensions = append(m.extensions, &SupportedVersionsExtension{})
 	}
 	if rand.Intn(10) > 5 {
 		m.cookie = randomBytes(rand.Intn(500)+1, rand)
+		m.extensions = append(m.extensions, &CookieExtension{})
 	}
 	if rand.Intn(10) > 5 {
-		for i := 0; i < rand.Intn(5); i++ {
-			m.serverShare.group = CurveID(rand.Intn(30000) + 1)
-			m.serverShare.data = randomBytes(rand.Intn(200)+1, rand)
-		}
+		m.serverShare.group = CurveID(rand.Intn(30000) + 1)
+		m.serverShare.data = randomBytes(rand.Intn(200)+1, rand)
+		m.extensions = append(m.extensions, &KeyShareExtension{})
 	} else if rand.Intn(10) > 5 {
 		m.selectedGroup = CurveID(rand.Intn(30000) + 1)
+		m.extensions = append(m.extensions, &KeyShareExtension{})
 	}
 	if rand.Intn(10) > 5 {
 		m.selectedIdentityPresent = true
 		m.selectedIdentity = uint16(rand.Intn(0xffff))
+		m.extensions = append(m.extensions, &PreSharedKeyExtension{})
 	}
-
 	return reflect.ValueOf(m)
 }
 
@@ -249,6 +308,12 @@ func (*encryptedExtensionsMsg) Generate(rand *rand.Rand, size int) reflect.Value
 
 	if rand.Intn(10) > 5 {
 		m.alpnProtocol = randomString(rand.Intn(32)+1, rand)
+		m.extensions = append(m.extensions, &ALPNExtension{})
+	}
+
+	if rand.Intn(10) > 5 {
+		m.earlyData = true
+		m.extensions = append(m.extensions, &EarlyExtension{})
 	}
 
 	return reflect.ValueOf(m)
@@ -410,9 +475,10 @@ func TestRejectEmptySCTList(t *testing.T) {
 	var random [32]byte
 	sct := []byte{0x42, 0x42, 0x42, 0x42}
 	serverHello := serverHelloMsg{
-		vers:   VersionTLS12,
-		random: random[:],
-		scts:   [][]byte{sct},
+		vers:       VersionTLS12,
+		random:     random[:],
+		scts:       [][]byte{sct},
+		extensions: defaultExtensions,
 	}
 	serverHelloBytes := serverHello.marshal()
 
@@ -453,9 +519,10 @@ func TestRejectEmptySCT(t *testing.T) {
 
 	var random [32]byte
 	serverHello := serverHelloMsg{
-		vers:   VersionTLS12,
-		random: random[:],
-		scts:   [][]byte{nil},
+		vers:       VersionTLS12,
+		random:     random[:],
+		scts:       [][]byte{nil},
+		extensions: defaultExtensions,
 	}
 	serverHelloBytes := serverHello.marshal()
 

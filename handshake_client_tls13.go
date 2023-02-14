@@ -27,13 +27,14 @@ type clientHandshakeStateTLS13 struct {
 	earlySecret []byte
 	binderKey   []byte
 
-	certReq       *certificateRequestMsgTLS13
-	usingPSK      bool
-	sentDummyCCS  bool
-	suite         *cipherSuiteTLS13
-	transcript    hash.Hash
-	masterSecret  []byte
-	trafficSecret []byte // client_application_traffic_secret_0
+	certReq                  *certificateRequestMsgTLS13
+	usingPSK                 bool
+	sentDummyCCS             bool
+	suite                    *cipherSuiteTLS13
+	certCompressionAlgorithm CertCompressionAlgorithm
+	transcript               hash.Hash
+	masterSecret             []byte
+	trafficSecret            []byte // client_application_traffic_secret_0
 }
 
 // handshake requires hs.c, hs.hello, hs.serverHello, hs.ecdheKey, and,
@@ -49,7 +50,7 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 	}
 
 	// Consistency check on the presence of a keyShare and its parameters.
-	if hs.ecdheKey == nil || len(hs.hello.keyShares) != 1 {
+	if hs.ecdheKey == nil || len(hs.hello.keyShares) < 1 {
 		return c.sendAlert(alertInternalError)
 	}
 
@@ -445,16 +446,32 @@ func (hs *clientHandshakeStateTLS13) readServerCertificate() error {
 		}
 	}
 
-	certMsg, ok := msg.(*certificateMsgTLS13)
-	if !ok {
+	var certMsg *certificateMsgTLS13
+	switch msg := msg.(type) {
+	case *certificateMsgTLS13:
+		certMsg = msg
+		hs.transcript.Write(msg.marshal())
+	case *compressedCertificateMsg:
+		hs.certCompressionAlgorithm = CertCompressionAlgorithm(msg.algorithm)
+		if !c.config.supportsCertCompression(hs.certCompressionAlgorithm) {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: server selected unsupported algorithm")
+		}
+		certMsg, err = msg.decompress()
+		if err != nil {
+			c.sendAlert(alertBadCertificate)
+			return err
+		}
+		hs.transcript.Write(msg.marshal())
+	default:
 		c.sendAlert(alertUnexpectedMessage)
-		return unexpectedMessageError(certMsg, msg)
+		return unexpectedMessageError(msg, msg)
 	}
+
 	if len(certMsg.certificate.Certificate) == 0 {
 		c.sendAlert(alertDecodeError)
 		return errors.New("tls: received empty certificates message")
 	}
-	hs.transcript.Write(certMsg.marshal())
 
 	c.scts = certMsg.certificate.SignedCertificateTimestamps
 	c.ocspResponse = certMsg.certificate.OCSPStaple
@@ -568,8 +585,18 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 	certMsg.scts = hs.certReq.scts && len(cert.SignedCertificateTimestamps) > 0
 	certMsg.ocspStapling = hs.certReq.ocspStapling && len(cert.OCSPStaple) > 0
 
-	hs.transcript.Write(certMsg.marshal())
-	if _, err := c.writeRecord(recordTypeHandshake, certMsg.marshal()); err != nil {
+	var msg interface{ marshal() []byte } = certMsg
+	if hs.certCompressionAlgorithm != 0 {
+		var err error
+		msg, err = certMsg.compress(hs.certCompressionAlgorithm)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return errors.New("tls: CertCompressionPreferences includes unsupported compression algorithm")
+		}
+	}
+
+	hs.transcript.Write(msg.marshal())
+	if _, err := c.writeRecord(recordTypeHandshake, msg.marshal()); err != nil {
 		return err
 	}
 
