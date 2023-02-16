@@ -27,10 +27,15 @@ func (m *certificateMsgTLS13) compress(algorithm CertCompressionAlgorithm) (*com
 	case Zstd:
 		compresser, _ = zstd.NewWriter(compressed)
 	default:
-		return nil, fmt.Errorf("unsupported algorithm (%d)", algorithm)
+		return nil, errors.New("tls: CertCompressionPreferences includes unsupported compression algorithm")
 	}
 
-	certMsg := m.marshal()[4:]
+	certMsg, err := m.marshal()
+	if err != nil {
+		return nil, err
+	}
+	certMsg = certMsg[4:]
+
 	compresser.Write(certMsg)
 	compresser.Close()
 
