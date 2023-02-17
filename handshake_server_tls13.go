@@ -29,6 +29,7 @@ type serverHandshakeStateTLS13 struct {
 	hello                    *serverHelloMsg
 	sentDummyCCS             bool
 	usingPSK                 bool
+	usingALPS                bool
 	suite                    *cipherSuiteTLS13
 	certCompressionAlgorithm CertCompressionAlgorithm
 	cert                     *Certificate
@@ -70,6 +71,9 @@ func (hs *serverHandshakeStateTLS13) handshake() error {
 	// waiting for the client's second flight, but the application might not
 	// expect the lack of replay protection of the ClientHello parameters.
 	if _, err := c.flush(); err != nil {
+		return err
+	}
+	if err := hs.readClientParameters(); err != nil {
 		return err
 	}
 	if err := hs.readClientCertificate(); err != nil {
@@ -600,8 +604,17 @@ func (hs *serverHandshakeStateTLS13) sendServerParameters() error {
 		c.sendAlert(alertNoApplicationProtocol)
 		return err
 	}
+
 	encryptedExtensions.alpnProtocol = selectedProto
 	c.clientProtocol = selectedProto
+
+	protoSetting, ok := c.config.negotiateALPS(selectedProto, hs.clientHello.alpsProtocols)
+	if ok {
+		hs.usingALPS = true
+		encryptedExtensions.alps = true
+		encryptedExtensions.alpnSetting = protoSetting
+		c.serverProtocolSetting = protoSetting
+	}
 
 	encryptedExtensions.extensions = hs.extensions
 
@@ -610,6 +623,28 @@ func (hs *serverHandshakeStateTLS13) sendServerParameters() error {
 	}
 
 	return nil
+}
+
+// negotiateALPS picks a shared ALPS protocol that both sides support in server
+// preference order. If ALPS is not configured or the peer doesn't support it,
+// it returns nil and false.
+func (config *Config) negotiateALPS(selectedProto string, clientProtos []string) ([]byte, bool) {
+	if selectedProto == "" || len(clientProtos) == 0 || len(config.NextProtoSettings) == 0 {
+		return nil, false
+	}
+
+	protoSetting, ok := config.NextProtoSettings[selectedProto]
+	if !ok {
+		return nil, false
+	}
+
+	for _, c := range clientProtos {
+		if selectedProto == c {
+			return protoSetting, true
+		}
+	}
+
+	return nil, false
 }
 
 func (hs *serverHandshakeStateTLS13) requestClientCert() bool {
@@ -815,6 +850,33 @@ func (hs *serverHandshakeStateTLS13) sendSessionTickets() error {
 	if _, err := c.writeHandshakeRecord(m, nil); err != nil {
 		return err
 	}
+
+	return nil
+}
+
+func (hs *serverHandshakeStateTLS13) readClientParameters() error {
+	c := hs.c
+
+	if !hs.usingALPS {
+		return nil
+	}
+
+	msg, err := c.readHandshake(hs.transcript)
+	if err != nil {
+		return err
+	}
+
+	encryptedExtensions, ok := msg.(*encryptedExtensionsMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(encryptedExtensions, msg)
+	}
+
+	if !encryptedExtensions.alps {
+		return c.sendAlert(alertMissingExtension)
+	}
+	
+	c.clientProtocolSetting = encryptedExtensions.alpnSetting
 
 	return nil
 }

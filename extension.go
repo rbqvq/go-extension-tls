@@ -37,6 +37,7 @@ var (
 		&SignatureAlgorithmsCertExtension{},
 		&RenegotiationInfoExtension{},
 		&ALPNExtension{},
+		&ALPSExtension{},
 		&SCTExtension{},
 		&SupportedVersionsExtension{},
 		&CompressedCertificateExtension{},
@@ -126,6 +127,12 @@ type ALPNExtension struct{ implementedExtension }
 
 func (*ALPNExtension) Clone() Extension {
 	return &ALPNExtension{}
+}
+
+type ALPSExtension struct{ implementedExtension }
+
+func (*ALPSExtension) Clone() Extension {
+	return &ALPSExtension{}
 }
 
 type SCTExtension struct{ implementedExtension }

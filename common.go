@@ -101,6 +101,7 @@ const (
 	extensionCertificateAuthorities  uint16 = 47
 	extensionSignatureAlgorithmsCert uint16 = 50
 	extensionKeyShare                uint16 = 51
+	extensionALPS                    uint16 = 17513
 	extensionRenegotiationInfo       uint16 = 0xff01
 )
 
@@ -245,6 +246,12 @@ type ConnectionState struct {
 	//
 	// Deprecated: this value is always true.
 	NegotiatedProtocolIsMutual bool
+
+	// ClientProtocolSetting is the application protocol negotiated with ALPS.
+	ClientProtocolSetting []byte
+
+	// ServerProtocolSetting is the application protocol negotiated with ALPS.
+	ServerProtocolSetting []byte
 
 	// ServerName is the value of the Server Name Indication extension sent by
 	// the client. It's available both on the server and on the client side.
@@ -646,6 +653,16 @@ type Config struct {
 	// ConnectionState.NegotiatedProtocol will be empty.
 	NextProtos []string
 
+	// NextProtoSettings is a set of application settings (ALPS) to use
+	// with each application protocol (ALPN).
+	//
+	// Only for clients
+	NextProtoSettings map[string][]byte
+
+	// GetProtoSetting, if not nil, is called after a encrypted extension message
+	// it need negotiate applocation setting
+	GetProtoSetting func(proto string, serverSetting []byte) ([]byte, bool)
+
 	// ServerName is used to verify the hostname on the returned
 	// certificates unless InsecureSkipVerify is given. It is also included
 	// in the client's handshake to support virtual hosting unless it is
@@ -845,6 +862,8 @@ func (c *Config) Clone() *Config {
 		VerifyConnection:            c.VerifyConnection,
 		RootCAs:                     c.RootCAs,
 		NextProtos:                  c.NextProtos,
+		NextProtoSettings:           c.NextProtoSettings,
+		GetProtoSetting:             c.GetProtoSetting,
 		ServerName:                  c.ServerName,
 		ClientAuth:                  c.ClientAuth,
 		ClientCAs:                   c.ClientCAs,

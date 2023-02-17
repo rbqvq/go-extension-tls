@@ -27,6 +27,7 @@ type clientHandshakeStateTLS13 struct {
 	earlySecret []byte
 	binderKey   []byte
 
+	alpsReq                  bool
 	certReq                  *certificateRequestMsgTLS13
 	usingPSK                 bool
 	sentDummyCCS             bool
@@ -96,6 +97,9 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 		return err
 	}
 	if err := hs.readServerFinished(); err != nil {
+		return err
+	}
+	if err := hs.sendClientParameters(); err != nil {
 		return err
 	}
 	if err := hs.sendClientCertificate(); err != nil {
@@ -424,6 +428,15 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 	}
 	c.clientProtocol = encryptedExtensions.alpnProtocol
 
+	if encryptedExtensions.alps {
+		hs.alpsReq = true
+		if encryptedExtensions.alpnProtocol == "" {
+			c.sendAlert(alertUnsupportedExtension)
+			return errors.New("tls: server sent application settings without ALPN")
+		}
+
+		c.serverProtocolSetting = encryptedExtensions.alpnSetting
+	}
 	return nil
 }
 
@@ -581,6 +594,39 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 
 	c.ekm = hs.suite.exportKeyingMaterial(hs.masterSecret, hs.transcript)
 
+	return nil
+}
+
+func (hs *clientHandshakeStateTLS13) sendClientParameters() error {
+	c := hs.c
+
+	if !hs.alpsReq {
+		return nil
+	}
+
+	var clientProtocolSetting []byte
+	var ok bool
+	if c.config.GetProtoSetting != nil {
+		clientProtocolSetting, ok = c.config.GetProtoSetting(c.clientProtocol, c.serverProtocolSetting)
+	} else {
+		// Check if the ALPN selected by the server exists in the client's list.
+		clientProtocolSetting, ok = c.config.NextProtoSettings[c.clientProtocol]
+	}
+
+	if !ok {
+		c.sendAlert(alertIllegalParameter)
+		return errors.New("tls: server selected ALPN doesn't match a client ALPS")
+	}
+
+	encryptedExtensions := new(encryptedExtensionsMsg)
+	encryptedExtensions.alpnSetting = clientProtocolSetting
+	encryptedExtensions.extensions = hs.extensions
+
+	if _, err := hs.c.writeHandshakeRecord(encryptedExtensions, hs.transcript); err != nil {
+		return err
+	}
+
+	c.clientProtocolSetting = clientProtocolSetting
 	return nil
 }
 

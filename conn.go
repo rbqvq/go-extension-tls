@@ -93,7 +93,11 @@ type Conn struct {
 
 	// clientProtocol is the negotiated ALPN protocol.
 	clientProtocol string
-
+	// clientProtocolSetting is the negotiated ALPS protocol.
+	clientProtocolSetting []byte
+	// serverProtocolSetting is the negotiated ALPS protocol.
+	serverProtocolSetting []byte
+	
 	// input/output
 	in, out   halfConn
 	rawInput  bytes.Buffer // raw input, starting with a record header
@@ -1521,6 +1525,8 @@ func (c *Conn) connectionStateLocked() ConnectionState {
 	state.HandshakeComplete = c.isHandshakeComplete.Load()
 	state.Version = c.vers
 	state.NegotiatedProtocol = c.clientProtocol
+	state.ClientProtocolSetting = c.clientProtocolSetting
+	state.ServerProtocolSetting = c.serverProtocolSetting
 	state.DidResume = c.didResume
 	state.NegotiatedProtocolIsMutual = true
 	state.ServerName = c.serverName

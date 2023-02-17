@@ -86,6 +86,7 @@ type clientHelloMsg struct {
 	secureRenegotiationSupported       bool
 	secureRenegotiation                []byte
 	alpnProtocols                      []string
+	alpsProtocols                      []string
 	scts                               bool
 	supportedVersions                  []uint16
 	cookie                             []byte
@@ -200,6 +201,19 @@ func (m *clientHelloMsg) marshal() ([]byte, error) {
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 					exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 						for _, proto := range m.alpnProtocols {
+							exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
+								exts.AddBytes([]byte(proto))
+							})
+						}
+					})
+				})
+			}
+		case *ALPSExtension:
+			if len(m.alpsProtocols) > 0 {
+				exts.AddUint16(extensionALPS)
+				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+						for _, proto := range m.alpsProtocols {
 							exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
 								exts.AddBytes([]byte(proto))
 							})
@@ -564,6 +578,19 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				m.alpnProtocols = append(m.alpnProtocols, string(proto))
 			}
 			m.extensions = append(m.extensions, &ALPNExtension{})
+		case extensionALPS:
+			var protoList cryptobyte.String
+			if !extData.ReadUint16LengthPrefixed(&protoList) || protoList.Empty() {
+				return false
+			}
+			for !protoList.Empty() {
+				var proto cryptobyte.String
+				if !protoList.ReadUint8LengthPrefixed(&proto) || proto.Empty() {
+					return false
+				}
+				m.alpsProtocols = append(m.alpsProtocols, string(proto))
+			}
+			m.extensions = append(m.extensions, &ALPSExtension{})
 		case extensionSCT:
 			// RFC 6962, Section 3.3.1
 			m.scts = true
@@ -998,6 +1025,8 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 type encryptedExtensionsMsg struct {
 	raw          []byte
 	alpnProtocol string
+	alps         bool
+	alpnSetting  []byte
 	earlyData    bool
 
 	extensions []Extension
@@ -1024,6 +1053,13 @@ func (m *encryptedExtensionsMsg) marshal() ([]byte, error) {
 									b.AddBytes([]byte(m.alpnProtocol))
 								})
 							})
+						})
+					}
+				case *ALPSExtension:
+					if m.alps {
+						b.AddUint16(extensionALPS)
+						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+							b.AddBytes([]byte(m.alpnSetting))
 						})
 					}
 				case *EarlyExtension:
@@ -1080,6 +1116,11 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 			}
 			m.alpnProtocol = string(proto)
 			m.extensions = append(m.extensions, &ALPNExtension{})
+		case extensionALPS:
+			m.alps = true
+			m.alpnSetting = extData
+			m.extensions = append(m.extensions, &ALPSExtension{})
+			continue
 		case extensionEarlyData:
 			m.earlyData = true
 			m.extensions = append(m.extensions, &EarlyExtension{})

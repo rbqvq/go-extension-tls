@@ -4,7 +4,8 @@ This repository is an extension of the golang standard library [crypto/go](https
 
 # Currently implements more TLS functions than the standard library
 
-- Compressed Certificate
+- Compressed certificate
+- Application-Layer Protocol Settings (ALPS)
 - GREASE
 - Custom cipher suites order
 - Custom cipher suites in tls 1.3
@@ -13,7 +14,6 @@ This repository is an extension of the golang standard library [crypto/go](https
 
 # TODO
 
-- Client Encrypted Extensions
 - QUIC QTLS
 
 # Special thanks

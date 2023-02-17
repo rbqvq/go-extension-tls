@@ -791,7 +791,7 @@ func TestCloneNonFuncFields(t *testing.T) {
 		switch fn := typ.Field(i).Name; fn {
 		case "Rand":
 			f.Set(reflect.ValueOf(io.Reader(os.Stdin)))
-		case "Time", "GetCertificate", "GetConfigForClient", "VerifyPeerCertificate", "VerifyConnection", "GetClientCertificate":
+		case "Time", "GetCertificate", "GetConfigForClient", "VerifyPeerCertificate", "VerifyConnection", "GetClientCertificate", "GetProtoSetting":
 			// DeepEqual can't compare functions. If you add a
 			// function field to this list, you must also change
 			// TestCloneFuncFields to ensure that the func field is
@@ -814,6 +814,8 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf(io.Writer(os.Stdout)))
 		case "NextProtos":
 			f.Set(reflect.ValueOf([]string{"a", "b"}))
+		case "NextProtoSettings":
+			f.Set(reflect.ValueOf(map[string][]byte{"a": nil}))
 		case "ServerName":
 			f.Set(reflect.ValueOf("b"))
 		case "ClientAuth":

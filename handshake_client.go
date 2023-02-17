@@ -83,6 +83,14 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 		supportedVersions:                  supportedVersions,
 	}
 
+	if c.config.maxSupportedVersion(roleClient) >= VersionTLS13 {
+		for _, alpn := range config.NextProtos {
+			if _, ok := config.NextProtoSettings[alpn]; ok {
+				hello.alpsProtocols = append(hello.alpsProtocols, alpn)
+			}
+		}
+	}
+
 	if c.handshakes > 0 {
 		hello.secureRenegotiation = c.clientFinished[:]
 	}
@@ -116,7 +124,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 				continue
 			}
 		case suite13 != nil:
-			if config.maxSupportedVersion(true) < VersionTLS13 {
+			if config.maxSupportedVersion(roleClient) < VersionTLS13 {
 				continue
 			}
 		default:
@@ -160,7 +168,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 		}
 		hello.supportedCurves = append(hello.supportedCurves, curveID)
 
-		if config.maxSupportedVersion(true) < VersionTLS13 || key != nil {
+		if config.maxSupportedVersion(roleClient) < VersionTLS13 || key != nil {
 			continue
 		}
 
