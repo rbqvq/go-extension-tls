@@ -40,6 +40,7 @@ type serverHandshakeStateTLS13 struct {
 	trafficSecret            []byte // client_application_traffic_secret_0
 	transcript               hash.Hash
 	clientFinished           []byte
+	extensions               []Extension
 }
 
 func (hs *serverHandshakeStateTLS13) handshake() error {
@@ -92,7 +93,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	// supported_versions instead. See RFC 8446, sections 4.1.3 and 4.2.1.
 	hs.hello.vers = VersionTLS12
 	hs.hello.supportedVersion = c.vers
-	hs.hello.extensions = defaultExtensions
+	hs.hello.extensions = hs.extensions
 
 	if len(hs.clientHello.supportedVersions) == 0 {
 		c.sendAlert(alertIllegalParameter)
@@ -602,7 +603,7 @@ func (hs *serverHandshakeStateTLS13) sendServerParameters() error {
 	encryptedExtensions.alpnProtocol = selectedProto
 	c.clientProtocol = selectedProto
 
-	encryptedExtensions.extensions = hs.clientHello.extensions
+	encryptedExtensions.extensions = hs.extensions
 
 	if _, err := hs.c.writeHandshakeRecord(encryptedExtensions, hs.transcript); err != nil {
 		return err

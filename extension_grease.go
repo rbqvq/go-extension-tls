@@ -22,14 +22,16 @@ func (extension *GREASEExtension) ExtensionId() uint16 {
 	return extension.Id
 }
 
-func (*GREASEExtension) Negotiate() bool {
+func (*GREASEExtension) NegotiatedVersion(vers uint16) {}
+
+func (*GREASEExtension) Negotiate(messageType uint8) bool {
 	return false
 }
-func (extension *GREASEExtension) Marshal(b *cryptobyte.Builder) {
+func (extension *GREASEExtension) Marshal(messageType uint8, b *cryptobyte.Builder) {
 	b.AddBytes(extension.Data)
 }
 
-func (extension *GREASEExtension) Unmarshal(b cryptobyte.String) bool {
+func (extension *GREASEExtension) Unmarshal(messageType uint8, b cryptobyte.String) bool {
 	extension.Data = b
 	return true
 }

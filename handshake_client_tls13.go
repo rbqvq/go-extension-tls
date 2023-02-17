@@ -35,6 +35,8 @@ type clientHandshakeStateTLS13 struct {
 	transcript               hash.Hash
 	masterSecret             []byte
 	trafficSecret            []byte // client_application_traffic_secret_0
+
+	extensions []Extension
 }
 
 // handshake requires hs.c, hs.hello, hs.serverHello, hs.ecdheKey, and,

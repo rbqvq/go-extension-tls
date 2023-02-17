@@ -10,16 +10,18 @@ import "golang.org/x/crypto/cryptobyte"
 type Extension interface {
 	// TLS extension id
 	ExtensionId() uint16
+	// It will be called after protocol negotiation
+	NegotiatedVersion(vers uint16)
 	// Return true if this extension needs to be negotiated.
 	// It will call the Marshal function to generate the message.
 	//
 	// Note: this option is only valid for servers
-	Negotiate() bool
+	Negotiate(messageType uint8) bool
 
-	Marshal(*cryptobyte.Builder)
-	Unmarshal(cryptobyte.String) bool
+	Marshal(messageType uint8, b *cryptobyte.Builder)
+	Unmarshal(messageType uint8, b cryptobyte.String) bool
 
-	// Clone returns a shallow clone of extension. It is safe to clone an 
+	// Clone returns a shallow clone of extension. It is safe to clone an
 	// extension that is being used concurrently by a TLS client or server.
 	Clone() Extension
 }
@@ -56,13 +58,15 @@ func (*implementedExtension) ExtensionId() uint16 {
 	return 0
 }
 
-func (*implementedExtension) Negotiate() bool {
+func (*implementedExtension) NegotiatedVersion(vers uint16) {}
+
+func (*implementedExtension) Negotiate(messageType uint8) bool {
 	return false
 }
 
-func (*implementedExtension) Marshal(*cryptobyte.Builder) {}
+func (*implementedExtension) Marshal(messageType uint8, b *cryptobyte.Builder) {}
 
-func (*implementedExtension) Unmarshal(cryptobyte.String) bool {
+func (*implementedExtension) Unmarshal(messageType uint8, b cryptobyte.String) bool {
 	return false
 }
 
@@ -71,22 +75,106 @@ func (*implementedExtension) Clone() Extension {
 }
 
 type ServerNameIndicationExtension struct{ implementedExtension }
+
+func (*ServerNameIndicationExtension) Clone() Extension {
+	return &ServerNameIndicationExtension{}
+}
+
 type StatusRequestExtension struct{ implementedExtension }
+
+func (*StatusRequestExtension) Clone() Extension {
+	return &StatusRequestExtension{}
+}
+
 type SupportedGroupsExtension struct{ implementedExtension }
+
+func (*SupportedGroupsExtension) Clone() Extension {
+	return &SupportedGroupsExtension{}
+}
+
 type SupportedPointsExtension struct{ implementedExtension }
+
+func (*SupportedPointsExtension) Clone() Extension {
+	return &SupportedPointsExtension{}
+}
+
 type SessionTicketExtension struct{ implementedExtension }
+
+func (*SessionTicketExtension) Clone() Extension {
+	return &SessionTicketExtension{}
+}
+
 type SignatureAlgorithmsExtension struct{ implementedExtension }
+
+func (*SignatureAlgorithmsExtension) Clone() Extension {
+	return &SignatureAlgorithmsExtension{}
+}
+
 type SignatureAlgorithmsCertExtension struct{ implementedExtension }
+
+func (*SignatureAlgorithmsCertExtension) Clone() Extension {
+	return &SignatureAlgorithmsCertExtension{}
+}
+
 type RenegotiationInfoExtension struct{ implementedExtension }
+
+func (*RenegotiationInfoExtension) Clone() Extension {
+	return &RenegotiationInfoExtension{}
+}
+
 type ALPNExtension struct{ implementedExtension }
+
+func (*ALPNExtension) Clone() Extension {
+	return &ALPNExtension{}
+}
+
 type SCTExtension struct{ implementedExtension }
+
+func (*SCTExtension) Clone() Extension {
+	return &SCTExtension{}
+}
+
 type SupportedVersionsExtension struct{ implementedExtension }
+
+func (*SupportedVersionsExtension) Clone() Extension {
+	return &SupportedVersionsExtension{}
+}
+
 type CompressedCertificateExtension struct{ implementedExtension }
+
+func (*CompressedCertificateExtension) Clone() Extension {
+	return &CompressedCertificateExtension{}
+}
+
 type CookieExtension struct{ implementedExtension }
+
+func (*CookieExtension) Clone() Extension {
+	return &CookieExtension{}
+}
+
 type KeyShareExtension struct{ implementedExtension }
+
+func (*KeyShareExtension) Clone() Extension {
+	return &KeyShareExtension{}
+}
+
 type EarlyExtension struct{ implementedExtension }
+
+func (*EarlyExtension) Clone() Extension {
+	return &EarlyExtension{}
+}
+
 type PSKModesExtension struct{ implementedExtension }
+
+func (*PSKModesExtension) Clone() Extension {
+	return &PSKModesExtension{}
+}
+
 type PreSharedKeyExtension struct{ implementedExtension }
+
+func (*PreSharedKeyExtension) Clone() Extension {
+	return &PreSharedKeyExtension{}
+}
 
 var _ Extension = &PaddingExtension{}
 
@@ -100,11 +188,13 @@ func (*PaddingExtension) ExtensionId() uint16 {
 	return extensionPadding
 }
 
-func (*PaddingExtension) Negotiate() bool {
+func (*PaddingExtension) NegotiatedVersion(vers uint16) {}
+
+func (*PaddingExtension) Negotiate(messageType uint8) bool {
 	return false
 }
 
-func (extension *PaddingExtension) Marshal(b *cryptobyte.Builder) {
+func (extension *PaddingExtension) Marshal(messageType uint8, b *cryptobyte.Builder) {
 	var written uint16 = 0
 
 	for written < extension.Len {
@@ -116,10 +206,9 @@ func (extension *PaddingExtension) Marshal(b *cryptobyte.Builder) {
 		b.AddBytes(empty[:size])
 		written += size
 	}
-	return
 }
 
-func (extension *PaddingExtension) Unmarshal(b cryptobyte.String) bool {
+func (extension *PaddingExtension) Unmarshal(messageType uint8, b cryptobyte.String) bool {
 	extension.Len = uint16(len(b))
 	return true
 }
@@ -139,15 +228,17 @@ func (extension *UnimplementedExtension) ExtensionId() uint16 {
 	return extension.Id
 }
 
-func (*UnimplementedExtension) Negotiate() bool {
+func (*UnimplementedExtension) NegotiatedVersion(vers uint16) {}
+
+func (*UnimplementedExtension) Negotiate(messageType uint8) bool {
 	return false
 }
 
-func (extension *UnimplementedExtension) Marshal(b *cryptobyte.Builder) {
+func (extension *UnimplementedExtension) Marshal(messageType uint8, b *cryptobyte.Builder) {
 	b.AddBytes(extension.Data)
 }
 
-func (extension *UnimplementedExtension) Unmarshal(b cryptobyte.String) bool {
+func (extension *UnimplementedExtension) Unmarshal(messageType uint8, b cryptobyte.String) bool {
 	extension.Data = b
 	return true
 }

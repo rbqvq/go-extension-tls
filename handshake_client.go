@@ -32,6 +32,7 @@ type clientHandshakeState struct {
 	finishedHash finishedHash
 	masterSecret []byte
 	session      *ClientSessionState
+	extensions   []Extension
 }
 
 var testingOnlyForceClientHelloSignatureAlgorithms []SignatureScheme
@@ -173,6 +174,11 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 
 	grease_extensions_ids := make([]uint16, 0)
 	for _, extension := range c.config.getExtensions() {
+		if extension == nil {
+			continue
+		}
+
+		extension = extension.Clone()
 		switch extension := extension.(type) {
 		case *GREASEExtension:
 			switch len(grease_extensions_ids) {
@@ -252,6 +258,25 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		return err
 	}
 
+	extensions := hello.extensions
+	for _, extension := range serverHello.extensions {
+		switch extension := extension.(type) {
+		case nil:
+		case *UnimplementedExtension:
+			for _, ext := range extensions {
+				if ext.ExtensionId() == extension.ExtensionId() {
+					ext.NegotiatedVersion(c.vers)
+
+					if !ext.Unmarshal(typeServerHello, extension.Data) {
+						c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+						return
+					}
+					break
+				}
+			}
+		}
+	}
+
 	// If we are negotiating a protocol version that's lower than what we
 	// support, check for the server downgrade canaries.
 	// See RFC 8446, Section 4.1.3.
@@ -274,6 +299,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 			session:     session,
 			earlySecret: earlySecret,
 			binderKey:   binderKey,
+			extensions:  extensions,
 		}
 
 		// In TLS 1.3, session tickets are delivered after the handshake.
@@ -286,6 +312,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		serverHello: serverHello,
 		hello:       hello,
 		session:     session,
+		extensions:  extensions,
 	}
 
 	if err := hs.handshake(); err != nil {

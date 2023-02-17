@@ -106,7 +106,6 @@ func (m *clientHelloMsg) marshal() ([]byte, error) {
 	for _, extension := range m.extensions {
 		switch extension.(type) {
 		case nil:
-			continue
 		case *ServerNameIndicationExtension:
 			if len(m.serverName) > 0 {
 				// RFC 6066, Section 3
@@ -302,7 +301,9 @@ func (m *clientHelloMsg) marshal() ([]byte, error) {
 			}
 		default:
 			exts.AddUint16(extension.ExtensionId())
-			exts.AddUint16LengthPrefixed(extension.Marshal)
+			exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+				extension.Marshal(typeClientHello, exts)
+			})
 		}
 	}
 
@@ -660,7 +661,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			m.extensions = append(m.extensions, &PreSharedKeyExtension{})
 		case extensionPadding:
 			ext := &PaddingExtension{}
-			if !ext.Unmarshal(extData) {
+			if !ext.Unmarshal(typeClientHello, extData) {
 				return false
 			}
 			m.extensions = append(m.extensions, ext)
@@ -675,7 +676,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				ext = &UnimplementedExtension{Id: extension}
 			}
 
-			if !ext.Unmarshal(extData) {
+			if !ext.Unmarshal(typeClientHello, extData) {
 				return false
 			}
 
@@ -725,6 +726,7 @@ func (m *serverHelloMsg) marshal() ([]byte, error) {
 	var exts cryptobyte.Builder
 	for _, extension := range m.extensions {
 		switch extension.(type) {
+		case nil:
 		case *StatusRequestExtension:
 			if m.ocspStapling {
 				exts.AddUint16(extensionStatusRequest)
@@ -818,9 +820,11 @@ func (m *serverHelloMsg) marshal() ([]byte, error) {
 				})
 			}
 		default:
-			if extension.Negotiate() {
+			if extension.Negotiate(typeServerHello) {
 				exts.AddUint16(extension.ExtensionId())
-				exts.AddUint16LengthPrefixed(extension.Marshal)
+				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					extension.Marshal(typeServerHello, exts)
+				})
 			}
 		}
 	}
@@ -975,7 +979,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 				ext = &UnimplementedExtension{Id: extension}
 			}
 
-			if !ext.Unmarshal(extData) {
+			if !ext.Unmarshal(typeServerHello, extData) {
 				return false
 			}
 
@@ -1010,6 +1014,7 @@ func (m *encryptedExtensionsMsg) marshal() ([]byte, error) {
 		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 			for _, extension := range m.extensions {
 				switch extension.(type) {
+				case nil:
 				case *ALPNExtension:
 					if len(m.alpnProtocol) > 0 {
 						b.AddUint16(extensionALPN)
@@ -1028,9 +1033,11 @@ func (m *encryptedExtensionsMsg) marshal() ([]byte, error) {
 						b.AddUint16(0) // empty extension_data
 					}
 				default:
-					if extension.Negotiate() {
+					if extension.Negotiate(typeEncryptedExtensions) {
 						b.AddUint16(extension.ExtensionId())
-						b.AddUint16LengthPrefixed(extension.Marshal)
+						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+							extension.Marshal(typeEncryptedExtensions, b)
+						})
 					}
 				}
 			}
@@ -1086,7 +1093,7 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 				ext = &UnimplementedExtension{Id: extension}
 			}
 
-			if !ext.Unmarshal(extData) {
+			if !ext.Unmarshal(typeEncryptedExtensions, extData) {
 				return false
 			}
 

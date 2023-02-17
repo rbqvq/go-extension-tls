@@ -35,6 +35,7 @@ type serverHandshakeState struct {
 	finishedHash finishedHash
 	masterSecret []byte
 	cert         *Certificate
+	extensions   []Extension
 }
 
 // serverHandshake performs a TLS handshake as a server.
@@ -49,6 +50,7 @@ func (c *Conn) serverHandshake(ctx context.Context) error {
 			c:           c,
 			ctx:         ctx,
 			clientHello: clientHello,
+			extensions:  clientHello.extensions,
 		}
 		return hs.handshake()
 	}
@@ -57,6 +59,7 @@ func (c *Conn) serverHandshake(ctx context.Context) error {
 		c:           c,
 		ctx:         ctx,
 		clientHello: clientHello,
+		extensions:  clientHello.extensions,
 	}
 	return hs.handshake()
 }
@@ -168,10 +171,18 @@ func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, error) {
 
 	for i, extension := range clientHello.extensions {
 		switch extension := extension.(type) {
+		case nil:
 		case *UnimplementedExtension:
 			for _, ext := range c.config.getExtensions() {
 				if ext.ExtensionId() == extension.Id {
-					clientHello.extensions[i] = extension.Clone()
+					ext = ext.Clone()
+
+					ext.NegotiatedVersion(c.vers)
+					if !ext.Unmarshal(typeClientHello, extension.Data) {
+						return nil, c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+					}
+
+					clientHello.extensions[i] = ext
 					break
 				}
 			}
