@@ -409,6 +409,11 @@ func (*sessionStateTLS13) Generate(rand *rand.Rand, size int) reflect.Value {
 				s.certificate.SignedCertificateTimestamps, randomBytes(rand.Intn(500)+1, rand))
 		}
 	}
+	if rand.Intn(10) > 5 {
+		s.alpnProtocol = randomString(rand.Intn(100), rand)
+	}
+	s.alpnClientSetting = randomBytes(rand.Intn(1000), rand)
+	s.alpnServerSetting = randomBytes(rand.Intn(1000), rand)
 	return reflect.ValueOf(s)
 }
 

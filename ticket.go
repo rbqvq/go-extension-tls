@@ -36,7 +36,7 @@ func (m *sessionState) marshal() ([]byte, error) {
 	var b cryptobyte.Builder
 	b.AddUint16(m.vers)
 	b.AddUint16(m.cipherSuite)
-	addUint64(&b, m.createdAt)
+	b.AddUint64(m.createdAt)
 	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 		b.AddBytes(m.masterSecret)
 	})
@@ -55,7 +55,7 @@ func (m *sessionState) unmarshal(data []byte) bool {
 	s := cryptobyte.String(data)
 	if ok := s.ReadUint16(&m.vers) &&
 		s.ReadUint16(&m.cipherSuite) &&
-		readUint64(&s, &m.createdAt) &&
+		s.ReadUint64(&m.createdAt) &&
 		readUint16LengthPrefixed(&s, &m.masterSecret) &&
 		len(m.masterSecret) != 0; !ok {
 		return false
@@ -77,43 +77,70 @@ func (m *sessionState) unmarshal(data []byte) bool {
 // sessionStateTLS13 is the content of a TLS 1.3 session ticket. Its first
 // version (revision = 0) doesn't carry any of the information needed for 0-RTT
 // validation and the nonce is always empty.
+// version (revision = 1) carries the max_early_data_size sent in the ticket.
+// version (revision = 2) carries the ALPN sent in the ticket.
+// version (revision = 3) carries the ALPS sent in the ticket.
 type sessionStateTLS13 struct {
 	// uint8 version  = 0x0304;
 	// uint8 revision = 0;
-	cipherSuite      uint16
-	createdAt        uint64
-	resumptionSecret []byte      // opaque resumption_master_secret<1..2^8-1>;
-	certificate      Certificate // CertificateEntry certificate_list<0..2^24-1>;
+	cipherSuite       uint16
+	createdAt         uint64
+	ageAdd            uint32
+	resumptionSecret  []byte      // opaque resumption_master_secret<1..2^8-1>;
+	certificate       Certificate // CertificateEntry certificate_list<0..2^24-1>;
+	maxEarlyData      uint32
+	alpnProtocol      string
+	alpnClientSetting []byte
+	alpnServerSetting []byte
 }
 
 func (m *sessionStateTLS13) marshal() ([]byte, error) {
 	var b cryptobyte.Builder
 	b.AddUint16(VersionTLS13)
-	b.AddUint8(0) // revision
+	b.AddUint8(3) // revision
 	b.AddUint16(m.cipherSuite)
-	addUint64(&b, m.createdAt)
+	b.AddUint64(m.createdAt)
+	b.AddUint32(m.ageAdd)
 	b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
 		b.AddBytes(m.resumptionSecret)
 	})
 	marshalCertificate(&b, m.certificate)
+	b.AddUint32(m.maxEarlyData)
+	b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes([]byte(m.alpnProtocol))
+	})
+	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes(m.alpnClientSetting)
+	})
+	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes(m.alpnServerSetting)
+	})
 	return b.Bytes()
 }
 
-func (m *sessionStateTLS13) unmarshal(data []byte) bool {
+func (m *sessionStateTLS13) unmarshal(data []byte) (ok bool) {
 	*m = sessionStateTLS13{}
 	s := cryptobyte.String(data)
 	var version uint16
 	var revision uint8
-	return s.ReadUint16(&version) &&
+	var alpnProtocol []byte
+	ok = s.ReadUint16(&version) &&
 		version == VersionTLS13 &&
 		s.ReadUint8(&revision) &&
-		revision == 0 &&
+		revision == 3 &&
 		s.ReadUint16(&m.cipherSuite) &&
-		readUint64(&s, &m.createdAt) &&
+		s.ReadUint64(&m.createdAt) &&
+		s.ReadUint32(&m.ageAdd) &&
 		readUint8LengthPrefixed(&s, &m.resumptionSecret) &&
 		len(m.resumptionSecret) != 0 &&
 		unmarshalCertificate(&s, &m.certificate) &&
+		s.ReadUint32(&m.maxEarlyData) &&
+		readUint8LengthPrefixed(&s, &alpnProtocol) &&
+		readUint16LengthPrefixed(&s, &m.alpnClientSetting) &&
+		readUint16LengthPrefixed(&s, &m.alpnServerSetting) &&
 		s.Empty()
+	m.alpnProtocol = string(alpnProtocol)
+	return
 }
 
 func (c *Conn) encryptTicket(state []byte) ([]byte, error) {

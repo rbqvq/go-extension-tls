@@ -4,6 +4,7 @@ This repository is an extension of the golang standard library [crypto/go](https
 
 # Currently implements more TLS functions than the standard library
 
+- TLS 1.3 0RTT (Early Data) [ONLY FOR SERVER]
 - Compressed certificate
 - Application-Layer Protocol Settings (ALPS)
 - GREASE
@@ -14,8 +15,10 @@ This repository is an extension of the golang standard library [crypto/go](https
 
 # TODO
 
+- TLS 1.3 0RTT (Early Data) [Client side]
 - QUIC QTLS
 
 # Special thanks
 
 - [uTLS](https://github.com/refraction-networking/utls)
+- [Cloudflare tls-tris](https://github.com/cloudflare/tls-tris)

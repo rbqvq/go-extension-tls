@@ -124,7 +124,7 @@ func (hs *serverHandshakeState) handshake() error {
 	}
 
 	c.ekm = ekmFromMasterSecret(c.vers, hs.suite, hs.masterSecret, hs.clientHello.random, hs.hello.random)
-	c.isHandshakeComplete.Store(true)
+	c.handshakeState.Store(handshakeCompleted)
 
 	return nil
 }

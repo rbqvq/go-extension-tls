@@ -112,7 +112,7 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 		return err
 	}
 
-	c.isHandshakeComplete.Store(true)
+	c.handshakeState.Store(handshakeCompleted)
 
 	return nil
 }

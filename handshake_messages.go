@@ -32,23 +32,6 @@ func addBytesWithLength(b *cryptobyte.Builder, v []byte, n int) {
 	}))
 }
 
-// addUint64 appends a big-endian, 64-bit value to the cryptobyte.Builder.
-func addUint64(b *cryptobyte.Builder, v uint64) {
-	b.AddUint32(uint32(v >> 32))
-	b.AddUint32(uint32(v))
-}
-
-// readUint64 decodes a big-endian, 64-bit value into out and advances over it.
-// It reports whether the read was successful.
-func readUint64(s *cryptobyte.String, out *uint64) bool {
-	var hi, lo uint32
-	if !s.ReadUint32(&hi) || !s.ReadUint32(&lo) {
-		return false
-	}
-	*out = uint64(hi)<<32 | uint64(lo)
-	return true
-}
-
 // readUint8LengthPrefixed acts like s.ReadUint8LengthPrefixed, but targets a
 // []byte instead of a cryptobyte.String.
 func readUint8LengthPrefixed(s *cryptobyte.String, out *[]byte) bool {

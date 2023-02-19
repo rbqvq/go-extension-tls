@@ -235,6 +235,10 @@ type ConnectionState struct {
 	// previous session with a session ticket or similar mechanism.
 	DidResume bool
 
+	// Did0RTT is true if this connection was ssuccessfully 0RTT resumed from 
+	// a previous session with a session ticket or similar mechanism.
+	Did0RTT bool
+
 	// CipherSuite is the cipher suite negotiated for the connection (e.g.
 	// TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, TLS_AES_128_GCM_SHA256).
 	CipherSuite uint16
@@ -655,12 +659,12 @@ type Config struct {
 
 	// NextProtoSettings is a set of application settings (ALPS) to use
 	// with each application protocol (ALPN).
-	//
-	// Only for clients
 	NextProtoSettings map[string][]byte
 
 	// GetProtoSetting, if not nil, is called after a encrypted extension message
 	// it need negotiate applocation setting
+	//
+	// It only works on the client.
 	GetProtoSetting func(proto string, serverSetting []byte) ([]byte, bool)
 
 	// ServerName is used to verify the hostname on the returned
@@ -686,7 +690,7 @@ type Config struct {
 	// testing or in combination with VerifyConnection or VerifyPeerCertificate.
 	InsecureSkipVerify bool
 
-	// PreferCipherSuites control whether the client would follow the hardware's preference.
+	// PreferCipherSuites control whether cipher suites would follow the hardware's preference.
 	PreferCipherSuites bool
 
 	// CipherSuites is a list of enabled TLS 1.0–1.3 cipher suites.
@@ -756,13 +760,13 @@ type Config struct {
 	// CertCompressionDisabled disables TLS certificate compressions.
 	// When true, the certificate message will not be compressed.
 	//
-	// Only for TLS 1.3
+	// It only works on the TLS 1.3.
 	CertCompressionDisabled bool
 
 	// CertCompressionPreferences contains the compression that will be used in
 	// a certificate message, in preference order. If empty, the default will
 	// be used. The client will use the first preference as the type for
-	// its compress certificate in TLS 1.3. This may change in the future.
+	// its compress certificate in TLS 1.3.
 	CertCompressionPreferences []CertCompressionAlgorithm
 
 	// DynamicRecordSizingDisabled disables adaptive sizing of TLS records.
@@ -774,6 +778,28 @@ type Config struct {
 	// Renegotiation controls what types of renegotiation are supported.
 	// The default, none, is correct for the vast majority of applications.
 	Renegotiation RenegotiationSupport
+
+	// Allow0RTT makes the 0-RTT data received from the client
+	// immediately available to Read. 0-RTT data is subject to replay.
+	// Use Conn.ConfirmHandshake to wait until the data is known not
+	// to be replayed after reading it.
+	//
+	// It currently only works on the server.
+	//
+	// See https://tools.ietf.org/html/rfc8446#section-2.3.
+	Allow0RTT bool
+
+	// If Max0RTTData is not zero, the client will be allowed to use
+	// session tickets to send at most this number of bytes of 0-RTT data.
+	// 0-RTT data is subject to replay and has memory DoS implications.
+	// The server will later be able to refuse the 0-RTT data with
+	// Allow0RTT, or wait for the client to prove that it's not
+	// replayed with Conn.ConfirmHandshake.
+	//
+	// It only works on the server.
+	//
+	// See https://tools.ietf.org/html/rfc8446#section-2.3.
+	Max0RTTData uint32
 
 	// Extensions contains the tls extensions that will be used in client hello.
 	// If empty, the default will be used.
@@ -842,6 +868,11 @@ func (c *Config) ticketKeyFromBytes(b [32]byte) (key ticketKey) {
 // ticket, and the lifetime we set for tickets we send.
 const maxSessionTicketLifetime = 7 * 24 * time.Hour
 
+// Maximum allowed mismatch between the stated age of a ticket
+// and the server-observed one. See
+// https://tools.ietf.org/html/rfc8446#section-8.3
+const maxSessionTicketSkewAllowance = 10 * time.Second
+
 // Clone returns a shallow clone of c or nil if c is nil. It is safe to clone a Config that is
 // being used concurrently by a TLS client or server.
 func (c *Config) Clone() *Config {
@@ -882,6 +913,8 @@ func (c *Config) Clone() *Config {
 		CertCompressionPreferences:  c.CertCompressionPreferences,
 		DynamicRecordSizingDisabled: c.DynamicRecordSizingDisabled,
 		Renegotiation:               c.Renegotiation,
+		Allow0RTT:                   c.Allow0RTT,
+		Max0RTTData:                 c.Max0RTTData,
 		Extensions:                  c.Extensions,
 		KeyLogWriter:                c.KeyLogWriter,
 		sessionTicketKeys:           c.sessionTicketKeys,
@@ -1425,6 +1458,18 @@ func (c *Config) BuildNameToCertificate() {
 	}
 }
 
+func (c *Config) maxEarlyData() uint32 {
+	if c == nil || !c.Allow0RTT {
+		return 0
+	}
+
+	if c.Max0RTTData == 0 {
+		return 0
+	}
+
+	return c.Max0RTTData
+}
+
 func (c *Config) getExtensions() []Extension {
 	if c.Extensions != nil {
 		return c.Extensions
@@ -1435,6 +1480,7 @@ func (c *Config) getExtensions() []Extension {
 
 const (
 	keyLogLabelTLS12           = "CLIENT_RANDOM"
+	keyLogLabelClientEarly     = "CLIENT_EARLY_TRAFFIC_SECRET"
 	keyLogLabelClientHandshake = "CLIENT_HANDSHAKE_TRAFFIC_SECRET"
 	keyLogLabelServerHandshake = "SERVER_HANDSHAKE_TRAFFIC_SECRET"
 	keyLogLabelClientTraffic   = "CLIENT_TRAFFIC_SECRET_0"

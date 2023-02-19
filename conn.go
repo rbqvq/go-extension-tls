@@ -30,10 +30,7 @@ type Conn struct {
 	isClient    bool
 	handshakeFn func(context.Context) error // (*Conn).clientHandshake or serverHandshake
 
-	// isHandshakeComplete is true if the connection is currently transferring
-	// application data (i.e. is not currently processing a handshake).
-	// isHandshakeComplete is true implies handshakeErr == nil.
-	isHandshakeComplete atomic.Bool
+	handshakeState atomic.Uint32
 	// constant after handshake; protected by handshakeMutex
 	handshakeMutex sync.Mutex
 	handshakeErr   error   // error resulting from handshake
@@ -45,6 +42,7 @@ type Conn struct {
 	// zero or one.
 	handshakes       int
 	didResume        bool // whether this connection was a session resumption
+	did0RTT          bool // whether this connection was a 0-RTT session
 	cipherSuite      uint16
 	ocspResponse     []byte   // stapled OCSP response
 	scts             [][]byte // signed certificate timestamps from server
@@ -97,11 +95,11 @@ type Conn struct {
 	clientProtocolSetting []byte
 	// serverProtocolSetting is the negotiated ALPS protocol.
 	serverProtocolSetting []byte
-	
+
 	// input/output
 	in, out   halfConn
 	rawInput  bytes.Buffer // raw input, starting with a record header
-	input     bytes.Reader // application data waiting to be read, from rawInput.Next
+	input     bytes.Buffer // application data waiting to be read, from rawInput.Next
 	hand      bytes.Buffer // handshake data waiting to be read
 	buffering bool         // whether records are buffered in sendBuf
 	sendBuf   []byte       // a buffer of records waiting to be sent
@@ -116,12 +114,34 @@ type Conn struct {
 	// handshake, nor deliver application data. Protected by in.Mutex.
 	retryCount int
 
+	// maxEarlyData is the number of bytes of max early data received
+	maxEarlyData uint32
+
+	// earlyDataReceived is the number of bytes of early data received so
+	// far. Tracked to enforce max_early_data_size.
+	// We don't keep track of rejected 0-RTT data since there's no need
+	// to ever buffer it.
+	earlyDataReceived uint64
+
+	// earlyDataEOF is true if the client sent the EndOfEarlyData
+	// message during the handshake.
+	earlyDataEOF bool
+
+	// earlyNotify is a message channel for 0RTT handshake status
+	earlyNotify chan struct{}
+
 	// activeCall indicates whether Close has been call in the low bit.
 	// the rest of the bits are the number of goroutines in Conn.Write.
 	activeCall atomic.Int32
 
 	tmp [16]byte
 }
+
+const (
+	handshakeRunning uint32 = iota
+	handshake0RTT
+	handshakeCompleted
+)
 
 // Access to net.Conn methods.
 // Cannot just embed net.Conn because that would
@@ -609,13 +629,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 	if c.in.err != nil {
 		return c.in.err
 	}
-	handshakeComplete := c.isHandshakeComplete.Load()
-
-	// This function modifies c.rawInput, which owns the c.input memory.
-	if c.input.Len() != 0 {
-		return c.in.setErrorLocked(errors.New("tls: internal error: attempted to read record with pending application data"))
-	}
-	c.input.Reset(nil)
+	handshakeState := c.handshakeState.Load()
 
 	// Read header, payload.
 	if err := c.readFromUntil(c.conn, recordHeaderLen); err != nil {
@@ -637,7 +651,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 	// start with a uint16 length where the MSB is set and the first record
 	// is always < 256 bytes long. Therefore typ == 0x80 strongly suggests
 	// an SSLv2 client.
-	if !handshakeComplete && typ == 0x80 {
+	if handshakeState != handshakeCompleted && typ == 0x80 {
 		c.sendAlert(alertProtocolVersion)
 		return c.in.setErrorLocked(c.newRecordHeaderError(nil, "unsupported SSLv2 handshake received"))
 	}
@@ -682,6 +696,10 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 
 	// Application Data messages are always protected.
 	if c.in.cipher == nil && typ == recordTypeApplicationData {
+		if handshakeState == handshake0RTT {
+			// Skip Application Data when server rejected 0RTT
+			return nil
+		}
 		return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 	}
 
@@ -743,7 +761,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 		}
 
 	case recordTypeApplicationData:
-		if !handshakeComplete || expectChangeCipherSpec {
+		if handshakeState == handshakeRunning || (handshakeState == handshake0RTT && !c.earlyDataEOF) || expectChangeCipherSpec {
 			return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 		}
 		// Some OpenSSL servers send empty records in order to randomize the
@@ -754,7 +772,12 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 		// Note that data is owned by c.rawInput, following the Next call above,
 		// to avoid copying the plaintext. This is safe because c.rawInput is
 		// not read from or written to until c.input is drained.
-		c.input.Reset(data)
+		c.input.Write(data)
+		if handshakeState == handshake0RTT {
+			if atomic.AddUint64(&c.earlyDataReceived, uint64(len(data))) > uint64(c.maxEarlyData) {
+				return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+			}
+		}
 
 	case recordTypeHandshake:
 		if len(data) == 0 || expectChangeCipherSpec {
@@ -1039,6 +1062,10 @@ func (c *Conn) writeChangeCipherRecord() error {
 // the record layer. If transcript is non-nil, the message
 // is written to the passed transcriptHash.
 func (c *Conn) readHandshake(transcript transcriptHash) (any, error) {
+	if c.hand.Len() == 0 {
+		c.hand.Reset()
+	}
+
 	for c.hand.Len() < 4 {
 		if err := c.readRecord(); err != nil {
 			return nil, err
@@ -1161,7 +1188,7 @@ func (c *Conn) Write(b []byte) (int, error) {
 		return 0, err
 	}
 
-	if !c.isHandshakeComplete.Load() {
+	if handshakeState := c.handshakeState.Load(); handshakeState != handshakeCompleted && handshakeState != handshake0RTT {
 		return 0, alertInternalError
 	}
 
@@ -1231,7 +1258,7 @@ func (c *Conn) handleRenegotiation() error {
 	c.handshakeMutex.Lock()
 	defer c.handshakeMutex.Unlock()
 
-	c.isHandshakeComplete.Store(false)
+	c.handshakeState.Store(handshakeRunning)
 	if c.handshakeErr = c.clientHandshake(context.Background()); c.handshakeErr == nil {
 		c.handshakes++
 	}
@@ -1257,6 +1284,8 @@ func (c *Conn) handlePostHandshakeMessage() error {
 	}
 
 	switch msg := msg.(type) {
+	case *endOfEarlyDataMsg:
+		return c.handleEndOfEarlyData(msg)
 	case *newSessionTicketMsgTLS13:
 		return c.handleNewSessionTicket(msg)
 	case *keyUpdateMsg:
@@ -1318,6 +1347,9 @@ func (c *Conn) Read(b []byte) (int, error) {
 	c.in.Lock()
 	defer c.in.Unlock()
 
+	if c.input.Len() == 0 {
+		c.input.Reset()
+	}
 	for c.input.Len() == 0 {
 		if err := c.readRecord(); err != nil {
 			return 0, err
@@ -1372,7 +1404,7 @@ func (c *Conn) Close() error {
 	}
 
 	var alertErr error
-	if c.isHandshakeComplete.Load() {
+	if c.handshakeState.Load() == handshakeCompleted {
 		if err := c.closeNotify(); err != nil {
 			alertErr = fmt.Errorf("tls: failed to send closeNotify alert (but connection was closed anyway): %w", err)
 		}
@@ -1390,7 +1422,7 @@ var errEarlyCloseWrite = errors.New("tls: CloseWrite called before handshake com
 // called once the handshake has completed and does not call CloseWrite on the
 // underlying connection. Most callers should just use Close.
 func (c *Conn) CloseWrite() error {
-	if !c.isHandshakeComplete.Load() {
+	if c.handshakeState.Load() != handshakeCompleted {
 		return errEarlyCloseWrite
 	}
 
@@ -1444,7 +1476,7 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
 	// Fast sync/atomic-based exit if there is no handshake in flight and the
 	// last one succeeded without an error. Avoids the expensive context setup
 	// and mutex for most Read and Write calls.
-	if c.isHandshakeComplete.Load() {
+	if handshakeState := c.handshakeState.Load(); handshakeState == handshakeCompleted {
 		return nil
 	}
 
@@ -1487,7 +1519,7 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
 	if err := c.handshakeErr; err != nil {
 		return err
 	}
-	if c.isHandshakeComplete.Load() {
+	if handshakeState := c.handshakeState.Load(); handshakeState == handshakeCompleted || handshakeState == handshake0RTT {
 		return nil
 	}
 
@@ -1503,10 +1535,10 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
 		c.flush()
 	}
 
-	if c.handshakeErr == nil && !c.isHandshakeComplete.Load() {
+	if c.handshakeErr == nil && c.handshakeState.Load() == handshakeRunning {
 		c.handshakeErr = errors.New("tls: internal error: handshake should have had a result")
 	}
-	if c.handshakeErr != nil && c.isHandshakeComplete.Load() {
+	if c.handshakeErr != nil && c.handshakeState.Load() == handshakeCompleted {
 		panic("tls: internal error: handshake returned an error but is marked successful")
 	}
 
@@ -1522,12 +1554,13 @@ func (c *Conn) ConnectionState() ConnectionState {
 
 func (c *Conn) connectionStateLocked() ConnectionState {
 	var state ConnectionState
-	state.HandshakeComplete = c.isHandshakeComplete.Load()
+	state.HandshakeComplete = c.handshakeState.Load() == handshakeCompleted
 	state.Version = c.vers
 	state.NegotiatedProtocol = c.clientProtocol
 	state.ClientProtocolSetting = c.clientProtocolSetting
 	state.ServerProtocolSetting = c.serverProtocolSetting
 	state.DidResume = c.didResume
+	state.Did0RTT = c.did0RTT
 	state.NegotiatedProtocolIsMutual = true
 	state.ServerName = c.serverName
 	state.CipherSuite = c.cipherSuite
@@ -1568,11 +1601,64 @@ func (c *Conn) VerifyHostname(host string) error {
 	if !c.isClient {
 		return errors.New("tls: VerifyHostname called on TLS server connection")
 	}
-	if !c.isHandshakeComplete.Load() {
+	if c.handshakeState.Load() != handshakeCompleted {
 		return errors.New("tls: handshake has not yet been performed")
 	}
 	if len(c.verifiedChains) == 0 {
 		return errors.New("tls: handshake did not verify certificate chain")
 	}
 	return c.peerCertificates[0].VerifyHostname(host)
+}
+
+// ConfirmHandshake waits for the handshake to reach a point at which
+// the connection is certainly not replayed. That is, after receiving
+// the Client Finished.
+//
+// If ConfirmHandshake returns an error and until ConfirmHandshake
+// returns, the 0-RTT data should not be trusted not to be replayed.
+//
+// This is only meaningful in TLS 1.3 when Allow0RTT is true and the
+// client sent valid 0-RTT data. In any other case it's equivalent to
+// calling Handshake.
+func (c *Conn) ConfirmHandshake() error {
+	if err := c.Handshake(); err != nil {
+		return err
+	}
+
+	if c.isClient || c.vers < VersionTLS13 {
+		return nil
+	}
+
+	if c.handshakeState.Load() == handshakeCompleted {
+		return nil
+	}
+
+	c.handshakeMutex.Lock()
+	defer c.handshakeMutex.Unlock()
+
+	if c.handshakeState.Load() == handshakeCompleted {
+		return nil
+	}
+
+	c.in.Lock()
+	defer c.in.Unlock()
+
+	// Try to read all early data
+	if c.input.Len() == 0 {
+		c.input.Reset()
+	}
+
+	for c.handshakeState.Load() == handshake0RTT {
+		if err := c.readRecord(); err != nil {
+			return err
+		}
+
+		for c.hand.Len() > 0 {
+			if err := c.handlePostHandshakeMessage(); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }

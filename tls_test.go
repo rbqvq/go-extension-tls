@@ -836,6 +836,10 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf([]CurveID{CurveP256}))
 		case "Renegotiation":
 			f.Set(reflect.ValueOf(RenegotiateOnceAsClient))
+		case "Allow0RTT":
+			f.Set(reflect.ValueOf(true))
+		case "Max0RTTData":
+			f.Set(reflect.ValueOf(uint32(2048)))
 		case "Extensions":
 			f.Set(reflect.ValueOf([]Extension{&ServerNameIndicationExtension{}}))
 		case "mutex", "autoSessionTicketKeys", "sessionTicketKeys":
