@@ -11,4 +11,7 @@ require (
 	golang.org/x/sys v0.5.0
 )
 
-require gitlab.com/go-extension/aes-ccm v0.0.0-20230221065045-e58665ef23c7
+require (
+	github.com/RyuaNerin/go-krypto v1.0.2
+	gitlab.com/go-extension/aes-ccm v0.0.0-20230221065045-e58665ef23c7
+)
