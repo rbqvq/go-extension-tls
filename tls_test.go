@@ -1633,6 +1633,12 @@ func TestCipherSuites(t *testing.T) {
 			} else if aSuite.flags&suiteECSign == 0 && bSuite.flags&suiteECSign != 0 {
 				return false
 			}
+			// * < SHA384
+			if aSuite.flags&suiteSHA384 == 0 && bSuite.flags&suiteSHA384 != 0 {
+				return true
+			} else if aSuite.flags&suiteSHA384 != 0 && bSuite.flags&suiteSHA384 == 0 {
+				return false
+			}
 			t.Fatalf("two ciphersuites are equal by all criteria: %v and %v", aName, bName)
 			panic("unreachable")
 		}
@@ -1664,6 +1670,7 @@ func http2isBadCipher(cipher uint16) bool {
 		TLS_ECDHE_ECDSA_WITH_RC4_128_SHA,
 		TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
 		TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+		TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384,
 		TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256,
 		TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384,
 		TLS_ECDHE_RSA_WITH_RC4_128_SHA,
