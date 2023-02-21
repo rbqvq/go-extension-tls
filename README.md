@@ -4,6 +4,7 @@ This repository is an extension of the golang standard library [crypto/go](https
 
 # Currently implements more TLS functions than the standard library
 
+- AES CCM cipher
 - TLS 1.3 0RTT (Early Data) [ONLY FOR SERVER]
 - Compressed certificate
 - Application-Layer Protocol Settings (ALPS)
@@ -12,6 +13,10 @@ This repository is an extension of the golang standard library [crypto/go](https
 - Custom cipher suites in tls 1.3
 - Custom supported version list
 - Custom extension
+
+# Beta
+
+- Kernel TLS (See `ktls` branch)
 
 # TODO
 

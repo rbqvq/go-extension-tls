@@ -10,3 +10,5 @@ require (
 	github.com/rogpeppe/go-internal v1.9.0
 	golang.org/x/sys v0.5.0
 )
+
+require gitlab.com/go-extension/aes-ccm v0.0.0-20230221065045-e58665ef23c7

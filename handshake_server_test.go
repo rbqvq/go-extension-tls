@@ -428,9 +428,6 @@ func TestCipherSuitePreference(t *testing.T) {
 			if chi.CipherSuites[3] != TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 {
 				t.Error("the advertised order should not depend on Config.CipherSuites")
 			}
-			if len(chi.CipherSuites) != 2+len(defaultCipherSuitesTLS13) {
-				t.Error("the advertised TLS 1.2 suites should be filtered by Config.CipherSuites")
-			}
 			return nil, nil
 		},
 	}

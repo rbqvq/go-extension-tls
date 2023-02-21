@@ -157,7 +157,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	switch {
 	case c.config.PreferCipherSuites:
 		preferenceOrder = configCipherSuites
-	case !hasAESGCMHardwareSupport, !aesgcmPreferred(hs.clientHello.cipherSuites):
+	case !hasAESGCMHardwareSupport, !aesPreferred(hs.clientHello.cipherSuites):
 		preferenceOrder = defaultCipherSuitesTLS13NoAES
 	default:
 		preferenceOrder = defaultCipherSuitesTLS13

@@ -1519,18 +1519,30 @@ func TestCipherSuites(t *testing.T) {
 				} else if strings.Contains(aName, "CHACHA20") && strings.Contains(bName, "AES") {
 					return i != 0 // true for cipherSuitesPreferenceOrderNoAES
 				}
+				// AES-GCM < AES-CCM
+				if strings.Contains(aName, "GCM") && strings.Contains(bName, "CCM") {
+					return true
+				} else if strings.Contains(aName, "CCM") && strings.Contains(bName, "GCM") {
+					return false
+				}
 				// AES-128 < AES-256
 				if strings.Contains(aName, "AES_128") && strings.Contains(bName, "AES_256") {
 					return true
 				} else if strings.Contains(aName, "AES_256") && strings.Contains(bName, "AES_128") {
 					return false
 				}
+				// AES-CCM < AES-CCM-8
+				if !strings.Contains(aName, "CCM_8") && strings.Contains(bName, "CCM_8") {
+					return true
+				} else if strings.Contains(aName, "CCM_8") && !strings.Contains(bName, "CCM_8") {
+					return false
+				}
 				t.Fatalf("two ciphersuites are equal by all criteria: %v and %v", aName, bName)
 				panic("unreachable")
-			case aSuite13 != nil: // aSuite13 is TLS 1.3 cipher, bSuite13 is TLS 1.3 cipher
+			case aSuite13 != nil: // aSuite13 is TLS 1.3 cipher, bSuite13 is TLS 1.2 cipher
 				// TLS 1.3 < TLS 1.2
 				return true
-			case bSuite13 != nil: // bSuite13 is TLS 1.3 cipher, aSuite13 is TLS 1.3 cipher
+			case bSuite13 != nil: // bSuite13 is TLS 1.3 cipher, aSuite13 is TLS 1.2 cipher
 				// TLS 1.3 < TLS 1.2
 				return false
 			default: // Both TLS 1.2 cipher
@@ -1573,10 +1585,22 @@ func TestCipherSuites(t *testing.T) {
 			} else if strings.Contains(aName, "CHACHA20") && strings.Contains(bName, "AES") {
 				return i != 0 // true for cipherSuitesPreferenceOrderNoAES
 			}
+			// AES-GCM < AES-CCM
+			if strings.Contains(aName, "GCM") && strings.Contains(bName, "CCM") {
+				return true
+			} else if strings.Contains(aName, "CCM") && strings.Contains(bName, "GCM") {
+				return false
+			}
 			// AES-128 < AES-256
 			if strings.Contains(aName, "AES_128") && strings.Contains(bName, "AES_256") {
 				return true
 			} else if strings.Contains(aName, "AES_256") && strings.Contains(bName, "AES_128") {
+				return false
+			}
+			// AES-CCM < AES-CCM-8
+			if !strings.Contains(aName, "CCM_8") && strings.Contains(bName, "CCM_8") {
+				return true
+			} else if strings.Contains(aName, "CCM_8") && !strings.Contains(bName, "CCM_8") {
 				return false
 			}
 			// ECDSA < RSA
@@ -1605,6 +1629,10 @@ func http2isBadCipher(cipher uint16) bool {
 		TLS_RSA_WITH_AES_128_CBC_SHA256,
 		TLS_RSA_WITH_AES_128_GCM_SHA256,
 		TLS_RSA_WITH_AES_256_GCM_SHA384,
+		TLS_RSA_WITH_AES_128_CCM_SHA256,
+		TLS_RSA_WITH_AES_256_CCM_SHA256,
+		TLS_RSA_WITH_AES_128_CCM_8_SHA256,
+		TLS_RSA_WITH_AES_256_CCM_8_SHA256,
 		TLS_ECDHE_ECDSA_WITH_RC4_128_SHA,
 		TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
 		TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,

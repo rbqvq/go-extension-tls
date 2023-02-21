@@ -368,7 +368,7 @@ func (hs *serverHandshakeState) pickCipherSuite() error {
 	switch {
 	case config.PreferCipherSuites:
 		preferenceOrder = config.CipherSuites
-	case !hasAESGCMHardwareSupport, !aesgcmPreferred(hs.clientHello.cipherSuites):
+	case !hasAESGCMHardwareSupport, !aesPreferred(hs.clientHello.cipherSuites):
 		preferenceOrder = cipherSuitesPreferenceOrderNoAES
 	default:
 		preferenceOrder = cipherSuitesPreferenceOrder
