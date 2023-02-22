@@ -4,8 +4,9 @@ This repository is an extension of the golang standard library [crypto/go](https
 
 # Currently implements more TLS functions than the standard library
 
-- ARIA cipher
 - AES CCM cipher
+- ARIA cipher
+- CEMALLIA cipher
 - TLS 1.3 0RTT (Early Data) [ONLY FOR SERVER]
 - Compressed certificate
 - Application-Layer Protocol Settings (ALPS)
