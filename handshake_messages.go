@@ -2211,6 +2211,7 @@ func (m *newSessionTicketMsg) marshal() ([]byte, error) {
 	var b cryptobyte.Builder
 	b.AddUint8(typeNewSessionTicket)
 	b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddUint32(0)
 		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 			b.AddBytes(m.ticket)
 		})
@@ -2226,6 +2227,10 @@ func (m *newSessionTicketMsg) unmarshal(data []byte) bool {
 	s := cryptobyte.String(data)
 
 	if !s.Skip(4) { // message type and uint24 length field
+		return false
+	}
+
+	if !s.Skip(4) {
 		return false
 	}
 	return readUint16LengthPrefixed(&s, &m.ticket) && s.Empty()
