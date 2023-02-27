@@ -201,6 +201,9 @@ type halfConn struct {
 	nextMac    hash.Hash // next MAC algorithm
 
 	trafficSecret []byte // current TLS 1.3 traffic secret
+
+	key []byte // encrypt or decrypt key for kernel tls
+	iv  []byte // encrypt or decrypt iv for kernel tls
 }
 
 type permanentError struct {
@@ -247,8 +250,8 @@ func (hc *halfConn) changeCipherSpec() error {
 
 func (hc *halfConn) setTrafficSecret(suite *cipherSuiteTLS13, secret []byte) {
 	hc.trafficSecret = secret
-	key, iv := suite.trafficKey(secret)
-	hc.cipher = suite.aead(key, iv)
+	hc.key, hc.iv = suite.trafficKey(secret)
+	hc.cipher = suite.aead(hc.key, hc.iv)
 	for i := range hc.seq {
 		hc.seq[i] = 0
 	}
@@ -288,9 +291,16 @@ func (hc *halfConn) explicitNonceLen() int {
 			return c.BlockSize()
 		}
 		return 0
+	case *kernelCipher:
+		return 0
 	default:
 		panic("unknown cipher type")
 	}
+}
+
+func (c *halfConn) usingKernel() (ok bool) {
+	_, ok = c.cipher.(*kernelCipher)
+	return
 }
 
 // extractPadding returns, in constant time, the length of the padding to remove
@@ -603,6 +613,79 @@ func (c *Conn) newRecordHeaderError(conn net.Conn, msg string) (err RecordHeader
 	return err
 }
 
+func (c *Conn) readRawRecord(handshakeState uint32) (typ recordType, data []byte, err error) {
+	// Read from kernel.
+	if c.in.usingKernel() {
+		return c.readKernelRecord(handshakeState)
+	}
+
+	// Read header, payload.
+	if err = c.readFromUntil(c.conn, recordHeaderLen); err != nil {
+		// RFC 8446, Section 6.1 suggests that EOF without an alertCloseNotify
+		// is an error, but popular web sites seem to do this, so we accept it
+		// if and only if at the record boundary.
+		if err == io.ErrUnexpectedEOF && c.rawInput.Len() == 0 {
+			err = io.EOF
+		}
+		if e, ok := err.(net.Error); !ok || !e.Temporary() {
+			c.in.setErrorLocked(err)
+		}
+		return
+	}
+	hdr := c.rawInput.Bytes()[:recordHeaderLen]
+	typ = recordType(hdr[0])
+
+	// No valid TLS record has a type of 0x80, however SSLv2 handshakes
+	// start with a uint16 length where the MSB is set and the first record
+	// is always < 256 bytes long. Therefore typ == 0x80 strongly suggests
+	// an SSLv2 client.
+	if handshakeState != handshakeCompleted && typ == 0x80 {
+		c.sendAlert(alertProtocolVersion)
+		err = c.in.setErrorLocked(c.newRecordHeaderError(nil, "unsupported SSLv2 handshake received"))
+		return
+	}
+
+	vers := uint16(hdr[1])<<8 | uint16(hdr[2])
+	n := int(hdr[3])<<8 | int(hdr[4])
+	if c.haveVers && c.vers != VersionTLS13 && vers != c.vers {
+		c.sendAlert(alertProtocolVersion)
+		msg := fmt.Sprintf("received record with version %x when expecting version %x", vers, c.vers)
+		err = c.in.setErrorLocked(c.newRecordHeaderError(nil, msg))
+		return
+	}
+	if !c.haveVers {
+		// First message, be extra suspicious: this might not be a TLS
+		// client. Bail out before reading a full 'body', if possible.
+		// The current max version is 3.3 so if the version is >= 16.0,
+		// it's probably not real.
+		if (typ != recordTypeAlert && typ != recordTypeHandshake) || vers >= 0x1000 {
+			err = c.in.setErrorLocked(c.newRecordHeaderError(c.conn, "first record does not look like a TLS handshake"))
+			return
+		}
+	}
+	if c.vers == VersionTLS13 && n > maxCiphertextTLS13 || n > maxCiphertext {
+		c.sendAlert(alertRecordOverflow)
+		msg := fmt.Sprintf("oversized record received with length %d", n)
+		err = c.in.setErrorLocked(c.newRecordHeaderError(nil, msg))
+		return
+	}
+	if err = c.readFromUntil(c.conn, recordHeaderLen+n); err != nil {
+		if e, ok := err.(net.Error); !ok || !e.Temporary() {
+			c.in.setErrorLocked(err)
+		}
+		return
+	}
+
+	// Process message.
+	record := c.rawInput.Next(recordHeaderLen + n)
+	data, typ, err = c.in.decrypt(record)
+	if err != nil {
+		err = c.in.setErrorLocked(c.sendAlert(err.(alert)))
+		return
+	}
+	return
+}
+
 func (c *Conn) readRecord() error {
 	return c.readRecordOrCCS(false)
 }
@@ -631,65 +714,11 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 	}
 	handshakeState := c.handshakeState.Load()
 
-	// Read header, payload.
-	if err := c.readFromUntil(c.conn, recordHeaderLen); err != nil {
-		// RFC 8446, Section 6.1 suggests that EOF without an alertCloseNotify
-		// is an error, but popular web sites seem to do this, so we accept it
-		// if and only if at the record boundary.
-		if err == io.ErrUnexpectedEOF && c.rawInput.Len() == 0 {
-			err = io.EOF
-		}
-		if e, ok := err.(net.Error); !ok || !e.Temporary() {
-			c.in.setErrorLocked(err)
-		}
-		return err
-	}
-	hdr := c.rawInput.Bytes()[:recordHeaderLen]
-	typ := recordType(hdr[0])
-
-	// No valid TLS record has a type of 0x80, however SSLv2 handshakes
-	// start with a uint16 length where the MSB is set and the first record
-	// is always < 256 bytes long. Therefore typ == 0x80 strongly suggests
-	// an SSLv2 client.
-	if handshakeState != handshakeCompleted && typ == 0x80 {
-		c.sendAlert(alertProtocolVersion)
-		return c.in.setErrorLocked(c.newRecordHeaderError(nil, "unsupported SSLv2 handshake received"))
-	}
-
-	vers := uint16(hdr[1])<<8 | uint16(hdr[2])
-	n := int(hdr[3])<<8 | int(hdr[4])
-	if c.haveVers && c.vers != VersionTLS13 && vers != c.vers {
-		c.sendAlert(alertProtocolVersion)
-		msg := fmt.Sprintf("received record with version %x when expecting version %x", vers, c.vers)
-		return c.in.setErrorLocked(c.newRecordHeaderError(nil, msg))
-	}
-	if !c.haveVers {
-		// First message, be extra suspicious: this might not be a TLS
-		// client. Bail out before reading a full 'body', if possible.
-		// The current max version is 3.3 so if the version is >= 16.0,
-		// it's probably not real.
-		if (typ != recordTypeAlert && typ != recordTypeHandshake) || vers >= 0x1000 {
-			return c.in.setErrorLocked(c.newRecordHeaderError(c.conn, "first record does not look like a TLS handshake"))
-		}
-	}
-	if c.vers == VersionTLS13 && n > maxCiphertextTLS13 || n > maxCiphertext {
-		c.sendAlert(alertRecordOverflow)
-		msg := fmt.Sprintf("oversized record received with length %d", n)
-		return c.in.setErrorLocked(c.newRecordHeaderError(nil, msg))
-	}
-	if err := c.readFromUntil(c.conn, recordHeaderLen+n); err != nil {
-		if e, ok := err.(net.Error); !ok || !e.Temporary() {
-			c.in.setErrorLocked(err)
-		}
-		return err
-	}
-
-	// Process message.
-	record := c.rawInput.Next(recordHeaderLen + n)
-	data, typ, err := c.in.decrypt(record)
+	typ, data, err := c.readRawRecord(handshakeState)
 	if err != nil {
-		return c.in.setErrorLocked(c.sendAlert(err.(alert)))
+		return err
 	}
+
 	if len(data) > maxPlaintext {
 		return c.in.setErrorLocked(c.sendAlert(alertRecordOverflow))
 	}
@@ -919,6 +948,9 @@ func (c *Conn) maxPayloadSizeForWrite(typ recordType) int {
 			// The MAC is appended before padding so affects the
 			// payload size directly.
 			payloadBytes -= c.out.mac.Size()
+		case *kernelCipher:
+			payloadBytes -= kernelOverhead
+
 		default:
 			panic("unknown cipher type")
 		}
@@ -974,6 +1006,10 @@ var outBufPool = sync.Pool{
 // writeRecordLocked writes a TLS record with the given type and payload to the
 // connection and updates the record layer state.
 func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
+	if c.out.usingKernel() {
+		return c.writeKernelRecord(typ, data)
+	}
+
 	outBufPtr := outBufPool.Get().(*[]byte)
 	outBuf := *outBufPtr
 	defer func() {

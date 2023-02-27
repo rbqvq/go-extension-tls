@@ -7,6 +7,7 @@ This repository is an extension of the golang standard library [crypto/go](https
 - AES CCM cipher
 - ARIA cipher
 - CEMALLIA cipher
+- Kernel TLS
 - TLS 1.3 0RTT (Early Data) [ONLY FOR SERVER]
 - Compressed certificate
 - Application-Layer Protocol Settings (ALPS)
@@ -15,10 +16,6 @@ This repository is an extension of the golang standard library [crypto/go](https
 - Custom cipher suites in tls 1.3
 - Custom supported version list
 - Custom extension
-
-# Beta
-
-- Kernel TLS (See `ktls` branch)
 
 # TODO
 
@@ -29,3 +26,4 @@ This repository is an extension of the golang standard library [crypto/go](https
 
 - [uTLS](https://github.com/refraction-networking/utls)
 - [Cloudflare tls-tris](https://github.com/cloudflare/tls-tris)
+- [goktls](https://github.com/secure-for-ai/goktls/)

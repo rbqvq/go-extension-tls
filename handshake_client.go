@@ -533,6 +533,9 @@ func (hs *clientHandshakeState) handshake() error {
 		if _, err := c.flush(); err != nil {
 			return err
 		}
+		if err := c.setup(c.cipherSuite); err != nil {
+			return err
+		}
 	} else {
 		if err := hs.doFullHandshake(); err != nil {
 			return err
@@ -553,11 +556,13 @@ func (hs *clientHandshakeState) handshake() error {
 		if err := hs.readFinished(c.serverFinished[:]); err != nil {
 			return err
 		}
+		if err := c.setup(c.cipherSuite); err != nil {
+			return err
+		}
 	}
 
 	c.ekm = ekmFromMasterSecret(c.vers, hs.suite, hs.masterSecret, hs.hello.random, hs.serverHello.random)
 	c.handshakeState.Store(handshakeCompleted)
-
 	return nil
 }
 
@@ -767,6 +772,8 @@ func (hs *clientHandshakeState) establishKeys() error {
 		serverCipher = hs.suite.aead(serverKey, serverIV)
 	}
 
+	c.in.key, c.in.iv = serverKey, serverIV
+	c.out.key, c.out.iv = clientKey, clientIV
 	c.in.prepareCipherSpec(c.vers, serverCipher, serverHash)
 	c.out.prepareCipherSpec(c.vers, clientCipher, clientHash)
 	return nil

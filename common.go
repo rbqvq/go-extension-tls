@@ -235,7 +235,7 @@ type ConnectionState struct {
 	// previous session with a session ticket or similar mechanism.
 	DidResume bool
 
-	// Did0RTT is true if this connection was ssuccessfully 0RTT resumed from 
+	// Did0RTT is true if this connection was ssuccessfully 0RTT resumed from
 	// a previous session with a session ticket or similar mechanism.
 	Did0RTT bool
 
@@ -814,6 +814,12 @@ type Config struct {
 	// used for debugging.
 	KeyLogWriter io.Writer
 
+	// KernelTX and KernelRX control whether the kernel TLS module is enabled
+	// If the kernel is not supported, it is automatically downgraded to the application implementation
+	//
+	// If this option is enabled, please mount the TLS module before you run application.
+	KernelTX, KernelRX bool
+
 	// mutex protects sessionTicketKeys and autoSessionTicketKeys.
 	mutex sync.RWMutex
 	// sessionTicketKeys contains zero or more ticket keys. If set, it means
@@ -917,6 +923,8 @@ func (c *Config) Clone() *Config {
 		Max0RTTData:                 c.Max0RTTData,
 		Extensions:                  c.Extensions,
 		KeyLogWriter:                c.KeyLogWriter,
+		KernelTX:                    c.KernelTX,
+		KernelRX:                    c.KernelRX,
 		sessionTicketKeys:           c.sessionTicketKeys,
 		autoSessionTicketKeys:       c.autoSessionTicketKeys,
 	}

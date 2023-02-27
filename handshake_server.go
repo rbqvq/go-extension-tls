@@ -95,6 +95,9 @@ func (hs *serverHandshakeState) handshake() error {
 		if err := hs.readFinished(nil); err != nil {
 			return err
 		}
+		if err := c.setup(c.cipherSuite); err != nil {
+			return err
+		}
 	} else {
 		// The client didn't include a session ticket, or it wasn't
 		// valid so we do a full handshake.
@@ -121,11 +124,13 @@ func (hs *serverHandshakeState) handshake() error {
 		if _, err := c.flush(); err != nil {
 			return err
 		}
+		if err := c.setup(c.cipherSuite); err != nil {
+			return err
+		}
 	}
 
 	c.ekm = ekmFromMasterSecret(c.vers, hs.suite, hs.masterSecret, hs.clientHello.random, hs.hello.random)
 	c.handshakeState.Store(handshakeCompleted)
-
 	return nil
 }
 
@@ -733,6 +738,8 @@ func (hs *serverHandshakeState) establishKeys() error {
 		serverCipher = hs.suite.aead(serverKey, serverIV)
 	}
 
+	c.in.key, c.in.iv = clientKey, clientIV
+	c.out.key, c.out.iv = serverKey, serverIV
 	c.in.prepareCipherSpec(c.vers, clientCipher, clientHash)
 	c.out.prepareCipherSpec(c.vers, serverCipher, serverHash)
 

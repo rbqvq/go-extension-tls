@@ -111,6 +111,9 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 	if _, err := c.flush(); err != nil {
 		return err
 	}
+	if err := c.setup(c.cipherSuite); err != nil {
+		return err
+	}
 
 	c.handshakeState.Store(handshakeCompleted)
 
