@@ -161,7 +161,7 @@ func (c *Conn) setup(cipherSuite uint16) error {
 				return
 			}
 
-			if kernel.TLS_RX_NOPAD {
+			if c.vers >= VersionTLS13 && kernel.TLS_RX_NOPAD {
 				er = syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_RX_EXPECT_NO_PAD, 1)
 				if er != nil {
 					return
