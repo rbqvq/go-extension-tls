@@ -99,7 +99,7 @@ func init() {
 	}
 }
 
-func (c *Conn) setup(cipherSuite uint16) error {
+func (c *Conn) setup() error {
 	if !kernel.TLS_TX || (!c.config.KernelTX && !c.config.KernelRX) {
 		return nil
 	}
@@ -122,11 +122,11 @@ func (c *Conn) setup(cipherSuite uint16) error {
 	switch c.vers {
 	case VersionTLS12:
 		if kernel.TLS_RX && c.config.KernelRX {
-			in = c.in.kernelCipher(cipherSuite)
+			in = c.in.kernelCipher(c.cipherSuite)
 		}
 
 		if c.config.KernelTX {
-			out = c.out.kernelCipher(cipherSuite)
+			out = c.out.kernelCipher(c.cipherSuite)
 		}
 	case VersionTLS13:
 		if !kernel.TLS_Version13 {
@@ -134,11 +134,11 @@ func (c *Conn) setup(cipherSuite uint16) error {
 		}
 
 		if kernel.TLS_RX && c.config.KernelRX {
-			in = c.in.kernelCipher(cipherSuite)
+			in = c.in.kernelCipher(c.cipherSuite)
 		}
 
 		if c.config.KernelTX {
-			out = c.out.kernelCipher(cipherSuite)
+			out = c.out.kernelCipher(c.cipherSuite)
 		}
 	default:
 		return nil

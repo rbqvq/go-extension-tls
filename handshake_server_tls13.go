@@ -914,7 +914,7 @@ func (hs *serverHandshakeStateTLS13) readClient() (err error) {
 	if err = hs.readClientFinished(); err != nil {
 		return
 	}
-	if err = c.setup(c.cipherSuite); err != nil {
+	if err = c.setup(); err != nil {
 		return err
 	}
 

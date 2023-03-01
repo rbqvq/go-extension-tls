@@ -95,7 +95,7 @@ func (hs *serverHandshakeState) handshake() error {
 		if err := hs.readFinished(nil); err != nil {
 			return err
 		}
-		if err := c.setup(c.cipherSuite); err != nil {
+		if err := c.setup(); err != nil {
 			return err
 		}
 	} else {
@@ -124,7 +124,7 @@ func (hs *serverHandshakeState) handshake() error {
 		if _, err := c.flush(); err != nil {
 			return err
 		}
-		if err := c.setup(c.cipherSuite); err != nil {
+		if err := c.setup(); err != nil {
 			return err
 		}
 	}

@@ -8,7 +8,7 @@ package tls
 
 const kernelOverhead = 0
 
-func (c *Conn) setup(cipherSuiteID uint16) error {
+func (c *Conn) setup() error {
 	return nil
 }
 
