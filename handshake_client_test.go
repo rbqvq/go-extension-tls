@@ -1045,7 +1045,7 @@ func testResumption(t *testing.T, version uint16) {
 		// Reset serverConfig back.
 		serverConfig = &Config{
 			MaxVersion:   version,
-			CipherSuites: []uint16{TLS_RSA_WITH_RC4_128_SHA, TLS_ECDHE_RSA_WITH_RC4_128_SHA},
+			CipherSuites: []uint16{TLS_RSA_WITH_RC4_128_SHA, TLS_ECDHE_RSA_WITH_RC4_128_SHA, TLS_AES_128_GCM_SHA256},
 			Certificates: testConfig.Certificates,
 		}
 	}
