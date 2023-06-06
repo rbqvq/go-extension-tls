@@ -284,6 +284,8 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 		}
 	}
 
+	hs.hello.automaticPadding(c.config.MinClientHelloSize)
+
 	if _, err := hs.c.writeHandshakeRecord(hs.hello, hs.transcript); err != nil {
 		return err
 	}

@@ -246,6 +246,8 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		}()
 	}
 
+	hello.automaticPadding(c.config.MinClientHelloSize)
+
 	if _, err := c.writeHandshakeRecord(hello, nil); err != nil {
 		return err
 	}
@@ -445,6 +447,9 @@ func (c *Conn) loadSession(hello *clientHelloMsg) (cacheKey string,
 	earlySecret = cipherSuite.extract(psk, nil)
 	binderKey = cipherSuite.deriveSecret(earlySecret, resumptionBinderLabel, nil)
 	transcript := cipherSuite.hash.New()
+
+	hello.automaticPadding(c.config.MinClientHelloSize)
+
 	helloBytes, err := hello.marshalWithoutBinders()
 	if err != nil {
 		return "", nil, nil, nil, err

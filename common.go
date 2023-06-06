@@ -801,6 +801,12 @@ type Config struct {
 	// See https://tools.ietf.org/html/rfc8446#section-2.3.
 	Max0RTTData uint32
 
+	// If MinClientHelloSize is not zero, whe client will use the padding
+	// extension to pad the packet to the minimum size.
+	//
+	// It only works on the client.
+	MinClientHelloSize uint16
+
 	// Extensions contains the tls extensions that will be used in client hello.
 	// If empty, the default will be used.
 	// Its can modify tls fingerprint.
@@ -921,6 +927,7 @@ func (c *Config) Clone() *Config {
 		Renegotiation:               c.Renegotiation,
 		Allow0RTT:                   c.Allow0RTT,
 		Max0RTTData:                 c.Max0RTTData,
+		MinClientHelloSize:          c.MinClientHelloSize,
 		Extensions:                  c.Extensions,
 		KeyLogWriter:                c.KeyLogWriter,
 		KernelTX:                    c.KernelTX,

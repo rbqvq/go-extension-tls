@@ -31,6 +31,10 @@ func (extension *GREASEExtension) Marshal(messageType uint8, b *cryptobyte.Build
 	b.AddBytes(extension.Data)
 }
 
+func (extension *GREASEExtension) Len(messageType uint8) int {
+	return len(extension.Data)
+}
+
 func (extension *GREASEExtension) Unmarshal(messageType uint8, b cryptobyte.String) bool {
 	extension.Data = b
 	return true

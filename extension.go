@@ -18,6 +18,7 @@ type Extension interface {
 	// Note: this option is only valid for servers
 	Negotiate(messageType uint8) bool
 
+	Len(messageType uint8) int
 	Marshal(messageType uint8, b *cryptobyte.Builder)
 	Unmarshal(messageType uint8, b cryptobyte.String) bool
 
@@ -47,8 +48,6 @@ var (
 		&PSKModesExtension{},
 		&PreSharedKeyExtension{},
 	}
-
-	empty = make([]byte, 512)
 )
 
 var _ Extension = &implementedExtension{}
@@ -66,6 +65,10 @@ func (*implementedExtension) Negotiate(messageType uint8) bool {
 }
 
 func (*implementedExtension) Marshal(messageType uint8, b *cryptobyte.Builder) {}
+
+func (*implementedExtension) Len(messageType uint8) int {
+	return 0
+}
 
 func (*implementedExtension) Unmarshal(messageType uint8, b cryptobyte.String) bool {
 	return false
@@ -188,7 +191,7 @@ var _ Extension = &PaddingExtension{}
 var extensionPadding uint16 = 21
 
 type PaddingExtension struct {
-	Len uint16
+	Length uint16
 }
 
 func (*PaddingExtension) ExtensionId() uint16 {
@@ -202,26 +205,20 @@ func (*PaddingExtension) Negotiate(messageType uint8) bool {
 }
 
 func (extension *PaddingExtension) Marshal(messageType uint8, b *cryptobyte.Builder) {
-	var written uint16 = 0
+	b.AddBytes(make([]byte, extension.Length))
+}
 
-	for written < extension.Len {
-		size := extension.Len - written
-		if size > 512 {
-			size = 512
-		}
-
-		b.AddBytes(empty[:size])
-		written += size
-	}
+func (extension *PaddingExtension) Len(messageType uint8) int {
+	return int(extension.Length)
 }
 
 func (extension *PaddingExtension) Unmarshal(messageType uint8, b cryptobyte.String) bool {
-	extension.Len = uint16(len(b))
+	extension.Length = uint16(len(b))
 	return true
 }
 
 func (extension *PaddingExtension) Clone() Extension {
-	return &PaddingExtension{Len: extension.Len}
+	return &PaddingExtension{Length: extension.Length}
 }
 
 var _ Extension = &UnimplementedExtension{}
@@ -243,6 +240,10 @@ func (*UnimplementedExtension) Negotiate(messageType uint8) bool {
 
 func (extension *UnimplementedExtension) Marshal(messageType uint8, b *cryptobyte.Builder) {
 	b.AddBytes(extension.Data)
+}
+
+func (extension *UnimplementedExtension) Len(messageType uint8) int {
+	return len(extension.Data)
 }
 
 func (extension *UnimplementedExtension) Unmarshal(messageType uint8, b cryptobyte.String) bool {

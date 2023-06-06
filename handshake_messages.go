@@ -337,6 +337,214 @@ func (m *clientHelloMsg) marshal() ([]byte, error) {
 	return m.raw, err
 }
 
+func (m *clientHelloMsg) automaticPadding(minSize uint16) {
+	if minSize == 0 {
+		return
+	}
+
+	var length int
+	length += 1
+	length += 3
+	length += 2
+
+	length += 32
+
+	length += 1
+	length += len(m.sessionId)
+
+	length += 2
+	length += len(m.cipherSuites) * 2
+
+	length += 1
+	length += len(m.compressionMethods)
+
+	{
+		var extLength int
+		for _, extension := range m.extensions {
+			switch extension.(type) {
+			case nil:
+			case *ServerNameIndicationExtension:
+				if len(m.serverName) > 0 {
+					extLength += 4
+					// RFC 6066, Section 3
+					extLength += 2
+					extLength += 1
+					extLength += 2
+					extLength += len(m.serverName)
+				}
+			case *StatusRequestExtension:
+				if m.ocspStapling {
+					extLength += 4
+					// RFC 4366, Section 3.6
+					extLength += 1
+					extLength += 2
+					extLength += 2
+				}
+			case *SupportedGroupsExtension:
+				if len(m.supportedCurves) > 0 {
+					extLength += 4
+					// RFC 4492, sections 5.1.1 and RFC 8446, Section 4.2.7
+					extLength += 2
+					extLength += len(m.supportedCurves) * 2
+				}
+			case *SupportedPointsExtension:
+				if len(m.supportedPoints) > 0 {
+					extLength += 4
+					// RFC 4492, Section 5.1.2
+					extLength += 1
+					extLength += len(m.supportedPoints)
+				}
+			case *SessionTicketExtension:
+				if m.ticketSupported {
+					extLength += 4
+					// RFC 5077, Section 3.2
+					extLength += len(m.sessionTicket)
+				}
+			case *SignatureAlgorithmsExtension:
+				if len(m.supportedSignatureAlgorithms) > 0 {
+					extLength += 4
+					// RFC 5246, Section 7.4.1.4.1
+					extLength += 2
+					extLength += len(m.supportedSignatureAlgorithms) * 2
+				}
+			case *SignatureAlgorithmsCertExtension:
+				if len(m.supportedSignatureAlgorithmsCert) > 0 {
+					extLength += 4
+					// RFC 8446, Section 4.2.3
+					extLength += 2
+					extLength += len(m.supportedSignatureAlgorithmsCert) * 2
+				}
+			case *RenegotiationInfoExtension:
+				if m.secureRenegotiationSupported {
+					extLength += 4
+					// RFC 5746, Section 3.2
+					extLength += 1
+					extLength += len(m.secureRenegotiation)
+				}
+			case *ALPNExtension:
+				if len(m.alpnProtocols) > 0 {
+					extLength += 4
+					// RFC 7301, Section 3.1
+					extLength += 2
+					for _, proto := range m.alpnProtocols {
+						extLength += 1
+						extLength += len(proto)
+					}
+				}
+			case *ALPSExtension:
+				if len(m.alpsProtocols) > 0 {
+					extLength += 4
+
+					extLength += 2
+					for _, proto := range m.alpsProtocols {
+						extLength += 1
+						extLength += len(proto)
+					}
+				}
+			case *SCTExtension:
+				extLength += 4
+				// RFC 6962, Section 3.3.1
+			case *SupportedVersionsExtension:
+				if len(m.supportedVersions) > 0 {
+					extLength += 4
+					// RFC 8446, Section 4.2.1
+					extLength += 1
+					extLength += len(m.supportedVersions) * 2
+				}
+			case *CompressedCertificateExtension:
+				if len(m.supportedCompressionAlgorithmsCert) > 0 {
+					extLength += 1
+					extLength += len(m.supportedCompressionAlgorithmsCert) * 2
+				}
+			case *CookieExtension:
+				if len(m.cookie) > 0 {
+					extLength += 4
+					// RFC 8446, Section 4.2.2
+					extLength += 2
+					extLength += len(m.cookie)
+				}
+			case *KeyShareExtension:
+				if len(m.keyShares) > 0 {
+					extLength += 4
+					// RFC 8446, Section 4.2.8
+					extLength += 2
+					for _, ks := range m.keyShares {
+						extLength += 2
+						extLength += 2
+						extLength += len(ks.data)
+					}
+				}
+			case *EarlyExtension:
+				extLength += 4
+				// RFC 8446, Section 4.2.10
+			case *PSKModesExtension:
+				if len(m.pskModes) > 0 {
+					extLength += 4
+					// RFC 8446, Section 4.2.9
+					extLength += 1
+					extLength += len(m.pskModes)
+				}
+			case *PreSharedKeyExtension:
+				if len(m.pskIdentities) > 0 { // pre_shared_key must be the last extension
+					extLength += 4
+					// RFC 8446, Section 4.2.11
+					extLength += 2
+					for _, psk := range m.pskIdentities {
+						extLength += 2
+						extLength += len(psk.label)
+						extLength += 4
+					}
+
+					extLength += 2
+					for _, binder := range m.pskBinders {
+						extLength += 1
+						extLength += len(binder)
+					}
+				}
+			case *PaddingExtension:
+			default:
+				extLength += 4
+				extLength += extension.Len(typeClientHello)
+			}
+		}
+
+		if extLength > 0 {
+			length += 2
+			length += extLength
+		}
+	}
+
+	paddingLength := int(minSize) - length
+	if paddingLength <= 0 {
+		for _, extension := range m.extensions {
+			switch extension.(type) {
+			case *PaddingExtension:
+				extension = nil
+			}
+		}
+		return
+	}
+
+	paddingLength -= 4
+	if paddingLength <= 0 {
+		paddingLength = 1
+	}
+
+	var seenPadding bool
+	for _, extension := range m.extensions {
+		switch extension := extension.(type) {
+		case *PaddingExtension:
+			if seenPadding {
+				extension = nil
+			} else {
+				seenPadding = true
+				extension.Length = uint16(paddingLength)
+			}
+		}
+	}
+	return
+}
+
 // marshalWithoutBinders returns the ClientHello through the
 // PreSharedKeyExtension.identities field, according to RFC 8446, Section
 // 4.2.11.2. Note that m.pskBinders must be set to slices of the correct length.
