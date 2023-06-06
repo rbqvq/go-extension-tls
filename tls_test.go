@@ -806,6 +806,8 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf(true))
 		case "CertCompressionPreferences":
 			f.Set(reflect.ValueOf([]CertCompressionAlgorithm{Zlib}))
+		case "SignatureAlgorithmsPreferences":
+			f.Set(reflect.ValueOf([]SignatureScheme{PKCS1WithSHA1}))
 		case "RootCAs", "ClientCAs":
 			f.Set(reflect.ValueOf(x509.NewCertPool()))
 		case "ClientSessionCache":

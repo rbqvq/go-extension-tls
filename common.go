@@ -769,6 +769,11 @@ type Config struct {
 	// its compress certificate in TLS 1.3.
 	CertCompressionPreferences []CertCompressionAlgorithm
 
+	// SignatureAlgorithmsPreferences contains the signature algorithms that
+	// will be used in an handshake, in preference order. If empty, the default
+	// will be used.
+	SignatureAlgorithmsPreferences []SignatureScheme
+
 	// DynamicRecordSizingDisabled disables adaptive sizing of TLS records.
 	// When true, the largest possible TLS record size is always used. When
 	// false, the size of TLS records may be adjusted in an attempt to
@@ -894,46 +899,47 @@ func (c *Config) Clone() *Config {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	return &Config{
-		Rand:                        c.Rand,
-		Time:                        c.Time,
-		Certificates:                c.Certificates,
-		NameToCertificate:           c.NameToCertificate,
-		GetCertificate:              c.GetCertificate,
-		GetClientCertificate:        c.GetClientCertificate,
-		GetConfigForClient:          c.GetConfigForClient,
-		VerifyPeerCertificate:       c.VerifyPeerCertificate,
-		VerifyConnection:            c.VerifyConnection,
-		RootCAs:                     c.RootCAs,
-		NextProtos:                  c.NextProtos,
-		NextProtoSettings:           c.NextProtoSettings,
-		GetProtoSetting:             c.GetProtoSetting,
-		ServerName:                  c.ServerName,
-		ClientAuth:                  c.ClientAuth,
-		ClientCAs:                   c.ClientCAs,
-		InsecureSkipVerify:          c.InsecureSkipVerify,
-		PreferCipherSuites:          c.PreferCipherSuites,
-		CipherSuites:                c.CipherSuites,
-		PreferServerCipherSuites:    c.PreferServerCipherSuites,
-		SessionTicketsDisabled:      c.SessionTicketsDisabled,
-		SessionTicketKey:            c.SessionTicketKey,
-		ClientSessionCache:          c.ClientSessionCache,
-		MinVersion:                  c.MinVersion,
-		MaxVersion:                  c.MaxVersion,
-		SupportedVersions:           c.SupportedVersions,
-		CurvePreferences:            c.CurvePreferences,
-		CertCompressionDisabled:     c.CertCompressionDisabled,
-		CertCompressionPreferences:  c.CertCompressionPreferences,
-		DynamicRecordSizingDisabled: c.DynamicRecordSizingDisabled,
-		Renegotiation:               c.Renegotiation,
-		Allow0RTT:                   c.Allow0RTT,
-		Max0RTTData:                 c.Max0RTTData,
-		MinClientHelloSize:          c.MinClientHelloSize,
-		Extensions:                  c.Extensions,
-		KeyLogWriter:                c.KeyLogWriter,
-		KernelTX:                    c.KernelTX,
-		KernelRX:                    c.KernelRX,
-		sessionTicketKeys:           c.sessionTicketKeys,
-		autoSessionTicketKeys:       c.autoSessionTicketKeys,
+		Rand:                           c.Rand,
+		Time:                           c.Time,
+		Certificates:                   c.Certificates,
+		NameToCertificate:              c.NameToCertificate,
+		GetCertificate:                 c.GetCertificate,
+		GetClientCertificate:           c.GetClientCertificate,
+		GetConfigForClient:             c.GetConfigForClient,
+		VerifyPeerCertificate:          c.VerifyPeerCertificate,
+		VerifyConnection:               c.VerifyConnection,
+		RootCAs:                        c.RootCAs,
+		NextProtos:                     c.NextProtos,
+		NextProtoSettings:              c.NextProtoSettings,
+		GetProtoSetting:                c.GetProtoSetting,
+		ServerName:                     c.ServerName,
+		ClientAuth:                     c.ClientAuth,
+		ClientCAs:                      c.ClientCAs,
+		InsecureSkipVerify:             c.InsecureSkipVerify,
+		PreferCipherSuites:             c.PreferCipherSuites,
+		CipherSuites:                   c.CipherSuites,
+		PreferServerCipherSuites:       c.PreferServerCipherSuites,
+		SessionTicketsDisabled:         c.SessionTicketsDisabled,
+		SessionTicketKey:               c.SessionTicketKey,
+		ClientSessionCache:             c.ClientSessionCache,
+		MinVersion:                     c.MinVersion,
+		MaxVersion:                     c.MaxVersion,
+		SupportedVersions:              c.SupportedVersions,
+		CurvePreferences:               c.CurvePreferences,
+		CertCompressionDisabled:        c.CertCompressionDisabled,
+		CertCompressionPreferences:     c.CertCompressionPreferences,
+		SignatureAlgorithmsPreferences: c.SignatureAlgorithmsPreferences,
+		DynamicRecordSizingDisabled:    c.DynamicRecordSizingDisabled,
+		Renegotiation:                  c.Renegotiation,
+		Allow0RTT:                      c.Allow0RTT,
+		Max0RTTData:                    c.Max0RTTData,
+		MinClientHelloSize:             c.MinClientHelloSize,
+		Extensions:                     c.Extensions,
+		KeyLogWriter:                   c.KeyLogWriter,
+		KernelTX:                       c.KernelTX,
+		KernelRX:                       c.KernelRX,
+		sessionTicketKeys:              c.sessionTicketKeys,
+		autoSessionTicketKeys:          c.autoSessionTicketKeys,
 	}
 }
 
@@ -1182,6 +1188,14 @@ func (c *Config) certCompressionPreferences() []CertCompressionAlgorithm {
 		return defaultCertCompressionPreferences
 	}
 	return c.CertCompressionPreferences
+}
+
+func (c *Config) signatureAlgorithmsPreferences() []SignatureScheme {
+	if c == nil || len(c.SignatureAlgorithmsPreferences) == 0 {
+		return defaultSupportedSignatureAlgorithms
+	}
+
+	return c.SignatureAlgorithmsPreferences
 }
 
 func (c *Config) supportsCertCompression(algorithm CertCompressionAlgorithm) bool {
