@@ -37,6 +37,7 @@ var (
 		&SignatureAlgorithmsExtension{},
 		&SignatureAlgorithmsCertExtension{},
 		&RenegotiationInfoExtension{},
+		&ExtendedMasterSecretExtension{},
 		&ALPNExtension{},
 		&ALPSExtension{},
 		&SCTExtension{},
@@ -46,6 +47,7 @@ var (
 		&KeyShareExtension{},
 		&EarlyExtension{},
 		&PSKModesExtension{},
+		&QUICTransportParametersExtension{},
 		&PreSharedKeyExtension{},
 	}
 )
@@ -126,6 +128,12 @@ func (*RenegotiationInfoExtension) Clone() Extension {
 	return &RenegotiationInfoExtension{}
 }
 
+type ExtendedMasterSecretExtension struct{ implementedExtension }
+
+func (*ExtendedMasterSecretExtension) Clone() Extension {
+	return &ExtendedMasterSecretExtension{}
+}
+
 type ALPNExtension struct{ implementedExtension }
 
 func (*ALPNExtension) Clone() Extension {
@@ -178,6 +186,12 @@ type PSKModesExtension struct{ implementedExtension }
 
 func (*PSKModesExtension) Clone() Extension {
 	return &PSKModesExtension{}
+}
+
+type QUICTransportParametersExtension struct{ implementedExtension }
+
+func (*QUICTransportParametersExtension) Clone() Extension {
+	return &QUICTransportParametersExtension{}
 }
 
 type PreSharedKeyExtension struct{ implementedExtension }

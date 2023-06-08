@@ -68,6 +68,7 @@ type clientHelloMsg struct {
 	supportedSignatureAlgorithmsCert   []SignatureScheme
 	secureRenegotiationSupported       bool
 	secureRenegotiation                []byte
+	extendedMasterSecret               bool
 	alpnProtocols                      []string
 	alpsProtocols                      []string
 	scts                               bool
@@ -78,6 +79,7 @@ type clientHelloMsg struct {
 	pskModes                           []uint8
 	pskIdentities                      []pskIdentity
 	pskBinders                         [][]byte
+	quicTransportParameters            []byte
 	extensions                         []Extension
 }
 
@@ -125,6 +127,7 @@ func (m *clientHelloMsg) marshal() ([]byte, error) {
 					})
 				})
 			}
+
 		case *SupportedPointsExtension:
 			if len(m.supportedPoints) > 0 {
 				// RFC 4492, Section 5.1.2
@@ -176,6 +179,12 @@ func (m *clientHelloMsg) marshal() ([]byte, error) {
 						exts.AddBytes(m.secureRenegotiation)
 					})
 				})
+			}
+		case *ExtendedMasterSecretExtension:
+			if m.extendedMasterSecret {
+				// RFC 7627
+				exts.AddUint16(extensionExtendedMasterSecret)
+				exts.AddUint16(0) // empty extension_data
 			}
 		case *ALPNExtension:
 			if len(m.alpnProtocols) > 0 {
@@ -272,6 +281,14 @@ func (m *clientHelloMsg) marshal() ([]byte, error) {
 					exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
 						exts.AddBytes(m.pskModes)
 					})
+				})
+			}
+		case *QUICTransportParametersExtension:
+			if m.quicTransportParameters != nil { // marshal zero-length parameters when present
+				// RFC 9001, Section 8.2
+				exts.AddUint16(extensionQUICTransportParameters)
+				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					exts.AddBytes(m.quicTransportParameters)
 				})
 			}
 		case *PreSharedKeyExtension:
@@ -421,6 +438,11 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 					extLength += 1
 					extLength += len(m.secureRenegotiation)
 				}
+			case *ExtendedMasterSecretExtension:
+				if m.extendedMasterSecret {
+					extLength += 4
+				}
+				// RFC 7627
 			case *ALPNExtension:
 				if len(m.alpnProtocols) > 0 {
 					extLength += 4
@@ -475,14 +497,22 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 					}
 				}
 			case *EarlyExtension:
-				extLength += 4
-				// RFC 8446, Section 4.2.10
+				if m.earlyData {
+					extLength += 4
+					// RFC 8446, Section 4.2.10
+				}
 			case *PSKModesExtension:
 				if len(m.pskModes) > 0 {
 					extLength += 4
 					// RFC 8446, Section 4.2.9
 					extLength += 1
 					extLength += len(m.pskModes)
+				}
+			case *QUICTransportParametersExtension:
+				if m.quicTransportParameters != nil { // marshal zero-length parameters when present
+					extLength += 4
+					// RFC 9001, Section 8.2
+					extLength += len(m.quicTransportParameters)
 				}
 			case *PreSharedKeyExtension:
 				if len(m.pskIdentities) > 0 { // pre_shared_key must be the last extension
@@ -640,6 +670,12 @@ func (m *clientHelloMsg) marshalWithoutBinders() ([]byte, error) {
 					})
 				})
 			}
+		case *ExtendedMasterSecretExtension:
+			if m.extendedMasterSecret {
+				// RFC 7627
+				exts.AddUint16(extensionExtendedMasterSecret)
+				exts.AddUint16(0) // empty extension_data
+			}
 		case *ALPNExtension:
 			if len(m.alpnProtocols) > 0 {
 				// RFC 7301, Section 3.1
@@ -735,6 +771,14 @@ func (m *clientHelloMsg) marshalWithoutBinders() ([]byte, error) {
 					exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
 						exts.AddBytes(m.pskModes)
 					})
+				})
+			}
+		case *QUICTransportParametersExtension:
+			if m.quicTransportParameters != nil { // marshal zero-length parameters when present
+				// RFC 9001, Section 8.2
+				exts.AddUint16(extensionQUICTransportParameters)
+				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					exts.AddBytes(m.quicTransportParameters)
 				})
 			}
 		case *PreSharedKeyExtension:
@@ -959,6 +1003,10 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			}
 			m.secureRenegotiationSupported = true
 			m.extensions = append(m.extensions, &RenegotiationInfoExtension{})
+		case extensionExtendedMasterSecret:
+			// RFC 7627
+			m.extendedMasterSecret = true
+			m.extensions = append(m.extensions, &ExtendedMasterSecretExtension{})
 		case extensionALPN:
 			// RFC 7301, Section 3.1
 			var protoList cryptobyte.String
@@ -1050,6 +1098,12 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				return false
 			}
 			m.extensions = append(m.extensions, &PSKModesExtension{})
+		case extensionQUICTransportParameters:
+			m.quicTransportParameters = make([]byte, len(extData))
+			if !extData.CopyBytes(m.quicTransportParameters) {
+				return false
+			}
+			m.extensions = append(m.extensions, &QUICTransportParametersExtension{})
 		case extensionPreSharedKey:
 			// RFC 8446, Section 4.2.11
 			if !extensions.Empty() {
@@ -1125,6 +1179,7 @@ type serverHelloMsg struct {
 	ticketSupported              bool
 	secureRenegotiationSupported bool
 	secureRenegotiation          []byte
+	extendedMasterSecret         bool
 	alpnProtocol                 string
 	scts                         [][]byte
 	supportedVersion             uint16
@@ -1167,6 +1222,12 @@ func (m *serverHelloMsg) marshal() ([]byte, error) {
 						exts.AddBytes(m.secureRenegotiation)
 					})
 				})
+			}
+		case *ExtendedMasterSecretExtension:
+			if m.extendedMasterSecret {
+				// RFC 7627
+				exts.AddUint16(extensionExtendedMasterSecret)
+				exts.AddUint16(0) // empty extension_data
 			}
 		case *ALPNExtension:
 			if len(m.alpnProtocol) > 0 {
@@ -1327,6 +1388,9 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 			}
 			m.secureRenegotiationSupported = true
 			m.extensions = append(m.extensions, &RenegotiationInfoExtension{})
+		case extensionExtendedMasterSecret:
+			m.extendedMasterSecret = true
+			m.extensions = append(m.extensions, &ExtendedMasterSecretExtension{})
 		case extensionALPN:
 			var protoList cryptobyte.String
 			if !extData.ReadUint16LengthPrefixed(&protoList) || protoList.Empty() {
@@ -1418,11 +1482,12 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 }
 
 type encryptedExtensionsMsg struct {
-	raw          []byte
-	alpnProtocol string
-	alps         bool
-	alpnSetting  []byte
-	earlyData    bool
+	raw                     []byte
+	alpnProtocol            string
+	alps                    bool
+	alpnSetting             []byte
+	quicTransportParameters []byte
+	earlyData               bool
 
 	extensions []Extension
 }
@@ -1462,6 +1527,14 @@ func (m *encryptedExtensionsMsg) marshal() ([]byte, error) {
 						// RFC 8446, Section 4.2.10
 						b.AddUint16(extensionEarlyData)
 						b.AddUint16(0) // empty extension_data
+					}
+				case *QUICTransportParametersExtension:
+					if m.quicTransportParameters != nil { // marshal zero-length parameters when present
+						// draft-ietf-quic-tls-32, Section 8.2
+						b.AddUint16(extensionQUICTransportParameters)
+						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+							b.AddBytes(m.quicTransportParameters)
+						})
 					}
 				default:
 					if extension.Negotiate(typeEncryptedExtensions) {
@@ -1519,6 +1592,12 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 		case extensionEarlyData:
 			m.earlyData = true
 			m.extensions = append(m.extensions, &EarlyExtension{})
+		case extensionQUICTransportParameters:
+			m.quicTransportParameters = make([]byte, len(extData))
+			if !extData.CopyBytes(m.quicTransportParameters) {
+				return false
+			}
+			m.extensions = append(m.extensions, &QUICTransportParametersExtension{})
 		default:
 			var ext Extension
 

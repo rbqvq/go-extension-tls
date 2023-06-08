@@ -104,6 +104,10 @@ func (c *Conn) setup() error {
 		return nil
 	}
 
+	if c.quic != nil {
+		return nil
+	}
+
 	var rwc syscall.RawConn
 	{
 		conn, ok := c.conn.(*net.TCPConn)

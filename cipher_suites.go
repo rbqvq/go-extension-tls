@@ -483,9 +483,9 @@ var (
 var defaultCipherSuitesTLS13 = []uint16{
 	TLS_AES_128_GCM_SHA256,
 	TLS_AES_256_GCM_SHA384,
-	TLS_CHACHA20_POLY1305_SHA256,
 	TLS_AES_128_CCM_SHA256,
 	TLS_AES_128_CCM_8_SHA256,
+	TLS_CHACHA20_POLY1305_SHA256,
 }
 
 var defaultCipherSuitesTLS13NoAES = []uint16{
@@ -525,17 +525,9 @@ var aesCiphers = map[uint16]bool{
 	TLS_AES_128_CCM_8_SHA256: true,
 }
 
-var nonAESAEADCiphers = map[uint16]bool{
-	// TLS 1.2
-	TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305:   true,
-	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305: true,
-	// TLS 1.3
-	TLS_CHACHA20_POLY1305_SHA256: true,
-}
-
-// aesPreferred returns whether the first known cipher in the preference list
-// is an AES-GCM/AES-CCM cipher, implying the peer has hardware support for it.
-func aesPreferred(ciphers []uint16) bool {
+// aesgcmPreferred returns whether the first known cipher in the preference list
+// is an AES-GCM cipher, implying the peer has hardware support for it.
+func aesgcmPreferred(ciphers []uint16) bool {
 	for _, cID := range ciphers {
 		if c := cipherSuiteByID(cID); c != nil {
 			return aesCiphers[cID]
