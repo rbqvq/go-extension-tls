@@ -82,11 +82,19 @@ func (*implementedExtension) Clone() Extension {
 
 type ServerNameIndicationExtension struct{ implementedExtension }
 
+func (*ServerNameIndicationExtension) ExtensionId() uint16 {
+	return extensionServerName
+}
+
 func (*ServerNameIndicationExtension) Clone() Extension {
 	return &ServerNameIndicationExtension{}
 }
 
 type StatusRequestExtension struct{ implementedExtension }
+
+func (*StatusRequestExtension) ExtensionId() uint16 {
+	return extensionStatusRequest
+}
 
 func (*StatusRequestExtension) Clone() Extension {
 	return &StatusRequestExtension{}
@@ -94,11 +102,19 @@ func (*StatusRequestExtension) Clone() Extension {
 
 type SupportedGroupsExtension struct{ implementedExtension }
 
+func (*SupportedGroupsExtension) ExtensionId() uint16 {
+	return extensionSupportedCurves
+}
+
 func (*SupportedGroupsExtension) Clone() Extension {
 	return &SupportedGroupsExtension{}
 }
 
 type SupportedPointsExtension struct{ implementedExtension }
+
+func (*SupportedPointsExtension) ExtensionId() uint16 {
+	return extensionSupportedPoints
+}
 
 func (*SupportedPointsExtension) Clone() Extension {
 	return &SupportedPointsExtension{}
@@ -106,11 +122,19 @@ func (*SupportedPointsExtension) Clone() Extension {
 
 type SessionTicketExtension struct{ implementedExtension }
 
+func (*SessionTicketExtension) ExtensionId() uint16 {
+	return extensionSessionTicket
+}
+
 func (*SessionTicketExtension) Clone() Extension {
 	return &SessionTicketExtension{}
 }
 
 type SignatureAlgorithmsExtension struct{ implementedExtension }
+
+func (*SignatureAlgorithmsExtension) ExtensionId() uint16 {
+	return extensionSignatureAlgorithms
+}
 
 func (*SignatureAlgorithmsExtension) Clone() Extension {
 	return &SignatureAlgorithmsExtension{}
@@ -118,11 +142,19 @@ func (*SignatureAlgorithmsExtension) Clone() Extension {
 
 type SignatureAlgorithmsCertExtension struct{ implementedExtension }
 
+func (*SignatureAlgorithmsCertExtension) ExtensionId() uint16 {
+	return extensionSignatureAlgorithmsCert
+}
+
 func (*SignatureAlgorithmsCertExtension) Clone() Extension {
 	return &SignatureAlgorithmsCertExtension{}
 }
 
 type RenegotiationInfoExtension struct{ implementedExtension }
+
+func (*RenegotiationInfoExtension) ExtensionId() uint16 {
+	return extensionRenegotiationInfo
+}
 
 func (*RenegotiationInfoExtension) Clone() Extension {
 	return &RenegotiationInfoExtension{}
@@ -130,11 +162,19 @@ func (*RenegotiationInfoExtension) Clone() Extension {
 
 type ExtendedMasterSecretExtension struct{ implementedExtension }
 
+func (*ExtendedMasterSecretExtension) ExtensionId() uint16 {
+	return extensionExtendedMasterSecret
+}
+
 func (*ExtendedMasterSecretExtension) Clone() Extension {
 	return &ExtendedMasterSecretExtension{}
 }
 
 type ALPNExtension struct{ implementedExtension }
+
+func (*ALPNExtension) ExtensionId() uint16 {
+	return extensionALPN
+}
 
 func (*ALPNExtension) Clone() Extension {
 	return &ALPNExtension{}
@@ -142,11 +182,19 @@ func (*ALPNExtension) Clone() Extension {
 
 type ALPSExtension struct{ implementedExtension }
 
+func (*ALPSExtension) ExtensionId() uint16 {
+	return extensionALPS
+}
+
 func (*ALPSExtension) Clone() Extension {
 	return &ALPSExtension{}
 }
 
 type SCTExtension struct{ implementedExtension }
+
+func (*SCTExtension) ExtensionId() uint16 {
+	return extensionSCT
+}
 
 func (*SCTExtension) Clone() Extension {
 	return &SCTExtension{}
@@ -154,11 +202,19 @@ func (*SCTExtension) Clone() Extension {
 
 type SupportedVersionsExtension struct{ implementedExtension }
 
+func (*SupportedVersionsExtension) ExtensionId() uint16 {
+	return extensionSupportedVersions
+}
+
 func (*SupportedVersionsExtension) Clone() Extension {
 	return &SupportedVersionsExtension{}
 }
 
 type CompressedCertificateExtension struct{ implementedExtension }
+
+func (*CompressedCertificateExtension) ExtensionId() uint16 {
+	return extensionCompressCert
+}
 
 func (*CompressedCertificateExtension) Clone() Extension {
 	return &CompressedCertificateExtension{}
@@ -166,11 +222,19 @@ func (*CompressedCertificateExtension) Clone() Extension {
 
 type CookieExtension struct{ implementedExtension }
 
+func (*CookieExtension) ExtensionId() uint16 {
+	return extensionCookie
+}
+
 func (*CookieExtension) Clone() Extension {
 	return &CookieExtension{}
 }
 
 type KeyShareExtension struct{ implementedExtension }
+
+func (*KeyShareExtension) ExtensionId() uint16 {
+	return extensionKeyShare
+}
 
 func (*KeyShareExtension) Clone() Extension {
 	return &KeyShareExtension{}
@@ -178,11 +242,19 @@ func (*KeyShareExtension) Clone() Extension {
 
 type EarlyExtension struct{ implementedExtension }
 
+func (*EarlyExtension) ExtensionId() uint16 {
+	return extensionEarlyData
+}
+
 func (*EarlyExtension) Clone() Extension {
 	return &EarlyExtension{}
 }
 
 type PSKModesExtension struct{ implementedExtension }
+
+func (*PSKModesExtension) ExtensionId() uint16 {
+	return extensionPSKModes
+}
 
 func (*PSKModesExtension) Clone() Extension {
 	return &PSKModesExtension{}
@@ -190,19 +262,25 @@ func (*PSKModesExtension) Clone() Extension {
 
 type QUICTransportParametersExtension struct{ implementedExtension }
 
+func (*QUICTransportParametersExtension) ExtensionId() uint16 {
+	return extensionQUICTransportParameters
+}
+
 func (*QUICTransportParametersExtension) Clone() Extension {
 	return &QUICTransportParametersExtension{}
 }
 
 type PreSharedKeyExtension struct{ implementedExtension }
 
+func (*PreSharedKeyExtension) ExtensionId() uint16 {
+	return extensionPreSharedKey
+}
+
 func (*PreSharedKeyExtension) Clone() Extension {
 	return &PreSharedKeyExtension{}
 }
 
 var _ Extension = &PaddingExtension{}
-
-var extensionPadding uint16 = 21
 
 type PaddingExtension struct {
 	Length uint16

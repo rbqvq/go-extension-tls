@@ -927,7 +927,7 @@ const (
 	TLS_RSA_WITH_AES_128_CBC_SHA256               uint16 = 0x003c
 	TLS_RSA_WITH_ARIA_128_CBC_SHA256              uint16 = 0xc03c
 	TLS_RSA_WITH_ARIA_256_CBC_SHA384              uint16 = 0xc03d
-	TLS_RSA_WITH_AES_128_GCM_SHA256               uint16 = 0x003d
+	TLS_RSA_WITH_AES_128_GCM_SHA256               uint16 = 0x009c
 	TLS_RSA_WITH_AES_256_GCM_SHA384               uint16 = 0x009d
 	TLS_RSA_WITH_AES_128_CCM_SHA256               uint16 = 0xc09c
 	TLS_RSA_WITH_AES_256_CCM_SHA256               uint16 = 0xc09d

@@ -464,7 +464,9 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 					}
 				}
 			case *SCTExtension:
-				extLength += 4
+				if m.scts {
+					extLength += 4
+				}
 				// RFC 6962, Section 3.3.1
 			case *SupportedVersionsExtension:
 				if len(m.supportedVersions) > 0 {
@@ -1146,7 +1148,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			var ext Extension
 
 			switch {
-			case isGREASE(extension):
+			case IsGREASE(extension):
 				ext = &GREASEExtension{Id: extension}
 			default:
 				ext = &UnimplementedExtension{Id: extension}
@@ -1459,7 +1461,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 			var ext Extension
 
 			switch {
-			case isGREASE(extension):
+			case IsGREASE(extension):
 				ext = &GREASEExtension{Id: extension}
 			default:
 				ext = &UnimplementedExtension{Id: extension}
@@ -1602,7 +1604,7 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 			var ext Extension
 
 			switch {
-			case isGREASE(extension):
+			case IsGREASE(extension):
 				ext = &GREASEExtension{Id: extension}
 			default:
 				ext = &UnimplementedExtension{Id: extension}

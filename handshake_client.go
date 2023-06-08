@@ -110,7 +110,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 	}
 
 	for _, suiteId := range preferenceOrder {
-		if isGREASE(suiteId) {
+		if IsGREASE(suiteId) {
 			hello.cipherSuites = append(hello.cipherSuites, c.GREASE())
 			continue
 		}
@@ -169,9 +169,9 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 
 	var key *ecdh.PrivateKey
 	for _, curveID := range config.curvePreferences() {
-		if isGREASE(uint16(curveID)) {
+		if IsGREASE(uint16(curveID)) {
 			hello.supportedCurves = append(hello.supportedCurves, CurveID(c.GREASE()))
-			if config.maxSupportedVersion(true) >= VersionTLS13 {
+			if config.maxSupportedVersion(c.isClient) >= VersionTLS13 {
 				hello.keyShares = append(hello.keyShares, keyShare{group: CurveID(c.GREASE()), data: []byte{0}})
 			}
 			continue
@@ -377,7 +377,7 @@ func (c *Conn) loadSession(hello *clientHelloMsg) (
 
 	hello.ticketSupported = true
 
-	if hello.supportedVersions[0] == VersionTLS13 {
+	if c.config.maxSupportedVersion(c.isClient) >= VersionTLS13 {
 		// Require DHE on resumption as it guarantees forward secrecy against
 		// compromise of the session ticket key. See RFC 8446, Section 4.2.9.
 		hello.pskModes = []uint8{pskModeDHE}

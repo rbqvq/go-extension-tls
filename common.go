@@ -111,6 +111,7 @@ const (
 	extensionSignatureAlgorithms     uint16 = 13
 	extensionALPN                    uint16 = 16
 	extensionSCT                     uint16 = 18
+	extensionPadding                 uint16 = 21
 	extensionExtendedMasterSecret    uint16 = 23
 	extensionCompressCert            uint16 = 27 // compress_certificate in TLS 1.3
 	extensionSessionTicket           uint16 = 35
@@ -420,6 +421,9 @@ const (
 // ClientHelloInfo contains information from a ClientHello message in order to
 // guide application logic in the GetCertificate and GetConfigForClient callbacks.
 type ClientHelloInfo struct {
+	// Version is clienthello version.
+	Version uint16
+
 	// CipherSuites lists the CipherSuites supported by the client (e.g.
 	// TLS_AES_128_GCM_SHA256, TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256).
 	CipherSuites []uint16
@@ -1166,7 +1170,7 @@ func (c *Config) maxSupportedVersion(isClient bool) uint16 {
 	}
 
 	for _, ver := range supportedVersions {
-		if isGREASE(ver) {
+		if IsGREASE(ver) {
 			continue
 		}
 		return ver
