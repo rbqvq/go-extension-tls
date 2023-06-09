@@ -30,11 +30,13 @@ type clientHandshakeStateTLS13 struct {
 	alpsReq                  bool
 	certReq                  *certificateRequestMsgTLS13
 	usingPSK                 bool
+	earlyData                bool
 	sentDummyCCS             bool
 	suite                    *cipherSuiteTLS13
 	certCompressionAlgorithm CertCompressionAlgorithm
 	transcript               hash.Hash
 	masterSecret             []byte
+	handshakeSecret          []byte // client_handshake_traffic_secret_0
 	trafficSecret            []byte // client_application_traffic_secret_0
 
 	extensions []Extension
@@ -47,7 +49,7 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 
 	// The server must not select TLS 1.3 in a renegotiation. See RFC 8446,
 	// sections 4.1.2 and 4.1.3.
-	if c.handshakes > 0 {
+	if c.handshakeState.Load() != handshake0RTT && c.handshakes > 0 {
 		c.sendAlert(alertProtocolVersion)
 		return errors.New("tls: server selected TLS 1.3 in a renegotiation")
 	}
@@ -114,9 +116,10 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 	if err := c.setup(); err != nil {
 		return err
 	}
-
+	if err := hs.sendClientData(); err != nil {
+		return err
+	}
 	c.handshakeState.Store(handshakeCompleted)
-
 	return nil
 }
 
@@ -256,6 +259,19 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 	}
 
 	hs.hello.raw = nil
+	if hs.hello.earlyData {
+		hs.hello.earlyData = false
+
+		c.earlyNotify.L.Lock()
+		c.earlyDataEOF = true
+		c.earlyNotify.L.Unlock()
+
+		if c.quic != nil {
+			c.quicRejectedEarlyData()
+		}
+		c.out.cipher = nil
+	}
+
 	if len(hs.hello.pskIdentities) > 0 {
 		pskSuite := cipherSuiteTLS13ByID(hs.session.cipherSuite)
 		if pskSuite == nil {
@@ -286,11 +302,6 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 			hs.hello.pskIdentities = nil
 			hs.hello.pskBinders = nil
 		}
-	}
-
-	if hs.hello.earlyData {
-		hs.hello.earlyData = false
-		c.quicRejectedEarlyData()
 	}
 
 	hs.hello.automaticPadding(c.config.MinClientHelloSize)
@@ -399,9 +410,8 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 	handshakeSecret := hs.suite.extract(sharedKey,
 		hs.suite.deriveSecret(earlySecret, "derived", nil))
 
-	clientSecret := hs.suite.deriveSecret(handshakeSecret,
+	hs.handshakeSecret = hs.suite.deriveSecret(handshakeSecret,
 		clientHandshakeTrafficLabel, hs.transcript)
-	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, clientSecret)
 	serverSecret := hs.suite.deriveSecret(handshakeSecret,
 		serverHandshakeTrafficLabel, hs.transcript)
 	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret)
@@ -410,11 +420,11 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 		if c.hand.Len() != 0 {
 			c.sendAlert(alertUnexpectedMessage)
 		}
-		c.quicSetWriteSecret(QUICEncryptionLevelHandshake, hs.suite.id, clientSecret)
+		c.quicSetWriteSecret(QUICEncryptionLevelHandshake, hs.suite.id, hs.handshakeSecret)
 		c.quicSetReadSecret(QUICEncryptionLevelHandshake, hs.suite.id, serverSecret)
 	}
 
-	err = c.config.writeKeyLog(keyLogLabelClientHandshake, hs.hello.random, clientSecret)
+	err = c.config.writeKeyLog(keyLogLabelClientHandshake, hs.hello.random, hs.handshakeSecret)
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return err
@@ -482,11 +492,10 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 		c.sendAlert(alertUnsupportedExtension)
 		return errors.New("tls: server sent an unexpected early_data extension")
 	}
-	if hs.hello.earlyData && !encryptedExtensions.earlyData {
+	if hs.hello.earlyData && !encryptedExtensions.earlyData && c.quic != nil {
 		c.quicRejectedEarlyData()
 	}
 	if encryptedExtensions.earlyData {
-		hs.alpsReq = false
 		if hs.session.cipherSuite != c.cipherSuite {
 			c.sendAlert(alertHandshakeFailure)
 			return errors.New("tls: server accepted 0-RTT with the wrong cipher suite")
@@ -499,6 +508,10 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 			c.sendAlert(alertHandshakeFailure)
 			return errors.New("tls: server accepted 0-RTT with the wrong ALPS")
 		}
+		hs.earlyData = true
+	}
+	if !hs.earlyData {
+		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret)
 	}
 
 	return nil
@@ -664,7 +677,7 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 func (hs *clientHandshakeStateTLS13) sendClientParameters() error {
 	c := hs.c
 
-	if !hs.alpsReq {
+	if hs.earlyData || !hs.alpsReq {
 		return nil
 	}
 
@@ -774,6 +787,18 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 func (hs *clientHandshakeStateTLS13) sendClientFinished() error {
 	c := hs.c
 
+	if hs.earlyData {
+		c.earlyNotify.L.Lock()
+		c.earlyDataEOF = true
+		c.earlyNotify.L.Unlock()
+
+		if _, err := hs.c.writeHandshakeRecord(&endOfEarlyDataMsg{}, nil); err != nil {
+			return err
+		}
+
+		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret)
+	}
+
 	finished := &finishedMsg{
 		verifyData: hs.suite.finishedHash(c.out.trafficSecret, hs.transcript),
 	}
@@ -797,6 +822,27 @@ func (hs *clientHandshakeStateTLS13) sendClientFinished() error {
 	}
 
 	return nil
+}
+
+func (hs *clientHandshakeStateTLS13) sendClientData() error {
+	c := hs.c
+	defer c.earlyData.Reset()
+
+	if c.earlyData.Len() == 0 {
+		return nil
+	}
+
+	if !hs.earlyData {
+		_, err := c.writeRecordLocked(recordTypeApplicationData, c.earlyData.Bytes())
+		return err
+	}
+
+	if c.earlyData.Len() <= int(c.maxEarlyData) {
+		return nil
+	}
+
+	_, err := c.writeRecordLocked(recordTypeApplicationData, c.earlyData.Bytes()[c.maxEarlyData:])
+	return err
 }
 
 func (c *Conn) handleNewSessionTicket(msg *newSessionTicketMsgTLS13) error {

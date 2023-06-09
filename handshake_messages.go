@@ -581,6 +581,8 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 // PreSharedKeyExtension.identities field, according to RFC 8446, Section
 // 4.2.11.2. Note that m.pskBinders must be set to slices of the correct length.
 func (m *clientHelloMsg) marshalWithoutBinders() ([]byte, error) {
+	var bindersLen int
+
 	var exts cryptobyte.Builder
 	for _, extension := range m.extensions {
 		switch extension.(type) {
@@ -784,6 +786,30 @@ func (m *clientHelloMsg) marshalWithoutBinders() ([]byte, error) {
 				})
 			}
 		case *PreSharedKeyExtension:
+			if len(m.pskIdentities) > 0 { // pre_shared_key must be the last extension
+				// RFC 8446, Section 4.2.11
+				exts.AddUint16(extensionPreSharedKey)
+				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+						for _, psk := range m.pskIdentities {
+							exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+								exts.AddBytes(psk.label)
+							})
+							exts.AddUint32(psk.obfuscatedTicketAge)
+						}
+					})
+					exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+						bindersLen += 2
+						for _, binder := range m.pskBinders {
+							bindersLen += 1
+							exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
+								bindersLen += len(binder)
+								exts.AddBytes(binder)
+							})
+						}
+					})
+				})
+			}
 		default:
 			exts.AddUint16(extension.ExtensionId())
 			exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -821,7 +847,11 @@ func (m *clientHelloMsg) marshalWithoutBinders() ([]byte, error) {
 		}
 	})
 
-	return b.Bytes()
+	full, err := b.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	return full[:len(full)-bindersLen], nil
 }
 
 // updateBinders updates the m.pskBinders field, if necessary updating the

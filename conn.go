@@ -102,6 +102,7 @@ type Conn struct {
 	rawInput  bytes.Buffer // raw input, starting with a record header
 	input     bytes.Buffer // application data waiting to be read, from rawInput.Next
 	hand      bytes.Buffer // handshake data waiting to be read
+	earlyData bytes.Buffer // early data
 	buffering bool         // whether records are buffered in sendBuf
 	sendBuf   []byte       // a buffer of records waiting to be sent
 
@@ -118,18 +119,18 @@ type Conn struct {
 	// maxEarlyData is the number of bytes of max early data received
 	maxEarlyData uint32
 
-	// earlyDataReceived is the number of bytes of early data received so
-	// far. Tracked to enforce max_early_data_size.
+	// earlyDataSize is the number of bytes of early data
+	// Tracked to enforce max_early_data_size.
 	// We don't keep track of rejected 0-RTT data since there's no need
 	// to ever buffer it.
-	earlyDataReceived uint64
+	earlyDataSize atomic.Uint32
 
 	// earlyDataEOF is true if the client sent the EndOfEarlyData
 	// message during the handshake.
 	earlyDataEOF bool
 
 	// earlyNotify is a message channel for 0RTT handshake status
-	earlyNotify chan struct{}
+	earlyNotify *sync.Cond
 
 	// activeCall indicates whether Close has been call in the low bit.
 	// the rest of the bits are the number of goroutines in Conn.Write.
@@ -689,6 +690,10 @@ func (c *Conn) readRawRecord(handshakeState uint32) (typ recordType, data []byte
 	record := c.rawInput.Next(recordHeaderLen + n)
 	data, typ, err = c.in.decrypt(record)
 	if err != nil {
+		if handshakeState == handshake0RTT {
+			// Skip when server rejected 0RTT
+			return c.readRawRecord(handshakeState)
+		}
 		err = c.in.setErrorLocked(c.sendAlert(err.(alert)))
 		return
 	}
@@ -739,7 +744,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 	// Application Data messages are always protected.
 	if c.in.cipher == nil && typ == recordTypeApplicationData {
 		if handshakeState == handshake0RTT {
-			// Skip Application Data when server rejected 0RTT
+			// Skip when server rejected 0RTT
 			return nil
 		}
 		return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
@@ -806,7 +811,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 		}
 
 	case recordTypeApplicationData:
-		if handshakeState == handshakeRunning || (handshakeState == handshake0RTT && !c.earlyDataEOF) || expectChangeCipherSpec {
+		if handshakeState == handshakeRunning || (handshakeState == handshake0RTT && c.earlyDataEOF) || expectChangeCipherSpec {
 			return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 		}
 		// Some OpenSSL servers send empty records in order to randomize the
@@ -814,15 +819,18 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 		if len(data) == 0 {
 			return c.retryReadRecord(expectChangeCipherSpec)
 		}
+
+		if handshakeState == handshake0RTT {
+			if c.earlyDataSize.Add(uint32(len(data))) > c.maxEarlyData {
+				defer c.earlyNotify.Broadcast()
+				c.handshakeErr = errors.New("tls: too large early data received")
+				return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+			}
+		}
 		// Note that data is owned by c.rawInput, following the Next call above,
 		// to avoid copying the plaintext. This is safe because c.rawInput is
 		// not read from or written to until c.input is drained.
 		c.input.Write(data)
-		if handshakeState == handshake0RTT {
-			if atomic.AddUint64(&c.earlyDataReceived, uint64(len(data))) > uint64(c.maxEarlyData) {
-				return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
-			}
-		}
 
 	case recordTypeHandshake:
 		if len(data) == 0 || expectChangeCipherSpec {
@@ -1258,15 +1266,65 @@ func (c *Conn) Write(b []byte) (int, error) {
 		return 0, err
 	}
 
+	var earlyDataSize int
+	switch c.handshakeState.Load() {
+	case handshakeRunning:
+		return 0, alertInternalError
+	case handshake0RTT:
+		if c.isClient {
+			for {
+				c.earlyNotify.L.Lock()
+				if c.handshakeState.Load() == handshakeCompleted {
+					c.earlyNotify.L.Unlock()
+					break
+				}
+
+				if c.handshakeErr != nil {
+					c.earlyNotify.L.Unlock()
+					return 0, c.handshakeErr
+				}
+
+				if !c.earlyDataEOF && c.earlyDataSize.Load() < c.maxEarlyData {
+					c.earlyData.Write(b)
+
+					if n := int(c.earlyDataSize.Add(uint32(len(b)))) - int(c.maxEarlyData); n > 0 {
+						earlyDataSize = len(b)
+						b = b[:n]
+					}
+					c.earlyNotify.L.Unlock()
+					break
+				}
+
+				c.earlyNotify.Wait()
+				c.earlyNotify.L.Unlock()
+			}
+		} else {
+			for {
+				c.earlyNotify.L.Lock()
+				if c.handshakeState.Load() == handshakeCompleted {
+					c.earlyNotify.L.Unlock()
+					break
+				}
+
+				if c.handshakeErr != nil {
+					c.earlyNotify.L.Unlock()
+					return 0, c.handshakeErr
+				}
+
+				c.earlyNotify.Wait()
+				c.earlyNotify.L.Unlock()
+			}
+		}
+	case handshakeCompleted:
+	default:
+		return 0, alertInternalError
+	}
+
 	c.out.Lock()
 	defer c.out.Unlock()
 
 	if err := c.out.err; err != nil {
 		return 0, err
-	}
-
-	if handshakeState := c.handshakeState.Load(); handshakeState != handshakeCompleted && handshakeState != handshake0RTT {
-		return 0, alertInternalError
 	}
 
 	if c.closeNotifySent {
@@ -1294,6 +1352,9 @@ func (c *Conn) Write(b []byte) (int, error) {
 	}
 
 	n, err := c.writeRecordLocked(recordTypeApplicationData, b)
+	if earlyDataSize != 0 && err == nil {
+		return earlyDataSize, nil
+	}
 	return n + m, c.out.setErrorLocked(err)
 }
 
@@ -1431,6 +1492,32 @@ func (c *Conn) Read(b []byte) (int, error) {
 		// Put this after Handshake, in case people were calling
 		// Read(nil) for the side effect of the Handshake.
 		return 0, nil
+	}
+
+	switch c.handshakeState.Load() {
+	case handshakeRunning:
+		return 0, alertInternalError
+	case handshake0RTT:
+		if c.isClient {
+			for {
+				c.earlyNotify.L.Lock()
+				if c.handshakeState.Load() == handshakeCompleted {
+					c.earlyNotify.L.Unlock()
+					break
+				}
+
+				if c.handshakeErr != nil {
+					c.earlyNotify.L.Unlock()
+					return 0, c.handshakeErr
+				}
+
+				c.earlyNotify.Wait()
+				c.earlyNotify.L.Unlock()
+			}
+		}
+	case handshakeCompleted:
+	default:
+		return 0, alertInternalError
 	}
 
 	c.in.Lock()
@@ -1611,6 +1698,7 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
 	if err := c.handshakeErr; err != nil {
 		return err
 	}
+
 	if handshakeState := c.handshakeState.Load(); handshakeState == handshakeCompleted || handshakeState == handshake0RTT {
 		return nil
 	}

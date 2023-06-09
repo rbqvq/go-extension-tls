@@ -828,8 +828,6 @@ type Config struct {
 	// Use Conn.ConfirmHandshake to wait until the data is known not
 	// to be replayed after reading it.
 	//
-	// It currently only works on the server.
-	//
 	// See https://tools.ietf.org/html/rfc8446#section-2.3.
 	Allow0RTT bool
 

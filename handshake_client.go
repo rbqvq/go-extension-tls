@@ -20,6 +20,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -279,94 +280,128 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		return err
 	}
 
+	handshakeFn := func() error {
+		// serverHelloMsg is not included in the transcript
+		msg, err := c.readHandshake(nil)
+		if err != nil {
+			return err
+		}
+
+		serverHello, ok := msg.(*serverHelloMsg)
+		if !ok {
+			c.sendAlert(alertUnexpectedMessage)
+			return unexpectedMessageError(serverHello, msg)
+		}
+
+		if err := c.pickTLSVersion(serverHello); err != nil {
+			return err
+		}
+
+		extensions := hello.extensions
+		for _, extension := range serverHello.extensions {
+			switch extension := extension.(type) {
+			case nil:
+			case *UnimplementedExtension:
+				for _, ext := range extensions {
+					if ext.ExtensionId() == extension.ExtensionId() {
+						ext.NegotiatedVersion(c.vers)
+
+						if !ext.Unmarshal(typeServerHello, extension.Data) {
+							return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+						}
+						break
+					}
+				}
+			}
+		}
+
+		// If we are negotiating a protocol version that's lower than what we
+		// support, check for the server downgrade canaries.
+		// See RFC 8446, Section 4.1.3.
+		maxVers := c.config.maxSupportedVersion(roleClient)
+		tls12Downgrade := string(serverHello.random[24:]) == downgradeCanaryTLS12
+		tls11Downgrade := string(serverHello.random[24:]) == downgradeCanaryTLS11
+		if maxVers == VersionTLS13 && c.vers <= VersionTLS12 && (tls12Downgrade || tls11Downgrade) ||
+			maxVers == VersionTLS12 && c.vers <= VersionTLS11 && tls11Downgrade {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: downgrade attempt detected, possibly due to a MitM attack or a broken middlebox")
+		}
+
+		if c.vers == VersionTLS13 {
+			hs := &clientHandshakeStateTLS13{
+				c:            c,
+				ctx:          ctx,
+				serverHello:  serverHello,
+				hello:        hello,
+				ecdheKey:     ecdheKey,
+				session:      session,
+				earlySecret:  earlySecret,
+				binderKey:    binderKey,
+				extensions:   extensions,
+				sentDummyCCS: hello.earlyData,
+			}
+
+			// In TLS 1.3, session tickets are delivered after the handshake.
+			return hs.handshake()
+		}
+
+		hs := &clientHandshakeState{
+			c:           c,
+			ctx:         ctx,
+			serverHello: serverHello,
+			hello:       hello,
+			session:     session,
+			extensions:  extensions,
+		}
+
+		if err := hs.handshake(); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
 	if hello.earlyData {
+		c.vers = VersionTLS13
+		c.in.version = VersionTLS13
+		c.out.version = VersionTLS13
+
+		if err := c.writeChangeCipherRecord(); err != nil {
+			return err
+		}
+
 		suite := cipherSuiteTLS13ByID(session.cipherSuite)
 		transcript := suite.hash.New()
 		if err := transcriptMsg(hello, transcript); err != nil {
 			return err
 		}
+
 		earlyTrafficSecret := suite.deriveSecret(earlySecret, clientEarlyTrafficLabel, transcript)
-		c.quicSetWriteSecret(QUICEncryptionLevelEarly, suite.id, earlyTrafficSecret)
-	}
-
-	// serverHelloMsg is not included in the transcript
-	msg, err := c.readHandshake(nil)
-	if err != nil {
-		return err
-	}
-
-	serverHello, ok := msg.(*serverHelloMsg)
-	if !ok {
-		c.sendAlert(alertUnexpectedMessage)
-		return unexpectedMessageError(serverHello, msg)
-	}
-
-	if err := c.pickTLSVersion(serverHello); err != nil {
-		return err
-	}
-
-	extensions := hello.extensions
-	for _, extension := range serverHello.extensions {
-		switch extension := extension.(type) {
-		case nil:
-		case *UnimplementedExtension:
-			for _, ext := range extensions {
-				if ext.ExtensionId() == extension.ExtensionId() {
-					ext.NegotiatedVersion(c.vers)
-
-					if !ext.Unmarshal(typeServerHello, extension.Data) {
-						c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
-						return
-					}
-					break
-				}
-			}
-		}
-	}
-
-	// If we are negotiating a protocol version that's lower than what we
-	// support, check for the server downgrade canaries.
-	// See RFC 8446, Section 4.1.3.
-	maxVers := c.config.maxSupportedVersion(roleClient)
-	tls12Downgrade := string(serverHello.random[24:]) == downgradeCanaryTLS12
-	tls11Downgrade := string(serverHello.random[24:]) == downgradeCanaryTLS11
-	if maxVers == VersionTLS13 && c.vers <= VersionTLS12 && (tls12Downgrade || tls11Downgrade) ||
-		maxVers == VersionTLS12 && c.vers <= VersionTLS11 && tls11Downgrade {
-		c.sendAlert(alertIllegalParameter)
-		return errors.New("tls: downgrade attempt detected, possibly due to a MitM attack or a broken middlebox")
-	}
-
-	if c.vers == VersionTLS13 {
-		hs := &clientHandshakeStateTLS13{
-			c:           c,
-			ctx:         ctx,
-			serverHello: serverHello,
-			hello:       hello,
-			ecdheKey:    ecdheKey,
-			session:     session,
-			earlySecret: earlySecret,
-			binderKey:   binderKey,
-			extensions:  extensions,
+		if c.quic == nil {
+			c.out.setTrafficSecret(suite, QUICEncryptionLevelEarly, earlyTrafficSecret)
+		} else {
+			c.quicSetWriteSecret(QUICEncryptionLevelEarly, suite.id, earlyTrafficSecret)
 		}
 
-		// In TLS 1.3, session tickets are delivered after the handshake.
-		return hs.handshake()
+		err = c.config.writeKeyLog(keyLogLabelClientEarly, hello.random, earlyTrafficSecret)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+
+		c.handshakeState.Store(handshake0RTT)
+
+		go func() {
+			c.handshakeErr = handshakeFn()
+
+			c.earlyNotify.L.Lock()
+			c.earlyNotify.Broadcast()
+			c.earlyNotify.L.Unlock()
+		}()
+		return nil
 	}
 
-	hs := &clientHandshakeState{
-		c:           c,
-		ctx:         ctx,
-		serverHello: serverHello,
-		hello:       hello,
-		session:     session,
-		extensions:  extensions,
-	}
-
-	if err := hs.handshake(); err != nil {
-		return err
-	}
-
-	return nil
+	return handshakeFn()
 }
 
 func (c *Conn) loadSession(hello *clientHelloMsg) (
@@ -466,14 +501,22 @@ func (c *Conn) loadSession(hello *clientHelloMsg) (
 		return nil, nil, nil, nil
 	}
 
-	if c.quic != nil && session.MaxEarlyData > 0 {
+	if c.config.Allow0RTT && session.MaxEarlyData > 0 {
 		// For 0-RTT, the cipher suite has to match exactly, and we need to be
 		// offering the same ALPN.
 		if mutualCipherSuiteTLS13(hello.cipherSuites, session.cipherSuite) != nil {
-			for _, alpn := range hello.alpnProtocols {
-				if alpn == session.alpnProtocol {
-					hello.earlyData = true
-					break
+			if len(hello.alpnProtocols) == 0 && session.alpnProtocol == "" {
+				c.earlyNotify = sync.NewCond(&sync.Mutex{})
+				c.maxEarlyData = session.MaxEarlyData
+				hello.earlyData = true
+			} else {
+				for _, alpn := range hello.alpnProtocols {
+					if alpn == session.alpnProtocol {
+						c.earlyNotify = sync.NewCond(&sync.Mutex{})
+						c.maxEarlyData = session.MaxEarlyData
+						hello.earlyData = true
+						break
+					}
 				}
 			}
 		}
@@ -533,6 +576,14 @@ func (c *Conn) pickTLSVersion(serverHello *serverHelloMsg) error {
 func (hs *clientHandshakeState) handshake() error {
 	c := hs.c
 
+	if c.handshakeState.CompareAndSwap(handshake0RTT, handshakeRunning) {
+		c.earlyNotify.L.Lock()
+		c.earlyDataEOF = true
+		c.earlyNotify.L.Unlock()
+
+		c.out.cipher = nil
+	}
+
 	isResume, err := hs.processServerHello()
 	if err != nil {
 		return err
@@ -583,9 +634,6 @@ func (hs *clientHandshakeState) handshake() error {
 		if _, err := c.flush(); err != nil {
 			return err
 		}
-		if err := c.setup(); err != nil {
-			return err
-		}
 	} else {
 		if err := hs.doFullHandshake(); err != nil {
 			return err
@@ -606,14 +654,16 @@ func (hs *clientHandshakeState) handshake() error {
 		if err := hs.readFinished(c.serverFinished[:]); err != nil {
 			return err
 		}
-		if err := c.setup(); err != nil {
-			return err
-		}
+	}
+	if err := c.setup(); err != nil {
+		return err
 	}
 	if err := hs.saveSessionTicket(); err != nil {
 		return err
 	}
-
+	if err := hs.sendClientData(); err != nil {
+		return err
+	}
 	c.ekm = ekmFromMasterSecret(c.vers, hs.suite, hs.masterSecret, hs.hello.random, hs.serverHello.random)
 	c.handshakeState.Store(handshakeCompleted)
 	return nil
@@ -1037,6 +1087,18 @@ func (hs *clientHandshakeState) sendFinished(out []byte) error {
 	}
 	copy(out, finished.verifyData)
 	return nil
+}
+
+func (hs *clientHandshakeState) sendClientData() error {
+	c := hs.c
+	defer c.earlyData.Reset()
+
+	if c.earlyData.Len() == 0 {
+		return nil
+	}
+
+	_, err := c.writeRecordLocked(recordTypeApplicationData, c.earlyData.Bytes())
+	return err
 }
 
 // verifyServerCertificate parses and verifies the provided chain, setting

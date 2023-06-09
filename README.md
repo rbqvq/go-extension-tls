@@ -8,7 +8,7 @@ This repository is an extension of the golang standard library [crypto/go](https
 - ARIA cipher
 - CEMALLIA cipher
 - Kernel TLS
-- TLS 1.3 0RTT (Early Data) [ONLY FOR SERVER]
+- TLS 1.3 0RTT (Early Data)
 - Compressed certificate
 - Application-Layer Protocol Settings (ALPS)
 - GREASE
@@ -16,11 +16,6 @@ This repository is an extension of the golang standard library [crypto/go](https
 - Custom cipher suites in tls 1.3
 - Custom supported version list
 - Custom extension
-
-# TODO
-
-- TLS 1.3 0RTT (Early Data) [Client side]
-- QUIC QTLS
 
 # Special thanks
 
