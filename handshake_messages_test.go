@@ -419,9 +419,10 @@ func (*SessionState) Generate(rand *rand.Rand, size int) reflect.Value {
 	s.cipherSuite = uint16(rand.Intn(math.MaxUint16))
 	s.createdAt = uint64(rand.Int63())
 	s.secret = randomBytes(rand.Intn(100)+1, rand)
-	s.Extra = randomBytes(rand.Intn(100), rand)
+	for n, i := rand.Intn(3), 0; i < n; i++ {
+		s.Extra = append(s.Extra, randomBytes(rand.Intn(100), rand))
+	}
 	s.MaxEarlyData = rand.Uint32()
-
 	if rand.Intn(10) > 5 {
 		s.extMasterSecret = true
 	}
