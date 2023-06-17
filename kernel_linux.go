@@ -337,7 +337,7 @@ func (c *Conn) ReadFrom(r io.Reader) (n int64, err error) {
 	}
 
 	if !c.out.usingKernel() {
-		return io.Copy(&warppedConn{c}, r)
+		return io.Copy(&wrappedConn{c}, r)
 	}
 
 	return io.Copy(c.conn, r)
@@ -349,7 +349,7 @@ func (c *Conn) WriteTo(w io.Writer) (n int64, err error) {
 	}
 
 	if !c.in.usingKernel() {
-		return io.Copy(w, &warppedConn{c})
+		return io.Copy(w, &wrappedConn{c})
 	}
 
 	return io.Copy(w, c.conn)

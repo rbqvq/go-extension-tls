@@ -10,6 +10,6 @@ import (
 
 type kernelCipher struct{}
 
-type warppedConn struct {
+type wrappedConn struct {
 	io.ReadWriter
 }
