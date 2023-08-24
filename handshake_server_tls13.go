@@ -144,7 +144,15 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	}
 
 	for _, suiteID := range preferenceOrder {
+		if IsGREASE(suiteID) {
+			continue
+		}
+
 		for _, id := range configCipherSuites {
+			if IsGREASE(id) {
+				continue
+			}
+
 			if id == suiteID {
 				preferenceList = append(preferenceList, id)
 				break
@@ -173,7 +181,15 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	var clientKeyShare *keyShare
 GroupSelection:
 	for _, preferredGroup := range c.config.curvePreferences() {
+		if IsGREASE(uint16(preferredGroup)) {
+			continue
+		}
+
 		for _, ks := range hs.clientHello.keyShares {
+			if IsGREASE(uint16(ks.group)) {
+				continue
+			}
+
 			if ks.group == preferredGroup {
 				selectedGroup = ks.group
 				clientKeyShare = &ks

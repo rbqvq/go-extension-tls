@@ -466,8 +466,8 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 			case *SCTExtension:
 				if m.scts {
 					extLength += 4
+					// RFC 6962, Section 3.3.1
 				}
-				// RFC 6962, Section 3.3.1
 			case *SupportedVersionsExtension:
 				if len(m.supportedVersions) > 0 {
 					extLength += 4
@@ -477,6 +477,8 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 				}
 			case *CompressedCertificateExtension:
 				if len(m.supportedCompressionAlgorithmsCert) > 0 {
+					extLength += 4
+					
 					extLength += 1
 					extLength += len(m.supportedCompressionAlgorithmsCert) * 2
 				}

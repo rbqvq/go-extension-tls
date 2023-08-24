@@ -1247,7 +1247,14 @@ func (c *Config) supportsCertCompression(algorithm CertCompressionAlgorithm) boo
 func (c *Config) mutualVersion(isClient bool, peerVersions []uint16) (uint16, bool) {
 	supportedVersions := c.supportedVersions(isClient)
 	for _, peerVersion := range peerVersions {
+		if IsGREASE(peerVersion) {
+			continue
+		}
+		
 		for _, v := range supportedVersions {
+			if IsGREASE(v) {
+				continue
+			}
 			if v == peerVersion {
 				return v, true
 			}
