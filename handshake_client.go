@@ -276,6 +276,9 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 	}
 
 	hello.automaticPadding(c.config.MinClientHelloSize)
+	if c.config.ShuffleExtensions {
+		hello.automaticShuffle()
+	}
 
 	if _, err := c.writeHandshakeRecord(hello, nil); err != nil {
 		return err

@@ -849,6 +849,12 @@ type Config struct {
 	// It only works on the client.
 	MinClientHelloSize uint16
 
+	// If ShuffleExtensions is true, whe client will shuffle
+	// extensions to avoid fingerprinting.
+	//
+	// It only works on the client.
+	ShuffleExtensions bool
+
 	// Extensions contains the tls extensions that will be used in client hello.
 	// If empty, the default will be used.
 	// Its can modify tls fingerprint.
@@ -969,6 +975,7 @@ func (c *Config) Clone() *Config {
 		Allow0RTT:                      c.Allow0RTT,
 		Max0RTTData:                    c.Max0RTTData,
 		MinClientHelloSize:             c.MinClientHelloSize,
+		ShuffleExtensions:              c.ShuffleExtensions,
 		Extensions:                     c.Extensions,
 		KeyLogWriter:                   c.KeyLogWriter,
 		KernelTX:                       c.KernelTX,
@@ -1250,7 +1257,7 @@ func (c *Config) mutualVersion(isClient bool, peerVersions []uint16) (uint16, bo
 		if IsGREASE(peerVersion) {
 			continue
 		}
-		
+
 		for _, v := range supportedVersions {
 			if IsGREASE(v) {
 				continue

@@ -7,6 +7,7 @@ package tls
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"strings"
 
 	"golang.org/x/crypto/cryptobyte"
@@ -478,7 +479,7 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 			case *CompressedCertificateExtension:
 				if len(m.supportedCompressionAlgorithmsCert) > 0 {
 					extLength += 4
-					
+
 					extLength += 1
 					extLength += len(m.supportedCompressionAlgorithmsCert) * 2
 				}
@@ -577,6 +578,33 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 		}
 	}
 	return
+}
+
+// Shuffle extensions to avoid fingerprinting -- introduced in Chrome 106
+func (m *clientHelloMsg) automaticShuffle() {
+	// shuffleCheck checks:
+	// - if the m.extensions[i] is a GREASE extension, then it should not be shuffled
+	// - if the m.extensions[i] is a padding/pre_shared_key extension, then it should be the
+	//  last extension in the list and should not be shuffled
+	var shuffleCheck = func(i int) bool {
+		switch m.extensions[i].(type) {
+		case *GREASEExtension:
+			return false
+		case *PaddingExtension, *PreSharedKeyExtension:
+			return false
+		default:
+			return true
+		}
+	}
+
+	// Shuffle other extensions
+	rand.Shuffle(len(m.extensions), func(i, j int) {
+		if !shuffleCheck(i) || !shuffleCheck(j) {
+			return
+		}
+
+		m.extensions[i], m.extensions[j] = m.extensions[j], m.extensions[i]
+	})
 }
 
 // marshalWithoutBinders returns the ClientHello through the
