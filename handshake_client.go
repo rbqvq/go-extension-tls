@@ -171,9 +171,10 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 	var key *ecdh.PrivateKey
 	for _, curveID := range config.curvePreferences() {
 		if IsGREASE(uint16(curveID)) {
-			hello.supportedCurves = append(hello.supportedCurves, CurveID(c.GREASE()))
+			groupId := CurveID(c.GREASE())
+			hello.supportedCurves = append(hello.supportedCurves, groupId)
 			if config.maxSupportedVersion(c.isClient) >= VersionTLS13 {
-				hello.keyShares = append(hello.keyShares, keyShare{group: CurveID(c.GREASE()), data: []byte{0}})
+				hello.keyShares = append(hello.keyShares, keyShare{group: groupId, data: []byte{0}})
 			}
 			continue
 		}
