@@ -73,7 +73,7 @@ func (*implementedExtension) Len(messageType uint8) int {
 }
 
 func (*implementedExtension) Unmarshal(messageType uint8, b cryptobyte.String) bool {
-	return false
+	return true
 }
 
 func (*implementedExtension) Clone() Extension {
