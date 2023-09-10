@@ -1105,9 +1105,13 @@ func (hs *clientHandshakeState) sendClientData() error {
 	return err
 }
 
-// maxRSAKeySize is the maximum RSA key size in bits that we are willing
+// defaultMaxRSAKeySize is the maximum RSA key size in bits that we are willing
 // to verify the signatures of during a TLS handshake.
-const maxRSAKeySize = 8192
+const defaultMaxRSAKeySize = 8192
+
+func checkKeySize(n int) (max int, ok bool) {
+	return defaultMaxRSAKeySize, n <= defaultMaxRSAKeySize
+}
 
 // verifyServerCertificate parses and verifies the provided chain, setting
 // c.verifiedChains and c.peerCertificates or sending the appropriate alert.
@@ -1120,9 +1124,12 @@ func (c *Conn) verifyServerCertificate(certificates [][]byte) error {
 			c.sendAlert(alertBadCertificate)
 			return errors.New("tls: failed to parse certificate from server: " + err.Error())
 		}
-		if cert.cert.PublicKeyAlgorithm == x509.RSA && cert.cert.PublicKey.(*rsa.PublicKey).N.BitLen() > maxRSAKeySize {
-			c.sendAlert(alertBadCertificate)
-			return fmt.Errorf("tls: server sent certificate containing RSA key larger than %d bits", maxRSAKeySize)
+		if cert.cert.PublicKeyAlgorithm == x509.RSA {
+			n := cert.cert.PublicKey.(*rsa.PublicKey).N.BitLen()
+			if max, ok := checkKeySize(n); !ok {
+				c.sendAlert(alertBadCertificate)
+				return fmt.Errorf("tls: server sent certificate containing RSA key larger than %d bits", max)
+			}
 		}
 		activeHandles[i] = cert
 		certs[i] = cert.cert
