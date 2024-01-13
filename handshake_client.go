@@ -86,10 +86,8 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 	}
 
 	if c.config.maxSupportedVersion(roleClient) >= VersionTLS13 {
-		for _, alpn := range config.NextProtos {
-			if _, ok := config.NextProtoSettings[alpn]; ok {
-				hello.alpsProtocols = append(hello.alpsProtocols, alpn)
-			}
+		for alpn := range config.NextProtoSettings {
+			hello.alpsProtocols = append(hello.alpsProtocols, alpn)
 		}
 	}
 
