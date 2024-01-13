@@ -15,8 +15,8 @@ import (
 	"unsafe"
 
 	"github.com/blang/semver/v4"
+	"github.com/pmorjan/kmod"
 	"golang.org/x/sys/unix"
-	"pault.ag/go/modprobe"
 )
 
 const (
@@ -45,7 +45,15 @@ type kernelInfo struct {
 var kernel kernelInfo
 
 func init() {
-	modprobe.Load("tls", "")
+	func() {
+		defer recover()
+		kmod, err := kmod.New()
+		if err != nil {
+			return
+		}
+
+		kmod.Load("tls", "", 0)
+	}()
 
 	// when kernel tls module enabled, /sys/module/tls is available
 	if _, err := os.Stat("/sys/module/tls"); err != nil {
