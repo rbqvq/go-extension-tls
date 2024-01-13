@@ -16,6 +16,7 @@ import (
 
 	"github.com/blang/semver/v4"
 	"golang.org/x/sys/unix"
+	"pault.ag/go/modprobe"
 )
 
 const (
@@ -44,6 +45,8 @@ type kernelInfo struct {
 var kernel kernelInfo
 
 func init() {
+	modprobe.Load("tls", "")
+
 	// when kernel tls module enabled, /sys/module/tls is available
 	if _, err := os.Stat("/sys/module/tls"); err != nil {
 		return
