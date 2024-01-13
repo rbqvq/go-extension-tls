@@ -49,6 +49,10 @@ type serverHandshakeStateTLS13 struct {
 
 func (hs *serverHandshakeStateTLS13) handshake() error {
 	c := hs.c
+<<<<<<< HEAD
+=======
+
+>>>>>>> cc5f474ef5f20f99e820d0936f5a4b527b8e4b48
 	// For an overview of the TLS 1.3 handshake, see RFC 8446, Section 2.
 	if err := hs.processClientHello(); err != nil {
 		return err
