@@ -13,3 +13,11 @@ type kernelCipher struct{}
 type wrappedConn struct {
 	io.ReadWriter
 }
+
+func (c *Conn) KernelTX() bool {
+	return c.out.usingKernel()
+}
+
+func (c *Conn) KernelRX() bool {
+	return c.in.usingKernel()
+}
