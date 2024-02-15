@@ -27,7 +27,6 @@ import (
 )
 
 func testClientHello(t *testing.T, serverConfig *Config, m handshakeMessage) {
-	t.Helper()
 	testClientHelloFailure(t, serverConfig, m, "")
 }
 
@@ -53,32 +52,23 @@ func testClientHelloFailure(t *testing.T, serverConfig *Config, m handshakeMessa
 	ctx := context.Background()
 	conn := Server(s, serverConfig)
 	ch, err := conn.readClientHello(ctx)
-	if err == nil && conn.vers == VersionTLS13 {
-		hs := serverHandshakeStateTLS13{
-			c:           conn,
-			ctx:         ctx,
-			clientHello: ch,
-		}
+	hs := serverHandshakeState{
+		c:           conn,
+		ctx:         ctx,
+		clientHello: ch,
+	}
+	if err == nil {
 		err = hs.processClientHello()
-	} else if err == nil {
-		hs := serverHandshakeState{
-			c:           conn,
-			ctx:         ctx,
-			clientHello: ch,
-		}
-		err = hs.processClientHello()
-		if err == nil {
-			err = hs.pickCipherSuite()
-		}
+	}
+	if err == nil {
+		err = hs.pickCipherSuite()
 	}
 	s.Close()
 	if len(expectedSubStr) == 0 {
 		if err != nil && err != io.EOF {
-			t.Helper()
 			t.Errorf("Got error: %s; expected to succeed", err)
 		}
 	} else if err == nil || !strings.Contains(err.Error(), expectedSubStr) {
-		t.Helper()
 		t.Errorf("Got error: %v; expected to match substring '%s'", err, expectedSubStr)
 	}
 }
@@ -407,21 +397,22 @@ func TestClose(t *testing.T) {
 func TestVersion(t *testing.T) {
 	serverConfig := &Config{
 		Certificates: testConfig.Certificates,
-		MaxVersion:   VersionTLS11,
+		MaxVersion:   VersionTLS13,
 	}
 	clientConfig := &Config{
 		InsecureSkipVerify: true,
-		MinVersion:         VersionTLS10,
+		MinVersion:         VersionTLS12,
 	}
 	state, _, err := testHandshake(t, clientConfig, serverConfig)
 	if err != nil {
 		t.Fatalf("handshake failed: %s", err)
 	}
-	if state.Version != VersionTLS11 {
+	if state.Version != VersionTLS13 {
 		t.Fatalf("incorrect version %x, should be %x", state.Version, VersionTLS11)
 	}
 
 	clientConfig.MinVersion = 0
+	serverConfig.MaxVersion = VersionTLS11
 	_, _, err = testHandshake(t, clientConfig, serverConfig)
 	if err == nil {
 		t.Fatalf("expected failure to connect with TLS 1.0/1.1")
@@ -494,25 +485,25 @@ func TestCrossVersionResume(t *testing.T) {
 
 func testCrossVersionResume(t *testing.T, version uint16) {
 	serverConfig := &Config{
-		CipherSuites: []uint16{TLS_RSA_WITH_AES_128_CBC_SHA},
+		CipherSuites: []uint16{TLS_RSA_WITH_AES_128_CBC_SHA, TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256},
 		Certificates: testConfig.Certificates,
 	}
 	clientConfig := &Config{
-		CipherSuites:       []uint16{TLS_RSA_WITH_AES_128_CBC_SHA},
+		CipherSuites:       []uint16{TLS_RSA_WITH_AES_128_CBC_SHA, TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256},
 		InsecureSkipVerify: true,
 		ClientSessionCache: NewLRUClientSessionCache(1),
 		ServerName:         "servername",
-		MinVersion:         VersionTLS10,
+		MinVersion:         VersionTLS12,
 	}
 
-	// Establish a session at TLS 1.1.
-	clientConfig.MaxVersion = VersionTLS11
+	// Establish a session at TLS 1.3.
+	clientConfig.MaxVersion = VersionTLS13
 	_, _, err := testHandshake(t, clientConfig, serverConfig)
 	if err != nil {
 		t.Fatalf("handshake failed: %s", err)
 	}
 
-	// The client session cache now contains a TLS 1.1 session.
+	// The client session cache now contains a TLS 1.3 session.
 	state, _, err := testHandshake(t, clientConfig, serverConfig)
 	if err != nil {
 		t.Fatalf("handshake failed: %s", err)
@@ -522,7 +513,7 @@ func testCrossVersionResume(t *testing.T, version uint16) {
 	}
 
 	// Test that the server will decline to resume at a lower version.
-	clientConfig.MaxVersion = VersionTLS10
+	clientConfig.MaxVersion = VersionTLS12
 	state, _, err = testHandshake(t, clientConfig, serverConfig)
 	if err != nil {
 		t.Fatalf("handshake failed: %s", err)
@@ -531,7 +522,7 @@ func testCrossVersionResume(t *testing.T, version uint16) {
 		t.Fatalf("handshake resumed at a lower version")
 	}
 
-	// The client session cache now contains a TLS 1.0 session.
+	// The client session cache now contains a TLS 1.2 session.
 	state, _, err = testHandshake(t, clientConfig, serverConfig)
 	if err != nil {
 		t.Fatalf("handshake failed: %s", err)
@@ -541,7 +532,7 @@ func testCrossVersionResume(t *testing.T, version uint16) {
 	}
 
 	// Test that the server will decline to resume at a higher version.
-	clientConfig.MaxVersion = VersionTLS11
+	clientConfig.MaxVersion = VersionTLS13
 	state, _, err = testHandshake(t, clientConfig, serverConfig)
 	if err != nil {
 		t.Fatalf("handshake failed: %s", err)
@@ -1189,6 +1180,7 @@ func TestServerResumptionDisabled(t *testing.T) {
 func TestFallbackSCSV(t *testing.T) {
 	serverConfig := Config{
 		Certificates: testConfig.Certificates,
+		MinVersion:   VersionTLS11,
 	}
 	test := &serverTest{
 		name:   "FallbackSCSV",
