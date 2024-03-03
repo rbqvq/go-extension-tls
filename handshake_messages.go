@@ -7,9 +7,9 @@ package tls
 import (
 	"errors"
 	"fmt"
-	"math/rand"
 	"strings"
 
+	"gitlab.com/go-extension/rand"
 	"golang.org/x/crypto/cryptobyte"
 )
 
@@ -588,9 +588,7 @@ func (m *clientHelloMsg) automaticShuffle() {
 	//  last extension in the list and should not be shuffled
 	var shuffleCheck = func(i int) bool {
 		switch m.extensions[i].(type) {
-		case *GREASEExtension:
-			return false
-		case *PaddingExtension, *PreSharedKeyExtension:
+		case *GREASEExtension, *PaddingExtension, *PreSharedKeyExtension:
 			return false
 		default:
 			return true
@@ -598,7 +596,7 @@ func (m *clientHelloMsg) automaticShuffle() {
 	}
 
 	// Shuffle other extensions
-	rand.Shuffle(len(m.extensions), func(i, j int) {
+	rand.Crypto.Shuffle(len(m.extensions), func(i, j int) {
 		if !shuffleCheck(i) || !shuffleCheck(j) {
 			return
 		}
