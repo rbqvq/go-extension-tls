@@ -1166,10 +1166,15 @@ func (c *Conn) verifyServerCertificate(certificates [][]byte) error {
 	}
 
 	if !c.config.InsecureSkipVerify {
+		dnsName := c.config.ServerName
+		if c.ech.offered && !c.ech.accepted {
+			dnsName = c.serverName
+		}
+
 		opts := x509.VerifyOptions{
 			Roots:         c.config.RootCAs,
 			CurrentTime:   c.config.time(),
-			DNSName:       c.config.ServerName,
+			DNSName:       dnsName,
 			Intermediates: x509.NewCertPool(),
 		}
 

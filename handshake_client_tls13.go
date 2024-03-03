@@ -126,6 +126,11 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 		return err
 	}
 
+	// Resolve the server name now that ECH acceptance has been determined.
+	//
+	// NOTE(cjpatton): Currently the client sends the same ALPN extension in the
+	// ClientHelloInner and ClientHelloOuter. If that changes, then we'll need
+	// to resolve ALPN here as well.
 	c.serverName = hs.hello.serverName
 
 	c.buffering = true
@@ -348,12 +353,12 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 			return err
 		}
 		hs.ecdheKey = key
-		hs.hello.keyShares = []keyShare{{group: curveID, data: key.PublicKey().Bytes()}}
+		hello.keyShares = []keyShare{{group: curveID, data: key.PublicKey().Bytes()}}
 	}
 
-	hs.hello.raw = nil
-	if hs.hello.earlyData {
-		hs.hello.earlyData = false
+	hello.raw = nil
+	if hello.earlyData {
+		hello.earlyData = false
 
 		c.earlyNotify.L.Lock()
 		c.earlyDataEOF = true
@@ -365,7 +370,7 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 		c.out.cipher = nil
 	}
 
-	if len(hs.hello.pskIdentities) > 0 {
+	if len(hello.pskIdentities) > 0 {
 		pskSuite := cipherSuiteTLS13ByID(hs.session.cipherSuite)
 		if pskSuite == nil {
 			return c.sendAlert(alertInternalError)
@@ -373,7 +378,7 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 		if pskSuite.hash == hs.suite.hash {
 			// Update binders and obfuscated_ticket_age.
 			ticketAge := c.config.time().Sub(time.Unix(int64(hs.session.createdAt), 0))
-			hs.hello.pskIdentities[0].obfuscatedTicketAge = uint32(ticketAge/time.Millisecond) + hs.session.ageAdd
+			hello.pskIdentities[0].obfuscatedTicketAge = uint32(ticketAge/time.Millisecond) + hs.session.ageAdd
 
 			transcript := hs.suite.hash.New()
 			transcript.Write([]byte{typeMessageHash, 0, 0, uint8(len(chHash))})
@@ -397,8 +402,6 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 		}
 	}
 
-	hs.hello.automaticPadding(c.config.MinClientHelloSize)
-
 	if isInner {
 		hs.helloInner = hello
 		helloInnerMarshalled, err := hs.helloInner.marshal()
@@ -412,6 +415,8 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 	} else {
 		hs.hello = hello
 	}
+
+	hs.hello.automaticPadding(c.config.MinClientHelloSize)
 
 	if _, err := hs.c.writeHandshakeRecord(hs.hello, nil); err != nil {
 		return err
