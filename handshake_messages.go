@@ -81,6 +81,7 @@ type clientHelloMsg struct {
 	pskIdentities                      []pskIdentity
 	pskBinders                         [][]byte
 	quicTransportParameters            []byte
+	ech                                []byte
 	extensions                         []Extension
 }
 
@@ -282,6 +283,14 @@ func (m *clientHelloMsg) marshal() ([]byte, error) {
 					exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
 						exts.AddBytes(m.pskModes)
 					})
+				})
+			}
+		case *EncryptedClientHelloExtension:
+			if len(m.ech) > 0 {
+				// draft-ietf-tls-esni-13, "encrypted_client_hello"
+				exts.AddUint16(extensionECH)
+				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					exts.AddBytes(m.ech)
 				})
 			}
 		case *QUICTransportParametersExtension:
@@ -513,6 +522,12 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 					extLength += 1
 					extLength += len(m.pskModes)
 				}
+			case *EncryptedClientHelloExtension:
+				if len(m.ech) > 0 {
+					extLength += 4
+					// RFC 9001, Section 8.2
+					extLength += len(m.ech)
+				}
 			case *QUICTransportParametersExtension:
 				if m.quicTransportParameters != nil { // marshal zero-length parameters when present
 					extLength += 4
@@ -577,7 +592,6 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 			}
 		}
 	}
-	return
 }
 
 // Shuffle extensions to avoid fingerprinting -- introduced in Chrome 106
@@ -803,6 +817,14 @@ func (m *clientHelloMsg) marshalWithoutBinders() ([]byte, error) {
 					exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
 						exts.AddBytes(m.pskModes)
 					})
+				})
+			}
+		case *EncryptedClientHelloExtension:
+			if len(m.ech) > 0 {
+				// draft-ietf-tls-esni-13, "encrypted_client_hello"
+				exts.AddUint16(extensionECH)
+				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					exts.AddBytes(m.ech)
 				})
 			}
 		case *QUICTransportParametersExtension:
@@ -1158,6 +1180,13 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				return false
 			}
 			m.extensions = append(m.extensions, &PSKModesExtension{})
+		case extensionECH:
+			// draft-ietf-tls-esni-13, "encrypted_client_hello"
+			if len(extData) == 0 ||
+				!extData.ReadBytes(&m.ech, len(extData)) {
+				return false
+			}
+			m.extensions = append(m.extensions, &EncryptedClientHelloExtension{})
 		case extensionQUICTransportParameters:
 			m.quicTransportParameters = make([]byte, len(extData))
 			if !extData.CopyBytes(m.quicTransportParameters) {
@@ -1247,6 +1276,7 @@ type serverHelloMsg struct {
 	selectedIdentityPresent      bool
 	selectedIdentity             uint16
 	supportedPoints              []uint8
+	ech                          []byte
 
 	// HelloRetryRequest extensions
 	cookie        []byte
@@ -1360,6 +1390,14 @@ func (m *serverHelloMsg) marshal() ([]byte, error) {
 					exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
 						exts.AddBytes(m.supportedPoints)
 					})
+				})
+			}
+		case *EncryptedClientHelloExtension:
+			if len(m.ech) > 0 {
+				// draft-ietf-tls-esni-13, "encrypted_client_hello"
+				exts.AddUint16(extensionECH)
+				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					exts.AddBytes(m.ech)
 				})
 			}
 		default:
@@ -1515,6 +1553,13 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 				return false
 			}
 			m.extensions = append(m.extensions, &SupportedPointsExtension{})
+		case extensionECH:
+			// draft-ietf-tls-esni-13, "encrypted_client_hello"
+			if len(extData) == 0 ||
+				!extData.ReadBytes(&m.ech, len(extData)) {
+				return false
+			}
+			m.extensions = append(m.extensions, &EncryptedClientHelloExtension{})
 		default:
 			var ext Extension
 
@@ -1548,6 +1593,7 @@ type encryptedExtensionsMsg struct {
 	alpnSetting             []byte
 	quicTransportParameters []byte
 	earlyData               bool
+	ech                     []byte
 
 	extensions []Extension
 }
@@ -1587,6 +1633,14 @@ func (m *encryptedExtensionsMsg) marshal() ([]byte, error) {
 						// RFC 8446, Section 4.2.10
 						b.AddUint16(extensionEarlyData)
 						b.AddUint16(0) // empty extension_data
+					}
+				case *EncryptedClientHelloExtension:
+					if len(m.ech) > 0 {
+						// draft-ietf-tls-esni-13, "encrypted_client_hello"
+						b.AddUint16(extensionECH)
+						b.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+							exts.AddBytes(m.ech)
+						})
 					}
 				case *QUICTransportParametersExtension:
 					if m.quicTransportParameters != nil { // marshal zero-length parameters when present
@@ -1652,6 +1706,13 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 		case extensionEarlyData:
 			m.earlyData = true
 			m.extensions = append(m.extensions, &EarlyExtension{})
+		case extensionECH:
+			// draft-ietf-tls-esni-13, "encrypted_client_hello"
+			if len(extData) == 0 ||
+				!extData.ReadBytes(&m.ech, len(extData)) {
+				return false
+			}
+			m.extensions = append(m.extensions, &EncryptedClientHelloExtension{})
 		case extensionQUICTransportParameters:
 			m.quicTransportParameters = make([]byte, len(extData))
 			if !extData.CopyBytes(m.quicTransportParameters) {

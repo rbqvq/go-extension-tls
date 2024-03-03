@@ -126,6 +126,8 @@ const (
 	extensionQUICTransportParameters uint16 = 57
 	extensionALPS                    uint16 = 17513
 	extensionRenegotiationInfo       uint16 = 0xff01
+	extensionECH                     uint16 = 0xfe0d // draft-ietf-tls-esni-13
+	extensionECHOuterExtensions      uint16 = 0xfd00 // draft-ietf-tls-esni-13
 )
 
 // TLS signaling cipher suite values
@@ -314,6 +316,14 @@ type ConnectionState struct {
 	// Section 3). This value will be nil for TLS 1.3 connections and for
 	// resumed connections that don't support Extended Master Secret (RFC 7627).
 	TLSUnique []byte
+
+	// ECHAccepted is set if the ECH extension was offered by the client and
+	// accepted by the server.
+	ECHAccepted bool
+
+	// ECHOffered is set if the ECH extension is present in the ClientHello.
+	// This means the client has offered ECH or sent GREASE ECH.
+	ECHOffered bool
 
 	// ekm is a closure exposed via ExportKeyingMaterial.
 	ekm func(label string, context []byte, length int) ([]byte, error)
@@ -873,6 +883,27 @@ type Config struct {
 	// If this option is enabled, please mount the TLS module before you run application.
 	KernelTX, KernelRX bool
 
+	// ECHEnabled determines whether the ECH extension is enabled for this
+	// connection.
+	ECHEnabled bool
+
+	// ClientECHGreaseConfig are the parameters used by the client when it offers the
+	// dummy ECH extension.
+	ClientECHDummyConfig ECHDummyConfig
+
+	// ClientECHConfigs are the parameters used by the client when it offers the
+	// ECH extension. If ECH is enabled, a suitable configuration is found, and
+	// the client supports TLS 1.3, then it will offer ECH in this handshake.
+	// Otherwise, if ECH is enabled, it will send a dummy ECH extension.
+	ClientECHConfigs []ECHConfig
+
+	// ServerECHProvider is the ECH provider used by the client-facing server
+	// for the ECH extension. If the client offers ECH and TLS 1.3 is
+	// negotiated, then the provider is used to compute the HPKE context
+	// (draft-irtf-cfrg-hpke-07), which in turn is used to decrypt the extension
+	// payload.
+	ServerECHProvider ECHProvider
+
 	// mutex protects sessionTicketKeys and autoSessionTicketKeys.
 	mutex sync.RWMutex
 	// sessionTicketKeys contains zero or more ticket keys. If set, it means
@@ -979,6 +1010,10 @@ func (c *Config) Clone() *Config {
 		KeyLogWriter:                   c.KeyLogWriter,
 		KernelTX:                       c.KernelTX,
 		KernelRX:                       c.KernelRX,
+		ECHEnabled:                     c.ECHEnabled,
+		ClientECHDummyConfig:           c.ClientECHDummyConfig,
+		ClientECHConfigs:               c.ClientECHConfigs,
+		ServerECHProvider:              c.ServerECHProvider,
 		sessionTicketKeys:              c.sessionTicketKeys,
 		autoSessionTicketKeys:          c.autoSessionTicketKeys,
 	}
@@ -1165,6 +1200,21 @@ func (c *Config) supportedVersions(isClient bool) []uint16 {
 		versions = append(versions, v)
 	}
 	return versions
+}
+
+func (c *Config) supportedVersionsFromMin(isClient bool, minVersion uint16) []uint16 {
+	versions := c.supportedVersions(isClient)
+	filteredVersions := versions[:0]
+	for _, v := range versions {
+		if IsGREASE(v) {
+			continue
+		}
+
+		if v >= minVersion {
+			filteredVersions = append(filteredVersions, v)
+		}
+	}
+	return filteredVersions
 }
 
 func (c *Config) maxSupportedVersion(isClient bool) uint16 {

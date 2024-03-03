@@ -47,6 +47,7 @@ var (
 		&KeyShareExtension{},
 		&EarlyExtension{},
 		&PSKModesExtension{},
+		&EncryptedClientHelloExtension{},
 		&QUICTransportParametersExtension{},
 		&PreSharedKeyExtension{},
 	}
@@ -258,6 +259,16 @@ func (*PSKModesExtension) ExtensionId() uint16 {
 
 func (*PSKModesExtension) Clone() Extension {
 	return &PSKModesExtension{}
+}
+
+type EncryptedClientHelloExtension struct{ implementedExtension }
+
+func (*EncryptedClientHelloExtension) ExtensionId() uint16 {
+	return extensionECH
+}
+
+func (*EncryptedClientHelloExtension) Clone() Extension {
+	return &EncryptedClientHelloExtension{}
 }
 
 type QUICTransportParametersExtension struct{ implementedExtension }

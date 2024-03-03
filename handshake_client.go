@@ -139,7 +139,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 	}
 
 	if len(hello.cipherSuites) == 0 {
-		return nil, nil, errors.New("tls: not vaild cipher suite provided.")
+		return nil, nil, errors.New("tls: not vaild cipher suite provided")
 	}
 
 	_, err := io.ReadFull(config.rand(), hello.random)
@@ -238,6 +238,18 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *ecdh.PrivateKey, error) {
 	return hello, key, nil
 }
 
+func (c *Conn) makeEncryptedClientHello(hello *clientHelloMsg) error {
+	config := c.config
+
+	supportedVersions := config.supportedVersionsFromMin(roleClient, VersionTLS13)
+	if len(supportedVersions) == 0 {
+		return errors.New("tls: no supported versions satisfy MinVersion and MaxVersion")
+	}
+
+	hello.supportedVersions = supportedVersions
+	return nil
+}
+
 func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 	if c.config == nil {
 		c.config = defaultConfig()
@@ -247,13 +259,31 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 	// need to be reset.
 	c.didResume = false
 
-	hello, ecdheKey, err := c.makeClientHello()
+	helloBase, ecdheKey, err := c.makeClientHello()
 	if err != nil {
 		return err
 	}
-	c.serverName = hello.serverName
 
-	session, earlySecret, binderKey, err := c.loadSession(hello)
+	if c.config.echCanOffer() {
+		// If the ECH extension will be offered in this handshake, then the
+		// ClientHelloInner must not offer TLS 1.2 or below.
+		err := c.makeEncryptedClientHello(helloBase)
+		if err != nil {
+			return err
+		}
+	}
+
+	hello, helloInner, err := c.echOfferOrGrease(helloBase)
+	if err != nil {
+		return err
+	}
+
+	helloResumed := hello
+	if c.ech.offered {
+		helloResumed = helloInner
+	}
+
+	session, earlySecret, binderKey, err := c.loadSession(helloResumed)
 	if err != nil {
 		return err
 	}
@@ -347,6 +377,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 			return hs.handshake()
 		}
 
+		c.serverName = hello.serverName
 		hs := &clientHandshakeState{
 			c:           c,
 			ctx:         ctx,
@@ -408,7 +439,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 
 func (c *Conn) loadSession(hello *clientHelloMsg) (
 	session *SessionState, earlySecret, binderKey []byte, err error) {
-	if c.config.SessionTicketsDisabled || c.config.ClientSessionCache == nil {
+	if c.config.SessionTicketsDisabled || c.config.ClientSessionCache == nil || c.config.ECHEnabled {
 		return nil, nil, nil, nil
 	}
 

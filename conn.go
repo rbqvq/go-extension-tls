@@ -20,6 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/cloudflare/circl/hpke"
 )
 
 // A Conn represents a secured connection.
@@ -135,6 +137,20 @@ type Conn struct {
 	// activeCall indicates whether Close has been call in the low bit.
 	// the rest of the bits are the number of goroutines in Conn.Write.
 	activeCall atomic.Int32
+
+	// State used for the ECH extension.
+	ech struct {
+		sealer hpke.Sealer // The client's HPKE context
+		opener hpke.Opener // The server's HPKE context
+
+		// The state shared by the client and server.
+		offered      bool   // Client offered ECH
+		greased      bool   // Client greased ECH
+		accepted     bool   // Server accepted ECH
+		retryConfigs []byte // The retry configurations
+		configId     uint8  // The ECH config id
+		maxNameLen   int    // maximum_name_len indicated by the ECH config
+	}
 
 	tmp [16]byte
 }
@@ -775,6 +791,12 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 			return c.in.setErrorLocked(io.EOF)
 		}
 		if c.vers == VersionTLS13 {
+			if !c.isClient && c.ech.greased && alert(data[1]) == alertECHRequired {
+				// This condition indicates that the client intended to offer
+				// ECH, but did not use a known ECH config.
+				c.ech.offered = true
+				c.ech.greased = false
+			}
 			return c.in.setErrorLocked(&net.OpError{Op: "remote error", Err: alert(data[1])})
 		}
 		switch data[0] {
@@ -1422,7 +1444,7 @@ func (c *Conn) handlePostHandshakeMessage() error {
 
 	switch msg := msg.(type) {
 	case *endOfEarlyDataMsg:
-		return c.handleEndOfEarlyData(msg)
+		return c.handleEndOfEarlyData()
 	case *newSessionTicketMsgTLS13:
 		return c.handleNewSessionTicket(msg)
 	case *keyUpdateMsg:
@@ -1776,6 +1798,8 @@ func (c *Conn) connectionStateLocked() ConnectionState {
 	state.VerifiedChains = c.verifiedChains
 	state.SignedCertificateTimestamps = c.scts
 	state.OCSPResponse = c.ocspResponse
+	state.ECHAccepted = c.ech.accepted
+	state.ECHOffered = c.ech.offered || c.ech.greased
 	if (!c.didResume || c.extMasterSecret) && c.vers != VersionTLS13 {
 		if c.clientFinishedIsFirst {
 			state.TLSUnique = c.clientFinished[:]
