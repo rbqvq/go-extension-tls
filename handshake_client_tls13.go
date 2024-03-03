@@ -11,7 +11,9 @@ import (
 	"crypto/ecdh"
 	"crypto/hmac"
 	"crypto/rsa"
+	"crypto/subtle"
 	"errors"
+	"fmt"
 	"hash"
 	"time"
 )
@@ -21,6 +23,7 @@ type clientHandshakeStateTLS13 struct {
 	ctx         context.Context
 	serverHello *serverHelloMsg
 	hello       *clientHelloMsg
+	helloInner  *clientHelloMsg
 	ecdheKey    *ecdh.PrivateKey
 
 	session     *SessionState
@@ -35,6 +38,7 @@ type clientHandshakeStateTLS13 struct {
 	suite                    *cipherSuiteTLS13
 	certCompressionAlgorithm CertCompressionAlgorithm
 	transcript               hash.Hash
+	transcriptInner          hash.Hash
 	masterSecret             []byte
 	handshakeSecret          []byte // client_handshake_traffic_secret_0
 	trafficSecret            []byte // client_application_traffic_secret_0
@@ -69,6 +73,18 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 		return err
 	}
 
+	// When offering ECH, we don't know whether ECH was accepted or rejected
+	// until we get the server's response. Compute the transcript of both the
+	// inner and outer handshake until we know.
+	if c.ech.offered {
+		hs.transcriptInner = hs.suite.hash.New()
+		helloInnerMarshalled, err := hs.helloInner.marshal()
+		if err != nil {
+			return fmt.Errorf("tls: ech: helloInner.marshal(): %w", err)
+		}
+		hs.transcriptInner.Write(helloInnerMarshalled)
+	}
+
 	if bytes.Equal(hs.serverHello.random, helloRetryRequestRandom) {
 		if err := hs.sendDummyChangeCipherSpec(); err != nil {
 			return err
@@ -78,9 +94,39 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 		}
 	}
 
+	// Check for ECH acceptance confirmation.
+	if c.ech.offered {
+		echAcceptConfTranscript := cloneHash(hs.transcriptInner, hs.suite.hash)
+		if echAcceptConfTranscript == nil {
+			c.sendAlert(alertInternalError)
+			return errors.New("tls: internal error: failed to clone hash")
+		}
+
+		sh, err := hs.serverHello.marshal()
+		if err != nil {
+			return fmt.Errorf("tls: ech: hs.serverHello.marshal(): %w", err)
+		}
+		echAcceptConfTranscript.Write(sh[:30])
+		echAcceptConfTranscript.Write(zeros[:8])
+		echAcceptConfTranscript.Write(sh[38:])
+		echAcceptConf := hs.suite.expandLabel(
+			hs.suite.extract(hs.helloInner.random, nil),
+			echAcceptConfLabel,
+			echAcceptConfTranscript.Sum(nil),
+			8)
+
+		if subtle.ConstantTimeCompare(hs.serverHello.random[24:], echAcceptConf) == 1 {
+			c.ech.accepted = true
+			hs.hello = hs.helloInner
+			hs.transcript = hs.transcriptInner
+		}
+	}
+
 	if err := transcriptMsg(hs.serverHello, hs.transcript); err != nil {
 		return err
 	}
+
+	c.serverName = hs.hello.serverName
 
 	c.buffering = true
 	if err := hs.processServerHello(); err != nil {
@@ -108,6 +154,9 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 		return err
 	}
 	if err := hs.sendClientFinished(); err != nil {
+		return err
+	}
+	if err := hs.abortIfRequired(); err != nil {
 		return err
 	}
 	if _, err := c.flush(); err != nil {
@@ -209,6 +258,50 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 		return err
 	}
 
+	// Determine which ClientHello message was consumed by the server. If ECH
+	// was offered, this may be the ClientHelloInner or ClientHelloOuter.
+	hello := hs.hello
+	isInner := false
+	if c.ech.offered {
+		chHash = hs.transcriptInner.Sum(nil)
+		hs.transcriptInner.Reset()
+		hs.transcriptInner.Write([]byte{typeMessageHash, 0, 0, uint8(len(chHash))})
+		hs.transcriptInner.Write(chHash)
+
+		// Check for ECH acceptance confirmation.
+		serverHelloMarshalled, err := hs.serverHello.marshal()
+		if err != nil {
+			return fmt.Errorf("tls: serverHello.marshal(): %w", err)
+		}
+		if hs.serverHello.ech != nil {
+			if len(hs.serverHello.ech) != 8 {
+				c.sendAlert(alertDecodeError)
+				return errors.New("tls: ech: hrr: malformed acceptance signal")
+			}
+
+			echAcceptConfHRRTranscript := cloneHash(hs.transcriptInner, hs.suite.hash)
+			if echAcceptConfHRRTranscript == nil {
+				c.sendAlert(alertInternalError)
+				return errors.New("tls: internal error: failed to clone hash")
+			}
+
+			echAcceptConfHRR := echEncodeAcceptConfHelloRetryRequest(serverHelloMarshalled)
+			echAcceptConfHRRTranscript.Write(echAcceptConfHRR)
+			echAcceptConfHRRSignal := hs.suite.expandLabel(
+				hs.suite.extract(hs.helloInner.random, nil),
+				echAcceptConfHRRLabel,
+				echAcceptConfHRRTranscript.Sum(nil),
+				8)
+
+			if subtle.ConstantTimeCompare(hs.serverHello.ech, echAcceptConfHRRSignal) == 1 {
+				hello = hs.helloInner
+				isInner = true
+			}
+		}
+
+		hs.transcriptInner.Write(serverHelloMarshalled)
+	}
+
 	// The only HelloRetryRequest extensions we support are key_share and
 	// cookie, and clients must abort the handshake if the HRR would not result
 	// in any change in the ClientHello.
@@ -218,7 +311,7 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 	}
 
 	if hs.serverHello.cookie != nil {
-		hs.hello.cookie = hs.serverHello.cookie
+		hello.cookie = hs.serverHello.cookie
 	}
 
 	if hs.serverHello.serverShare.group != 0 {
@@ -231,7 +324,7 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 	// share for it this time.
 	if curveID := hs.serverHello.selectedGroup; curveID != 0 {
 		curveOK := false
-		for _, id := range hs.hello.supportedCurves {
+		for _, id := range hello.supportedCurves {
 			if id == curveID {
 				curveOK = true
 				break
@@ -288,25 +381,39 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 			if err := transcriptMsg(hs.serverHello, transcript); err != nil {
 				return err
 			}
-			helloBytes, err := hs.hello.marshalWithoutBinders()
+			helloBytes, err := hello.marshalWithoutBinders()
 			if err != nil {
 				return err
 			}
 			transcript.Write(helloBytes)
 			pskBinders := [][]byte{hs.suite.finishedHash(hs.binderKey, transcript)}
-			if err := hs.hello.updateBinders(pskBinders); err != nil {
+			if err := hello.updateBinders(pskBinders); err != nil {
 				return err
 			}
 		} else {
 			// Server selected a cipher suite incompatible with the PSK.
-			hs.hello.pskIdentities = nil
-			hs.hello.pskBinders = nil
+			hello.pskIdentities = nil
+			hello.pskBinders = nil
 		}
 	}
 
 	hs.hello.automaticPadding(c.config.MinClientHelloSize)
 
-	if _, err := hs.c.writeHandshakeRecord(hs.hello, hs.transcript); err != nil {
+	if isInner {
+		hs.helloInner = hello
+		helloInnerMarshalled, err := hs.helloInner.marshal()
+		if err != nil {
+			return fmt.Errorf("tls: ech: helloInner.marshal(): %w", err)
+		}
+		hs.transcriptInner.Write(helloInnerMarshalled)
+		if err := c.echUpdateClientHelloOuter(hs.hello, hs.helloInner, nil); err != nil {
+			return err
+		}
+	} else {
+		hs.hello = hello
+	}
+
+	if _, err := hs.c.writeHandshakeRecord(hs.hello, nil); err != nil {
 		return err
 	}
 
@@ -327,6 +434,11 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 		return err
 	}
 
+	helloMarshalled, err := hs.hello.marshal()
+	if err != nil {
+		return fmt.Errorf("tls: hello.marshal(): %w", err)
+	}
+	hs.transcript.Write(helloMarshalled)
 	return nil
 }
 
@@ -359,6 +471,16 @@ func (hs *clientHandshakeStateTLS13) processServerHello() error {
 
 	if !hs.serverHello.selectedIdentityPresent {
 		return nil
+	}
+
+	// Per the rules of draft-ietf-tls-esni-13, Section 6.1, the server is not
+	// permitted to resume a connection connection in the outer handshake. If
+	// ECH is rejected and the client-facing server replies with a
+	// "pre_shared_key" extension in its ServerHello, then the client MUST abort
+	// the handshake with an "illegal_parameter" alert.
+	if c.ech.offered && !c.ech.accepted {
+		c.sendAlert(alertIllegalParameter)
+		return errors.New("tls: ech: client-facing server offered PSK after ECH rejection")
 	}
 
 	if int(hs.serverHello.selectedIdentity) >= len(hs.hello.pskIdentities) {
@@ -513,7 +635,22 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 	if !hs.earlyData {
 		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret)
 	}
-
+	if c.ech.offered && len(encryptedExtensions.ech) > 0 {
+		if !c.ech.accepted {
+			// If the server rejects ECH, then it may send retry configurations.
+			// If present, we must check them for syntactic correctness and
+			// abort if they are not correct.
+			c.ech.retryConfigs = encryptedExtensions.ech
+			if _, err = UnmarshalECHConfigs(c.ech.retryConfigs); err != nil {
+				c.sendAlert(alertDecodeError)
+				return fmt.Errorf("tls: ech: failed to parse retry configs: %s", err)
+			}
+		} else {
+			// Retry configs must not be sent in the inner handshake.
+			c.sendAlert(alertUnsupportedExtension)
+			return errors.New("tls: ech: got retry configs after ECH acceptance")
+		}
+	}
 	return nil
 }
 
@@ -809,7 +946,7 @@ func (hs *clientHandshakeStateTLS13) sendClientFinished() error {
 
 	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret)
 
-	if !c.config.SessionTicketsDisabled && c.config.ClientSessionCache != nil {
+	if !c.config.SessionTicketsDisabled && c.config.ClientSessionCache != nil && !c.config.ECHEnabled {
 		c.resumptionSecret = hs.suite.deriveSecret(hs.masterSecret,
 			resumptionLabel, hs.transcript)
 	}
@@ -856,7 +993,7 @@ func (c *Conn) handleNewSessionTicket(msg *newSessionTicketMsgTLS13) error {
 		return unexpectedMessageError(&endOfEarlyDataMsg{}, msg)
 	}
 
-	if c.config.SessionTicketsDisabled || c.config.ClientSessionCache == nil {
+	if c.config.SessionTicketsDisabled || c.config.ClientSessionCache == nil && !c.config.ECHEnabled {
 		return nil
 	}
 
@@ -899,5 +1036,15 @@ func (c *Conn) handleNewSessionTicket(msg *newSessionTicketMsgTLS13) error {
 		c.config.ClientSessionCache.Put(cacheKey, cs)
 	}
 
+	return nil
+}
+
+func (hs *clientHandshakeStateTLS13) abortIfRequired() error {
+	c := hs.c
+	if c.ech.offered && !c.ech.accepted {
+		// If ECH was rejected, then abort the handshake.
+		c.sendAlert(alertECHRequired)
+		return errors.New("tls: ech: rejected")
+	}
 	return nil
 }

@@ -890,6 +890,18 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf([]Extension{&ServerNameIndicationExtension{}}))
 		case "KernelTX", "KernelRX":
 			f.Set(reflect.ValueOf(true))
+		case "ECHEnabled":
+			f.Set(reflect.ValueOf(true))
+		case "ClientECHDummyConfig":
+			f.Set(reflect.ValueOf(ECHDummyConfig{
+				ConfigIds: []uint8{1},
+			}))
+		case "ClientECHConfigs":
+			f.Set(reflect.ValueOf([]ECHConfig{
+				{raw: []byte{'b'}},
+			}))
+		case "ServerECHProvider":
+			f.Set(reflect.ValueOf(ECHProvider(&EXP_ECHKeySet{})))
 		case "mutex", "autoSessionTicketKeys", "sessionTicketKeys":
 			continue // these are unexported fields that are handled separately
 		default:
