@@ -365,6 +365,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 				ctx:          ctx,
 				serverHello:  serverHello,
 				hello:        hello,
+				helloInner:   helloInner,
 				ecdheKey:     ecdheKey,
 				session:      session,
 				earlySecret:  earlySecret,
