@@ -566,10 +566,10 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 
 	paddingLength := int(minSize) - length
 	if paddingLength <= 0 {
-		for _, extension := range m.extensions {
+		for i, extension := range m.extensions {
 			switch extension.(type) {
 			case *PaddingExtension:
-				extension = nil
+				m.extensions[i] = nil
 			}
 		}
 		return
@@ -581,11 +581,11 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 	}
 
 	var seenPadding bool
-	for _, extension := range m.extensions {
+	for i, extension := range m.extensions {
 		switch extension := extension.(type) {
 		case *PaddingExtension:
 			if seenPadding {
-				extension = nil
+				m.extensions[i] = nil
 			} else {
 				seenPadding = true
 				extension.Length = uint16(paddingLength)
