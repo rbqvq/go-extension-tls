@@ -34,9 +34,10 @@ const (
 type kernelInfo struct {
 	TLS_TX, TLS_RX bool
 
-	TLS_Version13   bool
-	TLS_TX_ZEROCOPY bool
-	TLS_RX_NOPAD    bool
+	TLS_Version13_TX bool
+	TLS_Version13_RX bool
+	TLS_TX_ZEROCOPY  bool
+	TLS_RX_NOPAD     bool
 
 	TLS_AESGCM256, TLS_AESCCM128, TLS_CHACHA20 bool
 	TLS_ARIAGCM                                bool
@@ -82,7 +83,7 @@ func init() {
 
 	if kernelVersion.GTE(semver.MustParse("5.1.0")) {
 		kernel.TLS_AESGCM256 = true
-		kernel.TLS_Version13 = true
+		kernel.TLS_Version13_TX = true
 	}
 
 	if kernelVersion.GTE(semver.MustParse("5.2.0")) {
@@ -93,15 +94,20 @@ func init() {
 		kernel.TLS_CHACHA20 = true
 	}
 
+	/**
+	* SM4_GCM, SM4_CCM (not supported)
+
 	if kernelVersion.GTE(semver.MustParse("5.16.0")) {
-		// SM4_GCM, SM4_CCM (not supported)
 	}
+
+	*/
 
 	if kernelVersion.GTE(semver.MustParse("5.19.0")) {
 		kernel.TLS_CHACHA20 = true
 	}
 
 	if kernelVersion.Major > 5 {
+		kernel.TLS_Version13_RX = true
 		kernel.TLS_RX_NOPAD = true
 	}
 
@@ -144,11 +150,11 @@ func (c *Conn) setup() error {
 			out = c.out.kernelCipher(c.cipherSuite)
 		}
 	case VersionTLS13:
-		if !kernel.TLS_Version13 {
+		if !kernel.TLS_Version13_TX {
 			return nil
 		}
 
-		if kernel.TLS_RX && c.config.KernelRX {
+		if kernel.TLS_Version13_RX && c.config.KernelRX {
 			in = c.in.kernelCipher(c.cipherSuite)
 		}
 
