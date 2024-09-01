@@ -449,7 +449,7 @@ func (hs *serverHandshakeState) cipherSuiteOk(c *cipherSuite) bool {
 func (hs *serverHandshakeState) checkForResumption() error {
 	c := hs.c
 
-	if c.config.SessionTicketsDisabled || c.config.ECHEnabled {
+	if c.config.SessionTicketsDisabled {
 		return nil
 	}
 
@@ -584,7 +584,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		hs.hello.ocspStapling = true
 	}
 
-	hs.hello.ticketSupported = hs.clientHello.ticketSupported && !c.config.SessionTicketsDisabled && !c.config.ECHEnabled
+	hs.hello.ticketSupported = hs.clientHello.ticketSupported && !c.config.SessionTicketsDisabled
 	hs.hello.cipherSuite = hs.suite.id
 
 	hs.finishedHash = newFinishedHash(hs.c.vers, hs.suite)

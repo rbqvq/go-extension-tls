@@ -440,7 +440,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 
 func (c *Conn) loadSession(hello *clientHelloMsg) (
 	session *SessionState, earlySecret, binderKey []byte, err error) {
-	if c.config.SessionTicketsDisabled || c.config.ClientSessionCache == nil || c.config.ECHEnabled {
+	if c.config.SessionTicketsDisabled || c.config.ClientSessionCache == nil {
 		return nil, nil, nil, nil
 	}
 

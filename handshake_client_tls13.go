@@ -951,7 +951,7 @@ func (hs *clientHandshakeStateTLS13) sendClientFinished() error {
 
 	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret)
 
-	if !c.config.SessionTicketsDisabled && c.config.ClientSessionCache != nil && !c.config.ECHEnabled {
+	if !c.config.SessionTicketsDisabled && c.config.ClientSessionCache != nil {
 		c.resumptionSecret = hs.suite.deriveSecret(hs.masterSecret,
 			resumptionLabel, hs.transcript)
 	}
@@ -998,7 +998,7 @@ func (c *Conn) handleNewSessionTicket(msg *newSessionTicketMsgTLS13) error {
 		return unexpectedMessageError(&endOfEarlyDataMsg{}, msg)
 	}
 
-	if c.config.SessionTicketsDisabled || c.config.ClientSessionCache == nil && !c.config.ECHEnabled {
+	if c.config.SessionTicketsDisabled || c.config.ClientSessionCache == nil {
 		return nil
 	}
 

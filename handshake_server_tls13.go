@@ -293,7 +293,7 @@ AlgorithmSelection:
 func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 	c := hs.c
 
-	if c.config.SessionTicketsDisabled || c.config.ECHEnabled {
+	if c.config.SessionTicketsDisabled {
 		return nil
 	}
 
@@ -1038,7 +1038,7 @@ func (hs *serverHandshakeStateTLS13) sendServerFinished() error {
 }
 
 func (hs *serverHandshakeStateTLS13) shouldSendSessionTickets() bool {
-	if hs.c.config.SessionTicketsDisabled || hs.c.config.ECHEnabled {
+	if hs.c.config.SessionTicketsDisabled {
 		return false
 	}
 
