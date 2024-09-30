@@ -1497,7 +1497,7 @@ func (c *Conn) handleKeyUpdate(keyUpdate *keyUpdateMsg) error {
 		c.out.setTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret)
 	}
 
-	return nil
+	return c.setup()
 }
 
 // Read reads data from the connection.
