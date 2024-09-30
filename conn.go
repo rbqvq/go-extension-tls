@@ -1545,10 +1545,9 @@ func (c *Conn) Read(b []byte) (int, error) {
 	c.in.Lock()
 	defer c.in.Unlock()
 
-	if c.input.Len() == 0 {
-		c.input.Reset()
-	}
 	for c.input.Len() == 0 {
+		c.input.Reset()
+
 		if err := c.readRecord(); err != nil {
 			return 0, err
 		}
