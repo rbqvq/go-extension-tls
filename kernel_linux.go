@@ -94,13 +94,9 @@ func init() {
 		kernel.TLS_CHACHA20 = true
 	}
 
-	/**
-	* SM4_GCM, SM4_CCM (not supported)
-
-	if kernelVersion.GTE(semver.MustParse("5.16.0")) {
-	}
-
-	*/
+	// if kernelVersion.GTE(semver.MustParse("5.16.0")) {
+	// 	// SM4_GCM, SM4_CCM
+	// }
 
 	if kernelVersion.GTE(semver.MustParse("5.19.0")) {
 		kernel.TLS_CHACHA20 = true
@@ -125,7 +121,7 @@ func (c *Conn) setup() error {
 		return nil
 	}
 
-	var rwc syscall.RawConn
+	var rawConn syscall.RawConn
 	{
 		conn, ok := c.conn.(*net.TCPConn)
 		if !ok {
@@ -133,7 +129,7 @@ func (c *Conn) setup() error {
 		}
 
 		var err error
-		rwc, err = conn.SyscallConn()
+		rawConn, err = conn.SyscallConn()
 		if err != nil {
 			return nil
 		}
@@ -169,43 +165,43 @@ func (c *Conn) setup() error {
 		return nil
 	}
 
-	var err, er error
-	err = rwc.Control(func(fd uintptr) {
-		er = syscall.SetsockoptString(int(fd), unix.SOL_TCP, unix.TCP_ULP, "tls")
-		if er != nil {
+	var err error
+	ec := rawConn.Control(func(fd uintptr) {
+		err = syscall.SetsockoptString(int(fd), unix.SOL_TCP, unix.TCP_ULP, "tls")
+		if err != nil {
 			return
 		}
 
 		if in != nil {
-			er = syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_RX, in.String())
-			if er != nil {
+			err = syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_RX, in.String())
+			if err != nil {
 				return
 			}
 
 			if c.vers >= VersionTLS13 && kernel.TLS_RX_NOPAD {
-				er = syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_RX_EXPECT_NO_PAD, 1)
-				if er != nil {
+				err = syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_RX_EXPECT_NO_PAD, 1)
+				if err != nil {
 					return
 				}
 			}
 		}
 
 		if out != nil {
-			er = syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_TX, out.String())
-			if er != nil {
+			err = syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_TX, out.String())
+			if err != nil {
 				return
 			}
 
 			if kernel.TLS_TX_ZEROCOPY {
-				er = syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_TX_ZEROCOPY_RO, 1)
-				if er != nil {
+				err = syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_TX_ZEROCOPY_RO, 1)
+				if err != nil {
 					return
 				}
 			}
 		}
 	})
-	if er != nil {
-		return er
+	if ec != nil {
+		return ec
 	}
 	if err != nil {
 		return err
@@ -213,24 +209,24 @@ func (c *Conn) setup() error {
 	return nil
 }
 
-func (c *Conn) readKernelRecord(handshakeState uint32) (typ recordType, data []byte, err error) {
+func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, error) {
 	if handshakeState != handshakeCompleted {
 		c.sendAlertLocked(alertInternalError)
-		err = c.in.setErrorLocked(errors.New("tls: internal error: set kTLSCipher before handshake completed"))
-		return
+		return 0, nil, c.in.setErrorLocked(errors.New("tls: internal error: set kernelCipher before handshake completed"))
 	}
 
-	var rwc syscall.RawConn
+	var rawConn syscall.RawConn
 	{
 		conn, ok := c.conn.(*net.TCPConn)
 		if !ok {
-			err = errors.New("unsupported conn types")
-			return
+			c.sendAlertLocked(alertInternalError)
+			return 0, nil, c.in.setErrorLocked(fmt.Errorf("tls: internal error: set kernelCipher on invalid connection type, want: %T, have: %T", conn, c.conn))
 		}
 
-		rwc, err = conn.SyscallConn()
+		var err error
+		rawConn, err = conn.SyscallConn()
 		if err != nil {
-			return
+			return 0, nil, err
 		}
 	}
 
@@ -238,8 +234,7 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (typ recordType, data []b
 		c.rawInput.Grow(maxPlaintext - c.rawInput.Len())
 	}
 
-	var n int
-	data = c.rawInput.Bytes()[:maxPlaintext]
+	data := c.rawInput.Bytes()[:maxPlaintext]
 
 	// cmsg for record type
 	buffer := make([]byte, unix.CmsgSpace(1))
@@ -256,65 +251,54 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (typ recordType, data []b
 	msg.Iov = &iov
 	msg.Iovlen = 1
 
-	er := rwc.Read(func(fd uintptr) bool {
-		flags := 0
-
-		n, err = recvmsg(fd, &msg, flags)
-		if err == unix.EAGAIN {
-			// data is not ready, goroutine will be parked
-			return false
-		}
-
-		// n should not be zero when err == nil
-		if err == nil && n == 0 {
-			err = io.EOF
-		}
-		return true
+	var n int
+	var err error
+	er := rawConn.Read(func(fd uintptr) bool {
+		n, err = recvmsg(int(fd), &msg, 0)
+		return err != unix.EAGAIN
 	})
 	if er != nil {
-		err = er
+		return 0, nil, er
 	}
-
 	if err != nil {
-		return
+		return 0, nil, err
 	}
 
 	if n <= 0 {
-		data = nil
-		return
+		return 0, nil, io.EOF
 	}
 
 	if cmsg.Level != unix.SOL_TLS {
-		err = fmt.Errorf("unsupported cmsg level: %d", cmsg.Level)
-		return
+		c.sendAlertLocked(alertInternalError)
+		return 0, nil, c.in.setErrorLocked(fmt.Errorf("tls: internal error: invalid kernel cmsg level: %d", cmsg.Level))
 	}
 
 	if cmsg.Type != TLS_GET_RECORD_TYPE {
-		err = fmt.Errorf("unsupported cmsg type: %d", cmsg.Type)
-		return
+		c.sendAlertLocked(alertInternalError)
+		return 0, nil, c.in.setErrorLocked(fmt.Errorf("tls: internal error: invalid kernel cmsg type: %d", cmsg.Type))
 	}
 
-	typ = recordType(buffer[unix.SizeofCmsghdr])
-	data = data[:n]
-	return
+	typ := recordType(buffer[unix.SizeofCmsghdr])
+	return typ, data[:n], nil
 }
 
-func (c *Conn) writeKernelRecord(typ recordType, data []byte) (n int, err error) {
+func (c *Conn) writeKernelRecord(typ recordType, data []byte) (int, error) {
 	if typ == recordTypeApplicationData {
 		return c.write(data)
 	}
 
-	var rwc syscall.RawConn
+	var rawConn syscall.RawConn
 	{
 		conn, ok := c.conn.(*net.TCPConn)
 		if !ok {
-			err = errors.New("unsupported conn types")
-			return
+			c.sendAlertLocked(alertInternalError)
+			return 0, c.out.setErrorLocked(fmt.Errorf("tls: internal error: set kernelCipher on invalid connection type, want: %T, have: %T", conn, c.conn))
 		}
 
-		rwc, err = conn.SyscallConn()
+		var err error
+		rawConn, err = conn.SyscallConn()
 		if err != nil {
-			return
+			return 0, err
 		}
 	}
 
@@ -336,16 +320,16 @@ func (c *Conn) writeKernelRecord(typ recordType, data []byte) (n int, err error)
 	msg.Iov = &iov
 	msg.Iovlen = 1
 
-	ew := rwc.Write(func(fd uintptr) bool {
-		flags := 0
-
-		n, err = sendmsg(fd, &msg, flags)
+	var n int
+	var err error
+	ew := rawConn.Write(func(fd uintptr) bool {
+		n, err = sendmsg(int(fd), &msg, 0)
 		return err != unix.EAGAIN
 	})
 	if ew != nil {
-		err = ew
+		return 0, ew
 	}
-	return
+	return n, err
 }
 
 func (c *Conn) ReadFrom(r io.Reader) (n int64, err error) {
@@ -372,32 +356,8 @@ func (c *Conn) WriteTo(w io.Writer) (n int64, err error) {
 	return io.Copy(w, c.conn)
 }
 
-func recvmsg(fd uintptr, msg *unix.Msghdr, flags int) (n int, err error) {
-	r0, _, e1 := unix.Syscall(unix.SYS_RECVMSG, fd, uintptr(unsafe.Pointer(msg)), uintptr(flags))
-	n = int(r0)
-	err = errnoErr(e1)
-	return
-}
+//go:linkname recvmsg golang.org/x/sys/unix.recvmsg
+func recvmsg(fd int, msg *unix.Msghdr, flags int) (n int, err error)
 
-func sendmsg(fd uintptr, msg *unix.Msghdr, flags int) (n int, err error) {
-	r0, _, e1 := unix.Syscall(unix.SYS_SENDMSG, fd, uintptr(unsafe.Pointer(msg)), uintptr(flags))
-	n = int(r0)
-	err = errnoErr(e1)
-	return
-}
-
-// errnoErr returns common boxed Errno values, to prevent
-// allocations at runtime.
-func errnoErr(e unix.Errno) error {
-	switch e {
-	case 0:
-		return nil
-	case unix.EAGAIN:
-		return unix.EAGAIN
-	case unix.EINVAL:
-		return unix.EINVAL
-	case unix.ENOENT:
-		return unix.ENOENT
-	}
-	return e
-}
+//go:linkname sendmsg golang.org/x/sys/unix.sendmsg
+func sendmsg(fd int, msg *unix.Msghdr, flags int) (n int, err error)
