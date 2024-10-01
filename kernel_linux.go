@@ -40,23 +40,26 @@ type kernelInfo struct {
 	TLS_RX_NOPAD     bool
 
 	TLS_AESGCM256, TLS_AESCCM128, TLS_CHACHA20 bool
-	TLS_ARIAGCM                                bool
+	TLS_SM4, TLS_ARIAGCM                       bool
 }
 
 var kernel kernelInfo
 
 func init() {
-	func() {
-		defer recover()
-		kmod, err := kmod.New()
-		if err != nil {
-			return
-		}
-
-		kmod.Load("tls", "", 0)
-	}()
-
 	// when kernel tls module enabled, /sys/module/tls is available
+	if _, err := os.Stat("/sys/module/tls"); err != nil {
+		// try modprobe
+		func() {
+			defer recover()
+			kmod, err := kmod.New()
+			if err != nil {
+				return
+			}
+
+			kmod.Load("tls", "", 0)
+		}()
+	}
+
 	if _, err := os.Stat("/sys/module/tls"); err != nil {
 		return
 	}
@@ -73,42 +76,35 @@ func init() {
 	kernelVersion.Pre = nil
 	kernelVersion.Build = nil
 
-	if kernelVersion.GTE(semver.MustParse("4.13.0")) {
-		kernel.TLS_TX = true
-	}
-
-	if kernelVersion.GTE(semver.MustParse("4.17.0")) {
-		kernel.TLS_RX = true
-	}
-
-	if kernelVersion.GTE(semver.MustParse("5.1.0")) {
-		kernel.TLS_AESGCM256 = true
-		kernel.TLS_Version13_TX = true
-	}
-
-	if kernelVersion.GTE(semver.MustParse("5.2.0")) {
-		kernel.TLS_AESCCM128 = true
-	}
-
-	if kernelVersion.GTE(semver.MustParse("5.11.0")) {
-		kernel.TLS_CHACHA20 = true
-	}
-
-	// if kernelVersion.GTE(semver.MustParse("5.16.0")) {
-	// 	// SM4_GCM, SM4_CCM
-	// }
-
-	if kernelVersion.GTE(semver.MustParse("5.19.0")) {
-		kernel.TLS_CHACHA20 = true
-	}
-
-	if kernelVersion.Major > 5 {
+	switch {
+	case kernelVersion.GTE(semver.MustParse("6.1.0")):
+		kernel.TLS_ARIAGCM = true
+		fallthrough
+	case kernelVersion.Major > 5:
 		kernel.TLS_Version13_RX = true
 		kernel.TLS_RX_NOPAD = true
-	}
-
-	if kernelVersion.GTE(semver.MustParse("6.1.0")) {
-		kernel.TLS_ARIAGCM = true
+		fallthrough
+	case kernelVersion.GTE(semver.MustParse("5.19.0")):
+		kernel.TLS_TX_ZEROCOPY = true
+		fallthrough
+	// case kernelVersion.GTE(semver.MustParse("5.16.0")):
+	// 	// SM4_GCM, SM4_CCM
+	// 	fallthrough
+	case kernelVersion.GTE(semver.MustParse("5.11.0")):
+		kernel.TLS_CHACHA20 = true
+		fallthrough
+	case kernelVersion.GTE(semver.MustParse("5.2.0")):
+		kernel.TLS_AESCCM128 = true
+		fallthrough
+	case kernelVersion.GTE(semver.MustParse("5.1.0")):
+		kernel.TLS_AESGCM256 = true
+		kernel.TLS_Version13_TX = true
+		fallthrough
+	case kernelVersion.GTE(semver.MustParse("4.17.0")):
+		kernel.TLS_RX = true
+		fallthrough
+	case kernelVersion.GTE(semver.MustParse("4.13.0")):
+		kernel.TLS_TX = true
 	}
 }
 
