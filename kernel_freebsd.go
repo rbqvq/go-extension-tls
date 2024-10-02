@@ -207,7 +207,16 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 	if er != nil {
 		return 0, nil, er
 	}
-	if err != nil {
+
+	switch err {
+	case nil:
+	case syscall.EINVAL:
+		return 0, nil, c.in.setErrorLocked(c.sendAlert(alertProtocolVersion))
+	case syscall.EMSGSIZE:
+		return 0, nil, c.in.setErrorLocked(c.sendAlert(alertRecordOverflow))
+	case syscall.EBADMSG:
+		return 0, nil, c.in.setErrorLocked(c.sendAlert(alertBadRecordMAC))
+	default:
 		return 0, nil, err
 	}
 
@@ -273,28 +282,77 @@ func (c *Conn) writeKernelRecord(typ recordType, data []byte) (int, error) {
 	return n, err
 }
 
-func (c *Conn) ReadFrom(r io.Reader) (n int64, err error) {
+func (c *Conn) ReadFrom(r io.Reader) (int64, error) {
+	// interlock with Close below
+	for {
+		x := c.activeCall.Load()
+		if x&1 != 0 {
+			return 0, net.ErrClosed
+		}
+		if c.activeCall.CompareAndSwap(x, x+2) {
+			break
+		}
+	}
+	defer c.activeCall.Add(-2)
+
 	if err := c.Handshake(); err != nil {
 		return 0, err
 	}
 
+	c.out.Lock()
+	defer c.out.Unlock()
+
 	if !c.out.usingKernel() {
-		return io.Copy(&wrappedConn{c}, r)
+		c.out.Unlock()
+		n, err := io.Copy(&wrappedConn{c}, r)
+		c.out.Lock()
+		return n, err
+	}
+
+	if err := c.out.err; err != nil {
+		return 0, err
+	}
+
+	if c.closeNotifySent {
+		return 0, errShutdown
 	}
 
 	return io.Copy(c.conn, r)
 }
 
-func (c *Conn) WriteTo(w io.Writer) (n int64, err error) {
+func (c *Conn) WriteTo(w io.Writer) (int64, error) {
 	if err := c.Handshake(); err != nil {
 		return 0, err
 	}
 
+	c.in.Lock()
+	defer c.in.Unlock()
+
 	if !c.in.usingKernel() {
-		return io.Copy(w, &wrappedConn{c})
+		c.in.Unlock()
+		n, err := io.Copy(w, &wrappedConn{c})
+		c.in.Lock()
+		return n, err
 	}
 
-	return io.Copy(w, c.conn)
+	if err := c.in.err; err != nil {
+		return 0, err
+	}
+
+	var written int64
+	if c.input.Len() > 0 {
+		n, err := c.input.WriteTo(w)
+		written += n
+
+		if err != nil {
+			return written, err
+		}
+	}
+
+	n, err := io.Copy(w, c.conn)
+	written += n
+
+	return written, err
 }
 
 //go:linkname recvmsg golang.org/x/sys/unix.recvmsg

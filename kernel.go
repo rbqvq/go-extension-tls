@@ -24,9 +24,15 @@ func (c *halfConn) usingKernel() (ok bool) {
 }
 
 func (c *Conn) KernelTX() bool {
+	c.out.Lock()
+	defer c.out.Unlock()
+
 	return c.out.usingKernel()
 }
 
 func (c *Conn) KernelRX() bool {
+	c.in.Lock()
+	defer c.in.Unlock()
+
 	return c.in.usingKernel()
 }
