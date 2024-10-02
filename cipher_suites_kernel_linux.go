@@ -195,9 +195,28 @@ func (crypto *kernelCryptoARIA256GCM) String() string {
 	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
 }
 
-func (hc *halfConn) kernelCipher(cipherSuite uint16) (cipher kernelCrypto) {
-	if hc.version < VersionTLS12 {
-		return
+func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
+	if !kernel.TLS {
+		return nil
+	}
+
+	switch hc.version {
+	case VersionTLS12:
+		if isRX && !kernel.TLS_Version13_RX {
+			return nil
+		}
+
+	case VersionTLS13:
+		if !kernel.TLS_Version13 {
+			return nil
+		}
+
+		if isRX && !kernel.TLS_Version13_RX {
+			return nil
+		}
+
+	default:
+		return nil
 	}
 
 	switch cipherSuite {
@@ -210,10 +229,10 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16) (cipher kernelCrypto) {
 		copy(crypto.salt[:], hc.iv[:4])
 		crypto.rec_seq = hc.seq
 
-		cipher = crypto
+		return crypto
 	case TLS_AES_256_GCM_SHA384, TLS_RSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
-		if !kernel.TLS_AESGCM256 {
-			return
+		if !kernel.TLS_AES_256_GCM {
+			return nil
 		}
 
 		crypto := new(kernelCryptoAES256GCM)
@@ -224,10 +243,10 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16) (cipher kernelCrypto) {
 		copy(crypto.salt[:], hc.iv[:4])
 		crypto.rec_seq = hc.seq
 
-		cipher = crypto
+		return crypto
 	case TLS_AES_128_CCM_SHA256, TLS_RSA_WITH_AES_128_CCM_SHA256, TLS_ECDHE_ECDSA_WITH_AES_128_CCM_SHA256:
-		if !kernel.TLS_AESCCM128 {
-			return
+		if !kernel.TLS_AES_128_CCM {
+			return nil
 		}
 
 		crypto := new(kernelCryptoAES128CCM)
@@ -238,10 +257,10 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16) (cipher kernelCrypto) {
 		copy(crypto.salt[:], hc.iv[:4])
 		crypto.rec_seq = hc.seq
 
-		cipher = crypto
+		return crypto
 	case TLS_CHACHA20_POLY1305_SHA256, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256:
-		if !kernel.TLS_CHACHA20 {
-			return
+		if !kernel.TLS_CHACHA20_POLY1305 {
+			return nil
 		}
 
 		crypto := new(kernelCryptoChacha20Poly1035)
@@ -251,10 +270,10 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16) (cipher kernelCrypto) {
 		copy(crypto.iv[:], hc.iv)
 		crypto.rec_seq = hc.seq
 
-		cipher = crypto
+		return crypto
 	case TLS_RSA_WITH_ARIA_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_ARIA_128_GCM_SHA256, TLS_ECDHE_ECDSA_WITH_ARIA_128_GCM_SHA256:
-		if !kernel.TLS_ARIAGCM {
-			return
+		if !kernel.TLS_ARIA_GCM {
+			return nil
 		}
 
 		crypto := new(kernelCryptoARIA128GCM)
@@ -265,10 +284,10 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16) (cipher kernelCrypto) {
 		copy(crypto.salt[:], hc.iv[:4])
 		crypto.rec_seq = hc.seq
 
-		cipher = crypto
+		return crypto
 	case TLS_RSA_WITH_ARIA_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_ARIA_256_GCM_SHA384, TLS_ECDHE_ECDSA_WITH_ARIA_256_GCM_SHA384:
-		if !kernel.TLS_ARIAGCM {
-			return
+		if !kernel.TLS_ARIA_GCM {
+			return nil
 		}
 
 		crypto := new(kernelCryptoARIA256GCM)
@@ -279,11 +298,8 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16) (cipher kernelCrypto) {
 		copy(crypto.salt[:], hc.iv[:4])
 		crypto.rec_seq = hc.seq
 
-		cipher = crypto
+		return crypto
 	default:
-		return
+		return nil
 	}
-
-	hc.cipher = new(kernelCipher)
-	return
 }

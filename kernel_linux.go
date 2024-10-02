@@ -27,20 +27,20 @@ const (
 
 	TLS_SET_RECORD_TYPE = 1
 	TLS_GET_RECORD_TYPE = 2
-
-	kernelOverhead = 16
 )
 
 type kernelInfo struct {
-	TLS_TX, TLS_RX bool
+	TLS, TLS_RX                     bool
+	TLS_Version13, TLS_Version13_RX bool
 
-	TLS_Version13_TX bool
-	TLS_Version13_RX bool
 	TLS_TX_ZEROCOPY  bool
-	TLS_RX_NOPAD     bool
+	TLS_RX_NOPADDING bool
 
-	TLS_AESGCM256, TLS_AESCCM128, TLS_CHACHA20 bool
-	TLS_SM4, TLS_ARIAGCM                       bool
+	TLS_AES_256_GCM       bool
+	TLS_AES_128_CCM       bool
+	TLS_CHACHA20_POLY1305 bool
+	TLS_SM4               bool
+	TLS_ARIA_GCM          bool
 }
 
 var kernel kernelInfo
@@ -51,6 +51,7 @@ func init() {
 		// try modprobe
 		func() {
 			defer recover()
+
 			kmod, err := kmod.New()
 			if err != nil {
 				return
@@ -77,43 +78,47 @@ func init() {
 	kernelVersion.Build = nil
 
 	switch {
-	case kernelVersion.GTE(semver.MustParse("6.1.0")):
-		kernel.TLS_ARIAGCM = true
+	case kernelVersion.GTE(semver.Version{Major: 6, Minor: 1}):
+		kernel.TLS_ARIA_GCM = true
 		fallthrough
-	case kernelVersion.Major > 5:
+	case kernelVersion.GTE(semver.Version{Major: 6}):
 		kernel.TLS_Version13_RX = true
-		kernel.TLS_RX_NOPAD = true
+		kernel.TLS_RX_NOPADDING = true
 		fallthrough
-	case kernelVersion.GTE(semver.MustParse("5.19.0")):
+	case kernelVersion.GTE(semver.Version{Major: 5, Minor: 19}):
 		kernel.TLS_TX_ZEROCOPY = true
 		fallthrough
-	// case kernelVersion.GTE(semver.MustParse("5.16.0")):
-	// 	// SM4_GCM, SM4_CCM
-	// 	fallthrough
-	case kernelVersion.GTE(semver.MustParse("5.11.0")):
-		kernel.TLS_CHACHA20 = true
+	case kernelVersion.GTE(semver.Version{Major: 5, Minor: 16}):
+		kernel.TLS_SM4 = true
 		fallthrough
-	case kernelVersion.GTE(semver.MustParse("5.2.0")):
-		kernel.TLS_AESCCM128 = true
+	case kernelVersion.GTE(semver.Version{Major: 5, Minor: 11}):
+		kernel.TLS_CHACHA20_POLY1305 = true
 		fallthrough
-	case kernelVersion.GTE(semver.MustParse("5.1.0")):
-		kernel.TLS_AESGCM256 = true
-		kernel.TLS_Version13_TX = true
+	case kernelVersion.GTE(semver.Version{Major: 5, Minor: 2}):
+		kernel.TLS_AES_128_CCM = true
 		fallthrough
-	case kernelVersion.GTE(semver.MustParse("4.17.0")):
+	case kernelVersion.GTE(semver.Version{Major: 5, Minor: 1}):
+		kernel.TLS_AES_256_GCM = true
+		kernel.TLS_Version13 = true
+		fallthrough
+	case kernelVersion.GTE(semver.Version{Major: 4, Minor: 17}):
 		kernel.TLS_RX = true
 		fallthrough
-	case kernelVersion.GTE(semver.MustParse("4.13.0")):
-		kernel.TLS_TX = true
+	case kernelVersion.GTE(semver.Version{Major: 4, Minor: 13}):
+		kernel.TLS = true
 	}
 }
 
 func (c *Conn) setup() error {
-	if !kernel.TLS_TX || (!c.config.KernelTX && !c.config.KernelRX) {
+	if c.quic != nil {
 		return nil
 	}
 
-	if c.quic != nil {
+	if !c.config.KernelTX && !c.config.KernelRX {
+		return nil
+	}
+
+	if !kernel.TLS {
 		return nil
 	}
 
@@ -132,77 +137,59 @@ func (c *Conn) setup() error {
 	}
 
 	var in, out kernelCrypto
-	switch c.vers {
-	case VersionTLS12:
-		if kernel.TLS_RX && c.config.KernelRX {
-			in = c.in.kernelCipher(c.cipherSuite)
-		}
-
-		if c.config.KernelTX {
-			out = c.out.kernelCipher(c.cipherSuite)
-		}
-	case VersionTLS13:
-		if !kernel.TLS_Version13_TX {
-			return nil
-		}
-
-		if kernel.TLS_Version13_RX && c.config.KernelRX {
-			in = c.in.kernelCipher(c.cipherSuite)
-		}
-
-		if c.config.KernelTX {
-			out = c.out.kernelCipher(c.cipherSuite)
-		}
-	default:
-		return nil
+	if c.config.KernelRX {
+		in = c.in.kernelCipher(c.cipherSuite, true)
+	}
+	if c.config.KernelTX {
+		out = c.out.kernelCipher(c.cipherSuite, false)
 	}
 
 	if in == nil && out == nil {
 		return nil
 	}
 
-	var err error
-	ec := rawConn.Control(func(fd uintptr) {
-		err = syscall.SetsockoptString(int(fd), unix.SOL_TCP, unix.TCP_ULP, "tls")
+	rawConn.Control(func(fd uintptr) {
+		err := syscall.SetsockoptString(int(fd), unix.SOL_TCP, unix.TCP_ULP, "tls")
 		if err != nil {
 			return
 		}
 
-		if in != nil {
-			err = syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_RX, in.String())
-			if err != nil {
-				return
-			}
-
-			if c.vers >= VersionTLS13 && kernel.TLS_RX_NOPAD {
-				err = syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_RX_EXPECT_NO_PAD, 1)
-				if err != nil {
-					return
-				}
-			}
-		}
-
-		if out != nil {
-			err = syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_TX, out.String())
-			if err != nil {
-				return
-			}
-
-			if kernel.TLS_TX_ZEROCOPY {
-				err = syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_TX_ZEROCOPY_RO, 1)
-				if err != nil {
-					return
-				}
-			}
-		}
+		c.setupRX(fd, in)
+		c.setupTX(fd, out)
 	})
-	if ec != nil {
-		return ec
-	}
-	if err != nil {
-		return err
-	}
 	return nil
+}
+
+func (c *Conn) setupRX(fd uintptr, crypto kernelCrypto) {
+	if crypto == nil {
+		return
+	}
+
+	err := syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_RX, crypto.String())
+	if err != nil {
+		return
+	}
+	c.in.useKernel()
+
+	if c.vers >= VersionTLS13 && kernel.TLS_RX_NOPADDING {
+		syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_RX_EXPECT_NO_PAD, 1)
+	}
+}
+
+func (c *Conn) setupTX(fd uintptr, crypto kernelCrypto) {
+	if crypto == nil {
+		return
+	}
+
+	err := syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_TX, crypto.String())
+	if err != nil {
+		return
+	}
+	c.out.useKernel()
+
+	if kernel.TLS_TX_ZEROCOPY {
+		syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_TX_ZEROCOPY_RO, 1)
+	}
 }
 
 func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, error) {
@@ -264,18 +251,12 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 		return 0, nil, io.EOF
 	}
 
-	if cmsg.Level != unix.SOL_TLS {
-		c.sendAlertLocked(alertInternalError)
-		return 0, nil, c.in.setErrorLocked(fmt.Errorf("tls: internal error: invalid kernel cmsg level: %d", cmsg.Level))
+	if cmsg.Level == unix.SOL_TLS && cmsg.Type == TLS_GET_RECORD_TYPE {
+		typ := recordType(buffer[unix.CmsgLen(0)])
+		return typ, data[:n], nil
 	}
 
-	if cmsg.Type != TLS_GET_RECORD_TYPE {
-		c.sendAlertLocked(alertInternalError)
-		return 0, nil, c.in.setErrorLocked(fmt.Errorf("tls: internal error: invalid kernel cmsg type: %d", cmsg.Type))
-	}
-
-	typ := recordType(buffer[unix.SizeofCmsghdr])
-	return typ, data[:n], nil
+	return recordTypeApplicationData, data[:n], nil
 }
 
 func (c *Conn) writeKernelRecord(typ recordType, data []byte) (int, error) {
@@ -302,7 +283,7 @@ func (c *Conn) writeKernelRecord(typ recordType, data []byte) (int, error) {
 	buffer := make([]byte, unix.CmsgSpace(1))
 	cmsg := (*unix.Cmsghdr)(unsafe.Pointer(&buffer[0]))
 	cmsg.SetLen(unix.CmsgLen(1))
-	buffer[unix.SizeofCmsghdr] = byte(typ)
+	buffer[unix.CmsgLen(0)] = byte(typ)
 	cmsg.Level = unix.SOL_TLS
 	cmsg.Type = TLS_SET_RECORD_TYPE
 

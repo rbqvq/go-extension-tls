@@ -210,19 +210,24 @@ type halfConn struct {
 	err     error  // first permanent error
 	version uint16 // protocol version
 	cipher  any    // cipher algorithm
-	mac     hash.Hash
+	hash    hash.Hash
 	seq     [8]byte // 64-bit sequence number
 
 	scratchBuf [13]byte // to avoid allocs; interface method args escape
 
 	nextCipher any       // next encryption state
-	nextMac    hash.Hash // next MAC algorithm
+	nextHash   hash.Hash // next MAC algorithm
 
 	level         QUICEncryptionLevel // current QUIC encryption level
 	trafficSecret []byte              // current TLS 1.3 traffic secret
 
 	key []byte // encrypt or decrypt key for kernel tls
 	iv  []byte // encrypt or decrypt iv for kernel tls
+	mac []byte // encrypt or decrypt mac for kernel tls
+
+	nextKey []byte
+	nextIV  []byte
+	nextMac []byte
 }
 
 type permanentError struct {
@@ -245,9 +250,12 @@ func (hc *halfConn) setErrorLocked(err error) error {
 
 // prepareCipherSpec sets the encryption and MAC states
 // that a subsequent changeCipherSpec will use.
-func (hc *halfConn) prepareCipherSpec(version uint16, cipher any, mac hash.Hash) {
+func (hc *halfConn) prepareCipherSpec(version uint16, cipher any, hash hash.Hash, key, iv, mac []byte) {
 	hc.version = version
 	hc.nextCipher = cipher
+	hc.nextHash = hash
+	hc.nextKey = key
+	hc.nextIV = iv
 	hc.nextMac = mac
 }
 
@@ -258,8 +266,14 @@ func (hc *halfConn) changeCipherSpec() error {
 		return alertInternalError
 	}
 	hc.cipher = hc.nextCipher
+	hc.hash = hc.nextHash
+	hc.key = hc.nextKey
+	hc.iv = hc.nextIV
 	hc.mac = hc.nextMac
 	hc.nextCipher = nil
+	hc.nextHash = nil
+	hc.nextKey = nil
+	hc.nextIV = nil
 	hc.nextMac = nil
 	for i := range hc.seq {
 		hc.seq[i] = 0
@@ -311,16 +325,9 @@ func (hc *halfConn) explicitNonceLen() int {
 			return c.BlockSize()
 		}
 		return 0
-	case *kernelCipher:
-		return 0
 	default:
 		panic("unknown cipher type")
 	}
-}
-
-func (c *halfConn) usingKernel() (ok bool) {
-	_, ok = c.cipher.(*kernelCipher)
-	return
 }
 
 // extractPadding returns, in constant time, the length of the padding to remove
@@ -432,7 +439,7 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 			}
 		case cbcMode:
 			blockSize := c.BlockSize()
-			minPayload := explicitNonceLen + roundUp(hc.mac.Size()+1, blockSize)
+			minPayload := explicitNonceLen + roundUp(hc.hash.Size()+1, blockSize)
 			if len(payload)%blockSize != 0 || len(payload) < minPayload {
 				return nil, 0, alertBadRecordMAC
 			}
@@ -477,8 +484,8 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 		plaintext = payload
 	}
 
-	if hc.mac != nil {
-		macSize := hc.mac.Size()
+	if hc.hash != nil {
+		macSize := hc.hash.Size()
 		if len(payload) < macSize {
 			return nil, 0, alertBadRecordMAC
 		}
@@ -488,7 +495,7 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 		record[3] = byte(n >> 8)
 		record[4] = byte(n)
 		remoteMAC := payload[n : n+macSize]
-		localMAC := tls10MAC(hc.mac, hc.scratchBuf[:0], hc.seq[:], record[:recordHeaderLen], payload[:n], payload[n+macSize:])
+		localMAC := tls10MAC(hc.hash, hc.scratchBuf[:0], hc.seq[:], record[:recordHeaderLen], payload[:n], payload[n+macSize:])
 
 		// This is equivalent to checking the MACs and paddingGood
 		// separately, but in constant-time to prevent distinguishing
@@ -554,7 +561,7 @@ func (hc *halfConn) encrypt(record, payload []byte, rand io.Reader) ([]byte, err
 	var dst []byte
 	switch c := hc.cipher.(type) {
 	case cipher.Stream:
-		mac := tls10MAC(hc.mac, hc.scratchBuf[:0], hc.seq[:], record[:recordHeaderLen], payload, nil)
+		mac := tls10MAC(hc.hash, hc.scratchBuf[:0], hc.seq[:], record[:recordHeaderLen], payload, nil)
 		record, dst = sliceForAppend(record, len(payload)+len(mac))
 		c.XORKeyStream(dst[:len(payload)], payload)
 		c.XORKeyStream(dst[len(payload):], mac)
@@ -583,7 +590,7 @@ func (hc *halfConn) encrypt(record, payload []byte, rand io.Reader) ([]byte, err
 			record = c.Seal(record, nonce, payload, additionalData)
 		}
 	case cbcMode:
-		mac := tls10MAC(hc.mac, hc.scratchBuf[:0], hc.seq[:], record[:recordHeaderLen], payload, nil)
+		mac := tls10MAC(hc.hash, hc.scratchBuf[:0], hc.seq[:], record[:recordHeaderLen], payload, nil)
 		blockSize := c.BlockSize()
 		plaintextLen := len(payload) + len(mac)
 		paddingLen := blockSize - plaintextLen%blockSize
@@ -987,7 +994,7 @@ func (c *Conn) maxPayloadSizeForWrite(typ recordType) int {
 	if c.out.cipher != nil {
 		switch ciph := c.out.cipher.(type) {
 		case cipher.Stream:
-			payloadBytes -= c.out.mac.Size()
+			payloadBytes -= c.out.hash.Size()
 		case cipher.AEAD:
 			payloadBytes -= ciph.Overhead()
 		case cbcMode:
@@ -997,9 +1004,7 @@ func (c *Conn) maxPayloadSizeForWrite(typ recordType) int {
 			payloadBytes = (payloadBytes & ^(blockSize - 1)) - 1
 			// The MAC is appended before padding so affects the
 			// payload size directly.
-			payloadBytes -= c.out.mac.Size()
-		case *kernelCipher:
-			payloadBytes -= kernelOverhead
+			payloadBytes -= c.out.hash.Size()
 
 		default:
 			panic("unknown cipher type")

@@ -916,10 +916,8 @@ func (hs *clientHandshakeState) establishKeys() error {
 		serverCipher = hs.suite.aead(serverKey, serverIV)
 	}
 
-	c.in.key, c.in.iv = serverKey, serverIV
-	c.out.key, c.out.iv = clientKey, clientIV
-	c.in.prepareCipherSpec(c.vers, serverCipher, serverHash)
-	c.out.prepareCipherSpec(c.vers, clientCipher, clientHash)
+	c.in.prepareCipherSpec(c.vers, serverCipher, serverHash, serverKey, serverIV, serverMAC)
+	c.out.prepareCipherSpec(c.vers, clientCipher, clientHash, clientKey, clientIV, clientMAC)
 	return nil
 }
 
