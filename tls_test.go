@@ -11,9 +11,7 @@ import (
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/internal/hpke"
 	"crypto/rand"
-	"crypto/tls/internal/fips140tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -21,7 +19,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"internal/testenv"
 	"io"
 	"math"
 	"math/big"
@@ -33,6 +30,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rogpeppe/go-internal/testenv"
+	"gitlab.com/go-extension/hpke"
 	"golang.org/x/crypto/cryptobyte"
 )
 
@@ -177,40 +176,6 @@ func newLocalListener(t testing.TB) net.Listener {
 		t.Fatal(err)
 	}
 	return ln
-}
-
-func runWithFIPSEnabled(t *testing.T, testFunc func(t *testing.T)) {
-	originalFIPS := fips140tls.Required()
-	defer func() {
-		if originalFIPS {
-			fips140tls.Force()
-		} else {
-			fips140tls.TestingOnlyAbandon()
-		}
-	}()
-
-	fips140tls.Force()
-	t.Run("fips140tls", testFunc)
-}
-
-func runWithFIPSDisabled(t *testing.T, testFunc func(t *testing.T)) {
-	originalFIPS := fips140tls.Required()
-	defer func() {
-		if originalFIPS {
-			fips140tls.Force()
-		} else {
-			fips140tls.TestingOnlyAbandon()
-		}
-	}()
-
-	fips140tls.TestingOnlyAbandon()
-	t.Run("no-fips140tls", testFunc)
-}
-
-func skipFIPS(t *testing.T) {
-	if fips140tls.Required() {
-		t.Skip("skipping test in FIPS mode")
-	}
 }
 
 func TestDialTimeout(t *testing.T) {
@@ -882,7 +847,7 @@ func TestCloneNonFuncFields(t *testing.T) {
 		switch fn := typ.Field(i).Name; fn {
 		case "Rand":
 			f.Set(reflect.ValueOf(io.Reader(os.Stdin)))
-		case "Time", "GetCertificate", "GetConfigForClient", "VerifyPeerCertificate", "VerifyConnection", "GetClientCertificate", "WrapSession", "UnwrapSession", "EncryptedClientHelloRejectionVerify":
+		case "Time", "GetCertificate", "GetConfigForClient", "VerifyPeerCertificate", "VerifyConnection", "GetClientCertificate", "WrapSession", "UnwrapSession", "EncryptedClientHelloRejectionVerify", "GetProtoSetting":
 			// DeepEqual can't compare functions. If you add a
 			// function field to this list, you must also change
 			// TestCloneFuncFields to ensure that the func field is
@@ -893,6 +858,12 @@ func TestCloneNonFuncFields(t *testing.T) {
 			}))
 		case "NameToCertificate":
 			f.Set(reflect.ValueOf(map[string]*Certificate{"a": nil}))
+		case "CertCompressionDisabled":
+			f.Set(reflect.ValueOf(true))
+		case "CertCompressionPreferences":
+			f.Set(reflect.ValueOf([]CertCompressionAlgorithm{Zlib}))
+		case "SignatureAlgorithmsPreferences":
+			f.Set(reflect.ValueOf([]SignatureScheme{PKCS1WithSHA1}))
 		case "RootCAs", "ClientCAs":
 			f.Set(reflect.ValueOf(x509.NewCertPool()))
 		case "ClientSessionCache":
@@ -901,6 +872,8 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf(io.Writer(os.Stdout)))
 		case "NextProtos":
 			f.Set(reflect.ValueOf([]string{"a", "b"}))
+		case "NextProtoSettings":
+			f.Set(reflect.ValueOf(map[string][]byte{"a": nil}))
 		case "ServerName":
 			f.Set(reflect.ValueOf("b"))
 		case "ClientAuth":
@@ -909,20 +882,40 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf(true))
 		case "MinVersion", "MaxVersion":
 			f.Set(reflect.ValueOf(uint16(VersionTLS12)))
+		case "SupportedVersions":
+			f.Set(reflect.ValueOf([]uint16{VersionTLS12}))
 		case "SessionTicketKey":
 			f.Set(reflect.ValueOf([32]byte{}))
+		case "PreferCipherSuites":
+			f.Set(reflect.ValueOf(true))
 		case "CipherSuites":
 			f.Set(reflect.ValueOf([]uint16{1, 2}))
 		case "CurvePreferences":
 			f.Set(reflect.ValueOf([]CurveID{CurveP256}))
 		case "Renegotiation":
 			f.Set(reflect.ValueOf(RenegotiateOnceAsClient))
+		case "EncryptedClientHelloDummyConfig":
+			f.Set(reflect.ValueOf(&ECHDummyConfig{
+				ConfigIds: []uint8{1},
+			}))
 		case "EncryptedClientHelloConfigList":
 			f.Set(reflect.ValueOf([]byte{'x'}))
 		case "EncryptedClientHelloKeys":
 			f.Set(reflect.ValueOf([]EncryptedClientHelloKey{
 				{Config: []byte{1}, PrivateKey: []byte{1}},
 			}))
+		case "AllowEarlyData":
+			f.Set(reflect.ValueOf(true))
+		case "MaxEarlyData":
+			f.Set(reflect.ValueOf(uint32(2048)))
+		case "MinClientHelloSize":
+			f.Set(reflect.ValueOf(uint16(512)))
+		case "ShuffleExtensions":
+			f.Set(reflect.ValueOf(true))
+		case "Extensions":
+			f.Set(reflect.ValueOf([]Extension{&ServerNameIndicationExtension{}}))
+		case "KernelTX", "KernelRX":
+			f.Set(reflect.ValueOf(true))
 		case "mutex", "autoSessionTicketKeys", "sessionTicketKeys":
 			continue // these are unexported fields that are handled separately
 		default:
@@ -1149,8 +1142,6 @@ func TestConnectionStateMarshal(t *testing.T) {
 }
 
 func TestConnectionState(t *testing.T) {
-	skipFIPS(t) // Test certificates not FIPS compatible.
-
 	issuer, err := x509.ParseCertificate(testRSACertificateIssuer)
 	if err != nil {
 		panic(err)
@@ -1289,8 +1280,6 @@ func TestBuildNameToCertificate_doesntModifyCertificates(t *testing.T) {
 func testingKey(s string) string { return strings.ReplaceAll(s, "TESTING KEY", "PRIVATE KEY") }
 
 func TestClientHelloInfo_SupportsCertificate(t *testing.T) {
-	skipFIPS(t) // Test certificates not FIPS compatible.
-
 	rsaCert := &Certificate{
 		Certificate: [][]byte{testRSACertificate},
 		PrivateKey:  testRSAPrivateKey,
@@ -1554,8 +1543,8 @@ func TestCipherSuites(t *testing.T) {
 		t.Errorf("unexpected fallback CipherSuiteName: got %q, expected 0x0ABC", got)
 	}
 
-	if len(cipherSuitesPreferenceOrder) != len(cipherSuites) {
-		t.Errorf("cipherSuitesPreferenceOrder is not the same size as cipherSuites")
+	if len(cipherSuitesPreferenceOrder) != len(cipherSuites)+len(cipherSuitesTLS13) {
+		t.Errorf("cipherSuitesPreferenceOrder is not the same size as cipherSuites + cipherSuitesTLS13")
 	}
 	if len(cipherSuitesPreferenceOrderNoAES) != len(cipherSuitesPreferenceOrder) {
 		t.Errorf("cipherSuitesPreferenceOrderNoAES is not the same size as cipherSuitesPreferenceOrder")
@@ -1601,8 +1590,57 @@ func TestCipherSuites(t *testing.T) {
 
 		// Check that the list is sorted according to the documented criteria.
 		isBetter := func(a, b uint16) int {
-			aSuite, bSuite := cipherSuiteByID(a), cipherSuiteByID(b)
 			aName, bName := CipherSuiteName(a), CipherSuiteName(b)
+
+			aSuite13, bSuite13 := cipherSuiteTLS13ByID(a), cipherSuiteTLS13ByID(b)
+			switch {
+			case aSuite13 != nil && bSuite13 != nil: // Both TLS 1.3 cipher
+				// AES < ChaCha20
+				if strings.Contains(aName, "AES") && strings.Contains(bName, "CHACHA20") {
+					// negative for cipherSuitesPreferenceOrder
+					if i == 0 {
+						return -1
+					} else {
+						return +1
+					}
+				} else if strings.Contains(aName, "CHACHA20") && strings.Contains(bName, "AES") {
+					// negative for cipherSuitesPreferenceOrderNoAES
+					if i != 0 {
+						return -1
+					} else {
+						return +1
+					}
+				}
+				// AES-GCM < AES-CCM
+				if strings.Contains(aName, "GCM") && strings.Contains(bName, "CCM") {
+					return -1
+				} else if strings.Contains(aName, "CCM") && strings.Contains(bName, "GCM") {
+					return +1
+				}
+				// AES-128 < AES-256
+				if strings.Contains(aName, "AES_128") && strings.Contains(bName, "AES_256") {
+					return -1
+				} else if strings.Contains(aName, "AES_256") && strings.Contains(bName, "AES_128") {
+					return +1
+				}
+				// AES-CCM < AES-CCM-8
+				if !strings.Contains(aName, "CCM_8") && strings.Contains(bName, "CCM_8") {
+					return -1
+				} else if strings.Contains(aName, "CCM_8") && !strings.Contains(bName, "CCM_8") {
+					return +1
+				}
+				t.Fatalf("two ciphersuites are equal by all criteria: %v and %v", aName, bName)
+				panic("unreachable")
+			case aSuite13 != nil: // aSuite13 is TLS 1.3 cipher, bSuite13 is TLS 1.2 cipher
+				// TLS 1.3 < TLS 1.2
+				return -1
+			case bSuite13 != nil: // bSuite13 is TLS 1.3 cipher, aSuite13 is TLS 1.2 cipher
+				// TLS 1.3 < TLS 1.2
+				return +1
+			default: // Both TLS 1.2 cipher
+			}
+
+			aSuite, bSuite := cipherSuiteByID(a), cipherSuiteByID(b)
 			// * < RC4
 			if !strings.Contains(aName, "RC4") && strings.Contains(bName, "RC4") {
 				return -1
@@ -1649,16 +1687,74 @@ func TestCipherSuites(t *testing.T) {
 					return +1
 				}
 			}
+			// AES < ARIA
+			if strings.Contains(aName, "AES") && strings.Contains(bName, "ARIA") {
+				return -1
+			} else if strings.Contains(aName, "ARIA") && strings.Contains(bName, "AES") {
+				return +1
+			}
+			// ARIA < CAMELLIA
+			if strings.Contains(aName, "ARIA") && strings.Contains(bName, "CAMELLIA") {
+				return -1
+			} else if strings.Contains(aName, "CAMELLIA") && strings.Contains(bName, "ARIA") {
+				return +1
+			}
+			// CAMELLIA < ChaCha20
+			if strings.Contains(aName, "CAMELLIA") && strings.Contains(bName, "CHACHA20") {
+				// negative for cipherSuitesPreferenceOrder
+				if i == 0 {
+					return -1
+				} else {
+					return +1
+				}
+			} else if strings.Contains(aName, "CHACHA20") && strings.Contains(bName, "CAMELLIA") {
+				// negative for cipherSuitesPreferenceOrderNoAES
+				if i != 0 {
+					return -1
+				} else {
+					return +1
+				}
+			}
+			// AES-GCM < AES-CCM
+			if strings.Contains(aName, "GCM") && strings.Contains(bName, "CCM") {
+				return -1
+			} else if strings.Contains(aName, "CCM") && strings.Contains(bName, "GCM") {
+				return +1
+			}
+			// ARIA-128 < ARIA-256
+			if strings.Contains(aName, "ARIA_128") && strings.Contains(bName, "ARIA_256") {
+				return -1
+			} else if strings.Contains(aName, "ARIA_256") && strings.Contains(bName, "ARIA_128") {
+				return +1
+			}
+			// CAMELLIA-128 < CAMELLIA-256
+			if strings.Contains(aName, "CAMELLIA_128") && strings.Contains(bName, "CAMELLIA_256") {
+				return -1
+			} else if strings.Contains(aName, "CAMELLIA_256") && strings.Contains(bName, "CAMELLIA_128") {
+				return +1
+			}
 			// AES-128 < AES-256
 			if strings.Contains(aName, "AES_128") && strings.Contains(bName, "AES_256") {
 				return -1
 			} else if strings.Contains(aName, "AES_256") && strings.Contains(bName, "AES_128") {
 				return +1
 			}
+			// AES-CCM < AES-CCM-8
+			if !strings.Contains(aName, "CCM_8") && strings.Contains(bName, "CCM_8") {
+				return -1
+			} else if strings.Contains(aName, "CCM_8") && !strings.Contains(bName, "CCM_8") {
+				return +1
+			}
 			// ECDSA < RSA
 			if aSuite.flags&suiteECSign != 0 && bSuite.flags&suiteECSign == 0 {
 				return -1
 			} else if aSuite.flags&suiteECSign == 0 && bSuite.flags&suiteECSign != 0 {
+				return +1
+			}
+			// * < SHA384
+			if aSuite.flags&suiteSHA384 == 0 && bSuite.flags&suiteSHA384 != 0 {
+				return -1
+			} else if aSuite.flags&suiteSHA384 != 0 && bSuite.flags&suiteSHA384 == 0 {
 				return +1
 			}
 			t.Fatalf("two ciphersuites are equal by all criteria: %v and %v", aName, bName)
@@ -1688,15 +1784,35 @@ func http2isBadCipher(cipher uint16) bool {
 		TLS_RSA_WITH_AES_128_CBC_SHA,
 		TLS_RSA_WITH_AES_256_CBC_SHA,
 		TLS_RSA_WITH_AES_128_CBC_SHA256,
+		TLS_RSA_WITH_ARIA_128_CBC_SHA256,
+		TLS_RSA_WITH_ARIA_256_CBC_SHA384,
 		TLS_RSA_WITH_AES_128_GCM_SHA256,
 		TLS_RSA_WITH_AES_256_GCM_SHA384,
+		TLS_RSA_WITH_AES_128_CCM_SHA256,
+		TLS_RSA_WITH_AES_256_CCM_SHA256,
+		TLS_RSA_WITH_AES_128_CCM_8_SHA256,
+		TLS_RSA_WITH_AES_256_CCM_8_SHA256,
+		TLS_RSA_WITH_ARIA_128_GCM_SHA256,
+		TLS_RSA_WITH_ARIA_256_GCM_SHA384,
+		TLS_RSA_WITH_CAMELLIA_128_GCM_SHA256,
+		TLS_RSA_WITH_CAMELLIA_256_GCM_SHA384,
 		TLS_ECDHE_ECDSA_WITH_RC4_128_SHA,
 		TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
 		TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+		TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384,
+		TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256,
+		TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384,
+		TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256,
+		TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384,
 		TLS_ECDHE_RSA_WITH_RC4_128_SHA,
+		TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA,
 		TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
 		TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
 		TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+		TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256,
+		TLS_ECDHE_RSA_WITH_ARIA_256_CBC_SHA384,
+		TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256,
+		TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384,
 		TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
 		TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:
 		return true
@@ -1740,8 +1856,6 @@ func TestPKCS1OnlyCert(t *testing.T) {
 }
 
 func TestVerifyCertificates(t *testing.T) {
-	skipFIPS(t) // Test certificates not FIPS compatible.
-
 	// See https://go.dev/issue/31641.
 	t.Run("TLSv12", func(t *testing.T) { testVerifyCertificates(t, VersionTLS12) })
 	t.Run("TLSv13", func(t *testing.T) { testVerifyCertificates(t, VersionTLS13) })
@@ -1886,7 +2000,6 @@ func testVerifyCertificates(t *testing.T, version uint16) {
 }
 
 func TestHandshakeMLKEM(t *testing.T) {
-	skipFIPS(t) // No X25519MLKEM768 in FIPS
 	var tests = []struct {
 		name                string
 		clientConfig        func(*Config)
@@ -1936,14 +2049,6 @@ func TestHandshakeMLKEM(t *testing.T) {
 			expectMLKEM:         true,
 		},
 		{
-			name: "ClientSortedCurvePreferences",
-			clientConfig: func(config *Config) {
-				config.CurvePreferences = []CurveID{CurveP256, X25519MLKEM768}
-			},
-			expectClientSupport: true,
-			expectMLKEM:         true,
-		},
-		{
 			name: "ClientTLSv12",
 			clientConfig: func(config *Config) {
 				config.MaxVersion = VersionTLS12
@@ -1957,13 +2062,6 @@ func TestHandshakeMLKEM(t *testing.T) {
 			},
 			expectClientSupport: true,
 			expectMLKEM:         false,
-		},
-		{
-			name: "GODEBUG",
-			preparation: func(t *testing.T) {
-				t.Setenv("GODEBUG", "tlsmlkem=0")
-			},
-			expectClientSupport: false,
 		},
 	}
 
@@ -2050,35 +2148,13 @@ func TestX509KeyPairPopulateCertificate(t *testing.T) {
 	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 
-	t.Run("x509keypairleaf=0", func(t *testing.T) {
-		t.Setenv("GODEBUG", "x509keypairleaf=0")
-		cert, err := X509KeyPair(certPEM, keyPEM)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cert.Leaf != nil {
-			t.Fatal("Leaf should not be populated")
-		}
-	})
-	t.Run("x509keypairleaf=1", func(t *testing.T) {
-		t.Setenv("GODEBUG", "x509keypairleaf=1")
-		cert, err := X509KeyPair(certPEM, keyPEM)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cert.Leaf == nil {
-			t.Fatal("Leaf should be populated")
-		}
-	})
-	t.Run("GODEBUG unset", func(t *testing.T) {
-		cert, err := X509KeyPair(certPEM, keyPEM)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cert.Leaf == nil {
-			t.Fatal("Leaf should be populated")
-		}
-	})
+	cert, err := X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cert.Leaf == nil {
+		t.Fatal("Leaf should be populated")
+	}
 }
 
 func TestEarlyLargeCertMsg(t *testing.T) {

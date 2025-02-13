@@ -44,15 +44,9 @@ import (
 var (
 	update       = flag.Bool("update", false, "update golden files on failure")
 	keyFile      = flag.String("keylog", "", "destination file for KeyLogWriter")
-	bogoMode     = flag.Bool("bogo-mode", false, "Enabled bogo shim mode, ignore everything else")
-	bogoFilter   = flag.String("bogo-filter", "", "BoGo test filter")
-	bogoLocalDir = flag.String("bogo-local-dir", "", "Local BoGo to use, instead of fetching from source")
 )
 
 func runTestAndUpdateIfNeeded(t *testing.T, name string, run func(t *testing.T, update bool), wait bool) {
-	// FIPS mode is non-deterministic and so isn't suited for testing against static test transcripts.
-	skipFIPS(t)
-
 	success := t.Run(name, func(t *testing.T) {
 		if !*update && !wait {
 			t.Parallel()
@@ -393,9 +387,12 @@ func (zeroSource) Read(b []byte) (n int, err error) {
 }
 
 func allCipherSuites() []uint16 {
-	ids := make([]uint16, len(cipherSuites))
-	for i, suite := range cipherSuites {
-		ids[i] = suite.id
+	ids := make([]uint16, 0, len(cipherSuitesTLS13)+len(cipherSuites))
+	for _, suite := range cipherSuitesTLS13 {
+		ids = append(ids, suite.id)
+	}
+	for _, suite := range cipherSuites {
+		ids = append(ids, suite.id)
 	}
 
 	return ids
@@ -404,21 +401,6 @@ func allCipherSuites() []uint16 {
 var testConfig *Config
 
 func TestMain(m *testing.M) {
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args)
-		flag.PrintDefaults()
-		if *bogoMode {
-			os.Exit(89)
-		}
-	}
-
-	flag.Parse()
-
-	if *bogoMode {
-		bogoShim()
-		os.Exit(0)
-	}
-
 	os.Exit(runMain(m))
 }
 
@@ -447,14 +429,15 @@ func runMain(m *testing.M) int {
 	}
 
 	testConfig = &Config{
-		Time:               func() time.Time { return time.Unix(0, 0) },
-		Rand:               zeroSource{},
-		Certificates:       make([]Certificate, 2),
-		InsecureSkipVerify: true,
-		CipherSuites:       allCipherSuites(),
-		CurvePreferences:   []CurveID{X25519, CurveP256, CurveP384, CurveP521},
-		MinVersion:         VersionTLS10,
-		MaxVersion:         VersionTLS13,
+		Time:                    func() time.Time { return time.Unix(0, 0) },
+		Rand:                    zeroSource{},
+		Certificates:            make([]Certificate, 2),
+		InsecureSkipVerify:      true,
+		CipherSuites:            allCipherSuites(),
+		CurvePreferences:        []CurveID{X25519, CurveP256, CurveP384, CurveP521},
+		MinVersion:              VersionTLS10,
+		MaxVersion:              VersionTLS13,
+		CertCompressionDisabled: true,
 	}
 	testConfig.Certificates[0].Certificate = [][]byte{testRSACertificate}
 	testConfig.Certificates[0].PrivateKey = testRSAPrivateKey

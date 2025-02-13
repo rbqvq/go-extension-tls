@@ -6,7 +6,7 @@ package tls
 
 import (
 	"bytes"
-	"crypto/internal/fips140/tls13"
+	"crypto"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
@@ -35,47 +35,48 @@ func TestACVPVectors(t *testing.T) {
 
 	// The "Random" values are undocumented, but they are meant to be written to
 	// the hash in sequence to develop the transcript.
+	suite := &cipherSuiteTLS13{hash: crypto.SHA256}
 	transcript := sha256.New()
 
-	es := tls13.NewEarlySecret(sha256.New, psk)
+	es := suite.extract(psk, nil)
 
 	transcript.Write(helloClientRandom)
 
-	if got := es.ClientEarlyTrafficSecret(transcript); !bytes.Equal(got, clientEarlyTrafficSecret) {
+	if got := suite.deriveSecret(es, clientEarlyTrafficLabel, transcript); !bytes.Equal(got, clientEarlyTrafficSecret) {
 		t.Errorf("clientEarlyTrafficSecret = %x, want %x", got, clientEarlyTrafficSecret)
 	}
-	if got := tls13.TestingOnlyExporterSecret(es.EarlyExporterMasterSecret(transcript)); !bytes.Equal(got, earlyExporterMasterSecret) {
+	if got := suite.deriveSecret(es, earlyExporterLabel, transcript); !bytes.Equal(got, earlyExporterMasterSecret) {
 		t.Errorf("earlyExporterMasterSecret = %x, want %x", got, earlyExporterMasterSecret)
 	}
 
-	hs := es.HandshakeSecret(dhe)
+	hs := suite.extract(dhe, suite.deriveSecret(es, "derived", nil))
 
 	transcript.Write(helloServerRandom)
 
-	if got := hs.ClientHandshakeTrafficSecret(transcript); !bytes.Equal(got, clientHandshakeTrafficSecret) {
+	if got := suite.deriveSecret(hs, clientHandshakeTrafficLabel, transcript); !bytes.Equal(got, clientHandshakeTrafficSecret) {
 		t.Errorf("clientHandshakeTrafficSecret = %x, want %x", got, clientHandshakeTrafficSecret)
 	}
-	if got := hs.ServerHandshakeTrafficSecret(transcript); !bytes.Equal(got, serverHandshakeTrafficSecret) {
+	if got := suite.deriveSecret(hs, serverHandshakeTrafficLabel, transcript); !bytes.Equal(got, serverHandshakeTrafficSecret) {
 		t.Errorf("serverHandshakeTrafficSecret = %x, want %x", got, serverHandshakeTrafficSecret)
 	}
 
-	ms := hs.MasterSecret()
+	ms := suite.extract(nil, suite.deriveSecret(hs, "derived", nil))
 
 	transcript.Write(finishedServerRandom)
 
-	if got := ms.ClientApplicationTrafficSecret(transcript); !bytes.Equal(got, clientApplicationTrafficSecret) {
+	if got := suite.deriveSecret(ms, clientApplicationTrafficLabel, transcript); !bytes.Equal(got, clientApplicationTrafficSecret) {
 		t.Errorf("clientApplicationTrafficSecret = %x, want %x", got, clientApplicationTrafficSecret)
 	}
-	if got := ms.ServerApplicationTrafficSecret(transcript); !bytes.Equal(got, serverApplicationTrafficSecret) {
+	if got := suite.deriveSecret(ms, serverApplicationTrafficLabel, transcript); !bytes.Equal(got, serverApplicationTrafficSecret) {
 		t.Errorf("serverApplicationTrafficSecret = %x, want %x", got, serverApplicationTrafficSecret)
 	}
-	if got := tls13.TestingOnlyExporterSecret(ms.ExporterMasterSecret(transcript)); !bytes.Equal(got, exporterMasterSecret) {
+	if got := suite.deriveSecret(ms, exporterLabel, transcript); !bytes.Equal(got, exporterMasterSecret) {
 		t.Errorf("exporterMasterSecret = %x, want %x", got, exporterMasterSecret)
 	}
 
 	transcript.Write(finishedClientRandom)
 
-	if got := ms.ResumptionMasterSecret(transcript); !bytes.Equal(got, resumptionMasterSecret) {
+	if got := suite.deriveSecret(ms, resumptionLabel, transcript); !bytes.Equal(got, resumptionMasterSecret) {
 		t.Errorf("resumptionMasterSecret = %x, want %x", got, resumptionMasterSecret)
 	}
 }

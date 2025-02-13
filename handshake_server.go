@@ -11,12 +11,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/subtle"
-	"crypto/tls/internal/fips140tls"
 	"crypto/x509"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash"
-	"internal/byteorder"
 	"io"
 	"time"
 )
@@ -37,6 +36,7 @@ type serverHandshakeState struct {
 	finishedHash finishedHash
 	masterSecret []byte
 	cert         *Certificate
+	extensions   []Extension
 }
 
 // serverHandshake performs a TLS handshake as a server.
@@ -52,6 +52,7 @@ func (c *Conn) serverHandshake(ctx context.Context) error {
 			ctx:         ctx,
 			clientHello: clientHello,
 			echContext:  ech,
+			extensions:  clientHello.extensionList,
 		}
 		return hs.handshake()
 	}
@@ -60,6 +61,7 @@ func (c *Conn) serverHandshake(ctx context.Context) error {
 		c:           c,
 		ctx:         ctx,
 		clientHello: clientHello,
+		extensions:  clientHello.extensionList,
 	}
 	return hs.handshake()
 }
@@ -97,6 +99,9 @@ func (hs *serverHandshakeState) handshake() error {
 		if err := hs.readFinished(nil); err != nil {
 			return err
 		}
+		if err := c.setup(); err != nil {
+			return err
+		}
 	} else {
 		// The client didn't include a session ticket, or it wasn't
 		// valid so we do a full handshake.
@@ -123,10 +128,13 @@ func (hs *serverHandshakeState) handshake() error {
 		if _, err := c.flush(); err != nil {
 			return err
 		}
+		if err := c.setup(); err != nil {
+			return err
+		}
 	}
 
 	c.ekm = ekmFromMasterSecret(c.vers, hs.suite, hs.masterSecret, hs.clientHello.random, hs.hello.random)
-	c.isHandshakeComplete.Store(true)
+	c.handshakeState.Store(handshakeCompleted)
 
 	return nil
 }
@@ -193,9 +201,24 @@ func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, *echServer
 		return nil, nil, errors.New("tls: Encrypted Client Hello cannot be used pre-TLS 1.3")
 	}
 
-	if c.config.MinVersion == 0 && c.vers < VersionTLS12 {
-		tls10server.Value() // ensure godebug is initialized
-		tls10server.IncNonDefault()
+	for i, extension := range clientHello.extensionList {
+		switch extension := extension.(type) {
+		case nil:
+		case *UnimplementedExtension:
+			for _, ext := range c.config.extensions() {
+				if ext.ExtensionId() == extension.Id {
+					ext = ext.Clone()
+
+					ext.NegotiatedVersion(c.vers)
+					if !ext.Unmarshal(typeClientHello, false, extension.Data) {
+						return nil, nil, c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+					}
+
+					clientHello.extensionList[i] = ext
+					break
+				}
+			}
+		}
 	}
 
 	return clientHello, ech, nil
@@ -206,6 +229,7 @@ func (hs *serverHandshakeState) processClientHello() error {
 
 	hs.hello = new(serverHelloMsg)
 	hs.hello.vers = c.vers
+	hs.hello.extensions = hs.clientHello.extensionList
 
 	foundCompression := false
 	// We only support null compression, so check that the client offered it.
@@ -373,13 +397,20 @@ func supportsECDHE(c *Config, version uint16, supportedCurves []CurveID, support
 func (hs *serverHandshakeState) pickCipherSuite() error {
 	c := hs.c
 
-	preferenceOrder := cipherSuitesPreferenceOrder
-	if !hasAESGCMHardwareSupport || !aesgcmPreferred(hs.clientHello.cipherSuites) {
-		preferenceOrder = cipherSuitesPreferenceOrderNoAES
-	}
+	config := c.config
 
-	configCipherSuites := c.config.cipherSuites()
+	configCipherSuites := config.cipherSuites()
 	preferenceList := make([]uint16, 0, len(configCipherSuites))
+
+	var preferenceOrder []uint16
+	switch {
+	case config.PreferCipherSuites:
+		preferenceOrder = config.CipherSuites
+	case !hasAESGCMHardwareSupport, !aesPreferred(hs.clientHello.cipherSuites):
+		preferenceOrder = cipherSuitesPreferenceOrderNoAES
+	default:
+		preferenceOrder = cipherSuitesPreferenceOrder
+	}
 	for _, suiteID := range preferenceOrder {
 		for _, id := range configCipherSuites {
 			if id == suiteID {
@@ -395,15 +426,6 @@ func (hs *serverHandshakeState) pickCipherSuite() error {
 		return errors.New("tls: no cipher suite supported by both client and server")
 	}
 	c.cipherSuite = hs.suite.id
-
-	if c.config.CipherSuites == nil && !fips140tls.Required() && rsaKexCiphers[hs.suite.id] {
-		tlsrsakex.Value() // ensure godebug is initialized
-		tlsrsakex.IncNonDefault()
-	}
-	if c.config.CipherSuites == nil && !fips140tls.Required() && tdesCiphers[hs.suite.id] {
-		tls3des.Value() // ensure godebug is initialized
-		tls3des.IncNonDefault()
-	}
 
 	for _, id := range hs.clientHello.cipherSuites {
 		if id == TLS_FALLBACK_SCSV {
@@ -617,7 +639,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 	}
 	if skx != nil {
 		if len(skx.key) >= 3 && skx.key[0] == 3 /* named curve */ {
-			c.curveID = CurveID(byteorder.BEUint16(skx.key[1:]))
+			c.curveID = CurveID(binary.BigEndian.Uint16(skx.key[1:]))
 		}
 		if _, err := hs.c.writeHandshakeRecord(skx, &hs.finishedHash); err != nil {
 			return err
@@ -795,8 +817,8 @@ func (hs *serverHandshakeState) establishKeys() error {
 		serverCipher = hs.suite.aead(serverKey, serverIV)
 	}
 
-	c.in.prepareCipherSpec(c.vers, clientCipher, clientHash)
-	c.out.prepareCipherSpec(c.vers, serverCipher, serverHash)
+	c.in.prepareCipherSpec(c.vers, clientCipher, clientHash, clientKey, clientIV, clientMAC)
+	c.out.prepareCipherSpec(c.vers, serverCipher, serverHash, serverKey, serverIV, serverMAC)
 
 	return nil
 }
@@ -947,11 +969,7 @@ func (c *Conn) processCertsFromClient(certificate Certificate) error {
 			return &CertificateVerificationError{UnverifiedCertificates: certs, Err: err}
 		}
 
-		c.verifiedChains, err = fipsAllowedChains(chains)
-		if err != nil {
-			c.sendAlert(alertBadCertificate)
-			return &CertificateVerificationError{UnverifiedCertificates: certs, Err: err}
-		}
+		c.verifiedChains = chains
 	}
 
 	c.peerCertificates = certs
@@ -992,6 +1010,7 @@ func clientHelloInfo(ctx context.Context, c *Conn, clientHello *clientHelloMsg) 
 		SupportedProtos:   clientHello.alpnProtocols,
 		SupportedVersions: supportedVersions,
 		Extensions:        clientHello.extensions,
+		ExtensionList:     clientHello.extensionList,
 		Conn:              c.conn,
 		config:            c.config,
 		ctx:               ctx,

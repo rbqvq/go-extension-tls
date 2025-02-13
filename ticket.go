@@ -72,10 +72,10 @@ type SessionState struct {
 	// with an id and version prefix).
 	Extra [][]byte
 
-	// EarlyData indicates whether the ticket can be used for 0-RTT in a QUIC
-	// connection. The application may set this to false if it is true to
+	// MaxEarlyData indicates whether the ticket can be used for 0-RTT in a
+	// connection. The application may set this to 0 if it is true to
 	// decline to offer 0-RTT even if supported.
-	EarlyData bool
+	MaxEarlyData uint32
 
 	version     uint16
 	isClient    bool
@@ -91,7 +91,9 @@ type SessionState struct {
 	ocspResponse      []byte
 	scts              [][]byte
 	verifiedChains    [][]*x509.Certificate
-	alpnProtocol      string // only set if EarlyData is true
+	alpnProtocol      string
+	alpnClientSetting []byte
+	alpnServerSetting []byte
 
 	// Client-side TLS 1.3-only fields.
 	useBy  uint64 // seconds since UNIX epoch
@@ -130,11 +132,7 @@ func (s *SessionState) Bytes() ([]byte, error) {
 	} else {
 		b.AddUint8(0)
 	}
-	if s.EarlyData {
-		b.AddUint8(1)
-	} else {
-		b.AddUint8(0)
-	}
+	b.AddUint32(s.MaxEarlyData)
 	marshalCertificate(&b, Certificate{
 		Certificate:                 certificatesToBytesSlice(s.peerCertificates),
 		OCSPStaple:                  s.ocspResponse,
@@ -156,11 +154,15 @@ func (s *SessionState) Bytes() ([]byte, error) {
 			})
 		}
 	})
-	if s.EarlyData {
-		b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-			b.AddBytes([]byte(s.alpnProtocol))
-		})
-	}
+	b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes([]byte(s.alpnProtocol))
+	})
+	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes([]byte(s.alpnClientSetting))
+	})
+	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes([]byte(s.alpnServerSetting))
+	})
 	if s.isClient {
 		if s.version >= VersionTLS13 {
 			addUint64(&b, s.useBy)
@@ -182,7 +184,7 @@ func certificatesToBytesSlice(certs []*x509.Certificate) [][]byte {
 func ParseSessionState(data []byte) (*SessionState, error) {
 	ss := &SessionState{}
 	s := cryptobyte.String(data)
-	var typ, extMasterSecret, earlyData uint8
+	var typ, extMasterSecret uint8
 	var cert Certificate
 	var extra cryptobyte.String
 	if !s.ReadUint16(&ss.version) ||
@@ -193,7 +195,7 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 		!readUint8LengthPrefixed(&s, &ss.secret) ||
 		!s.ReadUint24LengthPrefixed(&extra) ||
 		!s.ReadUint8(&extMasterSecret) ||
-		!s.ReadUint8(&earlyData) ||
+		!s.ReadUint32(&ss.MaxEarlyData) ||
 		len(ss.secret) == 0 ||
 		!unmarshalCertificate(&s, &cert) {
 		return nil, errors.New("tls: invalid session encoding")
@@ -210,14 +212,6 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 		ss.extMasterSecret = false
 	case 1:
 		ss.extMasterSecret = true
-	default:
-		return nil, errors.New("tls: invalid session encoding")
-	}
-	switch earlyData {
-	case 0:
-		ss.EarlyData = false
-	case 1:
-		ss.EarlyData = true
 	default:
 		return nil, errors.New("tls: invalid session encoding")
 	}
@@ -259,12 +253,16 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 		}
 		ss.verifiedChains = append(ss.verifiedChains, chain)
 	}
-	if ss.EarlyData {
-		var alpn []byte
-		if !readUint8LengthPrefixed(&s, &alpn) {
-			return nil, errors.New("tls: invalid session encoding")
-		}
-		ss.alpnProtocol = string(alpn)
+	var alpn []byte
+	if !readUint8LengthPrefixed(&s, &alpn) {
+		return nil, errors.New("tls: invalid session encoding")
+	}
+	ss.alpnProtocol = string(alpn)
+	if !readUint16LengthPrefixed(&s, &ss.alpnClientSetting) {
+		return nil, errors.New("tls: invalid session encoding")
+	}
+	if !readUint16LengthPrefixed(&s, &ss.alpnServerSetting) {
+		return nil, errors.New("tls: invalid session encoding")
 	}
 	if isClient := typ == 2; !isClient {
 		if !s.Empty() {

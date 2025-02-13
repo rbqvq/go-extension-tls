@@ -6,12 +6,12 @@ package tls
 
 import (
 	"bytes"
-	"crypto/internal/hpke"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
+	"gitlab.com/go-extension/hpke"
 	"golang.org/x/crypto/cryptobyte"
 )
 

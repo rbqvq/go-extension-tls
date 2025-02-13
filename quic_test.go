@@ -512,10 +512,12 @@ func TestQUICEarlyData(t *testing.T) {
 	clientConfig.TLSConfig.ClientSessionCache = NewLRUClientSessionCache(1)
 	clientConfig.TLSConfig.ServerName = "example.go.dev"
 	clientConfig.TLSConfig.NextProtos = []string{"h3"}
+	clientConfig.TLSConfig.AllowEarlyData = true
 
 	serverConfig := &QUICConfig{TLSConfig: testConfig.Clone()}
 	serverConfig.TLSConfig.MinVersion = VersionTLS13
 	serverConfig.TLSConfig.NextProtos = []string{"h3"}
+	serverConfig.TLSConfig.AllowEarlyData = true
 
 	cli := newTestQUICClient(t, clientConfig)
 	cli.conn.SetTransportParameters(nil)
@@ -575,11 +577,13 @@ func testQUICEarlyDataDeclined(t *testing.T, server bool) {
 	clientConfig.TLSConfig.ClientSessionCache = NewLRUClientSessionCache(1)
 	clientConfig.TLSConfig.ServerName = "example.go.dev"
 	clientConfig.TLSConfig.NextProtos = []string{"h3"}
+	clientConfig.TLSConfig.AllowEarlyData = true
 
 	serverConfig := &QUICConfig{TLSConfig: testConfig.Clone()}
 	serverConfig.EnableSessionEvents = true
 	serverConfig.TLSConfig.MinVersion = VersionTLS13
 	serverConfig.TLSConfig.NextProtos = []string{"h3"}
+	serverConfig.TLSConfig.AllowEarlyData = true
 
 	cli := newTestQUICClient(t, clientConfig)
 	cli.conn.SetTransportParameters(nil)
@@ -598,7 +602,7 @@ func testQUICEarlyDataDeclined(t *testing.T, server bool) {
 	srv2 := newTestQUICServer(t, serverConfig)
 	srv2.conn.SetTransportParameters(nil)
 	declineEarlyData := func(state *SessionState) {
-		state.EarlyData = false
+		state.MaxEarlyData = 0
 	}
 	if server {
 		srv2.onResumeSession = declineEarlyData

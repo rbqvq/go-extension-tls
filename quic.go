@@ -36,6 +36,10 @@ func (l QUICEncryptionLevel) String() string {
 	}
 }
 
+const (
+	quicMaxEarlyData = 0xffffffff
+)
+
 // A QUICConn represents a connection which uses a QUIC implementation as the underlying
 // transport as described in RFC 9001.
 //
@@ -302,7 +306,7 @@ type QUICSessionTicketOptions struct {
 // Currently, it can only be called once.
 func (q *QUICConn) SendSessionTicket(opts QUICSessionTicketOptions) error {
 	c := q.conn
-	if !c.isHandshakeComplete.Load() {
+	if c.handshakeState.Load() != handshakeCompleted {
 		return quicError(errors.New("tls: SendSessionTicket called before handshake completed"))
 	}
 	if c.isClient {
@@ -312,7 +316,12 @@ func (q *QUICConn) SendSessionTicket(opts QUICSessionTicketOptions) error {
 		return quicError(errors.New("tls: SendSessionTicket called multiple times"))
 	}
 	q.sessionTicketSent = true
-	return quicError(c.sendSessionTicket(opts.EarlyData, opts.Extra))
+
+	var maxEarlyData uint32
+	if opts.EarlyData {
+		maxEarlyData = quicMaxEarlyData
+	}
+	return quicError(c.sendSessionTicket(maxEarlyData, opts.Extra))
 }
 
 // StoreSession stores a session previously received in a QUICStoreSession event
