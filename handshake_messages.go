@@ -172,7 +172,7 @@ func (m *clientHelloMsg) echOuterExtensions() []uint16 {
 				echOuterExts = append(echOuterExts, extensionPSKModes)
 			}
 		default:
-			if extension.Negotiate(typeClientHello, false) {
+			if !extension.Negotiate(typeClientHello, true) && extension.Negotiate(typeClientHello, false) {
 				echOuterExts = append(echOuterExts, extension.ExtensionId())
 			}
 		}

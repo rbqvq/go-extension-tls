@@ -310,17 +310,17 @@ func (*PaddingExtension) ExtensionId() uint16 {
 func (*PaddingExtension) NegotiatedVersion(vers uint16) {}
 
 func (*PaddingExtension) Negotiate(messageType uint8, encryptedClientHello bool) bool {
-	return messageType == typeClientHello && !encryptedClientHello
+	return messageType == typeClientHello
 }
 
 func (extension *PaddingExtension) Marshal(messageType uint8, encryptedClientHello bool, b *cryptobyte.Builder) {
-	if messageType == typeClientHello && !encryptedClientHello {
+	if messageType == typeClientHello {
 		b.AddBytes(make([]byte, extension.Length))
 	}
 }
 
 func (extension *PaddingExtension) Len(messageType uint8, encryptedClientHello bool) int {
-	if messageType == typeClientHello && !encryptedClientHello {
+	if messageType == typeClientHello {
 		return int(extension.Length)
 	}
 
