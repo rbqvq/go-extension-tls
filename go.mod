@@ -2,14 +2,14 @@ module gitlab.com/go-extension/tls
 
 go 1.24.0
 
-require golang.org/x/crypto v0.33.0
+require golang.org/x/crypto v0.40.0
 
 require (
-	github.com/andybalholm/brotli v1.1.1
+	github.com/andybalholm/brotli v1.2.0
 	github.com/blang/semver/v4 v4.0.0
-	github.com/klauspost/compress v1.17.11
-	github.com/rogpeppe/go-internal v1.9.0
-	golang.org/x/sys v0.30.0
+	github.com/klauspost/compress v1.18.0
+	github.com/rogpeppe/go-internal v1.14.1
+	golang.org/x/sys v0.34.0
 )
 
 require (
