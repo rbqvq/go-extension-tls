@@ -50,7 +50,9 @@ func init() {
 	if _, err := os.Stat("/sys/module/tls"); err != nil {
 		// try modprobe
 		func() {
-			defer recover()
+			defer func() {
+				recover()
+			}()
 
 			kmod, err := kmod.New()
 			if err != nil {

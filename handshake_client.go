@@ -446,6 +446,10 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 			case nil:
 			case *UnimplementedExtension:
 				for _, ext := range extensions {
+					if ext == nil {
+						continue
+					}
+
 					if ext.ExtensionId() == extension.ExtensionId() {
 						ext.NegotiatedVersion(c.vers)
 
