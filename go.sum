@@ -24,6 +24,8 @@ gitlab.com/go-extension/mlkem768 v0.0.0-20240814071630-937354a2177e h1:D/TnZkP81
 gitlab.com/go-extension/mlkem768 v0.0.0-20240814071630-937354a2177e/go.mod h1:SQhmb9r/Fb0M4mb//AlrwD0yrDHre+nF0QzZD6OZV4k=
 gitlab.com/go-extension/rand v0.0.0-20240303103951-707937a049b5 h1:xQA0rfVPqW3G6dnb4qtgBdxr9XLu9vzDfdqKfLqGFXA=
 gitlab.com/go-extension/rand v0.0.0-20240303103951-707937a049b5/go.mod h1:nRmjyZOSF6N/6yuRl7ui9wKb1DjMX9ELGzOwELwWVSU=
+gitlab.com/go-extension/utils v0.0.0-20250718194058-bae8b5a74647 h1:ONxUw5em+2cmSmkzWhMIV37BY4DWe5dt72tYHL1C9G0=
+gitlab.com/go-extension/utils v0.0.0-20250718194058-bae8b5a74647/go.mod h1:Ywd71Frp71RHLytGD2PgcTyxX/nEpGcYh85CPFTz3Mg=
 golang.org/x/crypto v0.0.0-20220829220503-c86fa9a7ed90/go.mod h1:IxCIyHEi3zRg3s0A5j5BB6A9Jmi73HwBIUl50j+osU4=
 golang.org/x/crypto v0.40.0 h1:r4x+VvoG5Fm+eJcxMaY8CQM7Lb0l1lsmjGBQ6s8BfKM=
 golang.org/x/crypto v0.40.0/go.mod h1:Qr1vMER5WyS2dfPHAlsOj01wgLbsyWtFn/aY+5+ZdxY=

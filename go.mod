@@ -20,4 +20,5 @@ require (
 	gitlab.com/go-extension/hpke v0.0.0-20250212195157-716075a00b8a
 	gitlab.com/go-extension/mlkem768 v0.0.0-20240814071630-937354a2177e
 	gitlab.com/go-extension/rand v0.0.0-20240303103951-707937a049b5
+	gitlab.com/go-extension/utils v0.0.0-20250718194058-bae8b5a74647
 )
