@@ -716,6 +716,10 @@ type Config struct {
 	InsecureSkipVerify bool
 
 	// PreferCipherSuites control whether cipher suites would follow the hardware's preference.
+	//
+	// If true, it will directly use CipherSuites without following hardware preference.
+	// If false, it will use the default behavior of the standard library
+	// (prefer AES on machines with AES hardware, otherwise Chacha20)
 	PreferCipherSuites bool
 
 	// CipherSuites is a list of enabled TLS 1.0–1.2 cipher suites. The order of
@@ -883,6 +887,7 @@ type Config struct {
 	// If the kernel is not supported, it is automatically downgraded to the application implementation
 	//
 	// If this option is enabled, please mount the TLS module before you run application.
+	// On Linux, it will try to automatically mount the tls kernel module.
 	KernelTX, KernelRX bool
 
 	// EncryptedClientHelloDummyConfig are the parameters used by the client when it
