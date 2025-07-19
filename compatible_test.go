@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestCompatible(t *testing.T) {
-	e := errors.New("crypto/tls: TestCompatible")
+func TestFullCompatible(t *testing.T) {
+	e := errors.New("crypto/tls: TestFullCompatible")
 
 	cs := &ConnectionState{
 		ekm: func(label string, context []byte, length int) ([]byte, error) {
@@ -14,7 +14,7 @@ func TestCompatible(t *testing.T) {
 		},
 	}
 
-	converted := cs.Compatible()
+	converted := cs.FullCompatible()
 	_, err := converted.ExportKeyingMaterial("", nil, 0)
 	if err != e {
 		t.Errorf("bad compatible convert, want: %T, got: %T", e, err)
