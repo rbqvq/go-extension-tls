@@ -173,7 +173,7 @@ func (c *Conn) setupRX(fd uintptr, crypto kernelCrypto) {
 	}
 	c.in.useKernel()
 
-	if c.vers >= VersionTLS13 && kernel.TLS_RX_NOPADDING {
+	if c.config.KernelRXExpectNoPad && c.vers >= VersionTLS13 && kernel.TLS_RX_NOPADDING {
 		syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_RX_EXPECT_NO_PAD, 1)
 	}
 }

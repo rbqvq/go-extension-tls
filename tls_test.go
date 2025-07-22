@@ -914,7 +914,7 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf(true))
 		case "Extensions":
 			f.Set(reflect.ValueOf([]Extension{&ServerNameIndicationExtension{}}))
-		case "KernelTX", "KernelRX":
+		case "KernelTX", "KernelRX", "KernelRXExpectNoPad":
 			f.Set(reflect.ValueOf(true))
 		case "mutex", "autoSessionTicketKeys", "sessionTicketKeys":
 			continue // these are unexported fields that are handled separately

@@ -890,6 +890,15 @@ type Config struct {
 	// On Linux, it will try to automatically mount the tls kernel module.
 	KernelTX, KernelRX bool
 
+	// KernelRXExpectNoPad expects the sender to not pad records
+	// This allows the data to be decrypted directly into user space buffers with TLS 1.3.
+	// This optimization is safe to enable only if the remote end is trusted,
+	// otherwise it is an attack vector to doubling the TLS processing cost.
+	//
+	// Linux only, with KernelRX enabled and TLS 1.3 successfully negotiated.
+	// See https://www.kernel.org/doc/html/v6.15/networking/tls.html
+	KernelRXExpectNoPad bool
+
 	// EncryptedClientHelloDummyConfig are the parameters used by the client when it
 	// offers the dummy ECH extension.
 	EncryptedClientHelloDummyConfig *ECHDummyConfig
@@ -1071,6 +1080,7 @@ func (c *Config) Clone() *Config {
 		KeyLogWriter:                        c.KeyLogWriter,
 		KernelTX:                            c.KernelTX,
 		KernelRX:                            c.KernelRX,
+		KernelRXExpectNoPad:                 c.KernelRXExpectNoPad,
 		EncryptedClientHelloDummyConfig:     c.EncryptedClientHelloDummyConfig,
 		EncryptedClientHelloConfigList:      c.EncryptedClientHelloConfigList,
 		EncryptedClientHelloRejectionVerify: c.EncryptedClientHelloRejectionVerify,
