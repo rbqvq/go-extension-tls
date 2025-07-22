@@ -1412,6 +1412,11 @@ func (c *Conn) handleRenegotiation() error {
 		return errors.New("tls: unknown Renegotiation value")
 	}
 
+	if c.in.usingKernel() || c.KernelTX() {
+		c.sendAlert(alertNoRenegotiation)
+		return errors.New("tls: internal error: kernel does not support renegotiation")
+	}
+
 	c.handshakeMutex.Lock()
 	defer c.handshakeMutex.Unlock()
 
@@ -1474,9 +1479,21 @@ func (c *Conn) handleKeyUpdate(keyUpdate *keyUpdateMsg) error {
 	newSecret := cipherSuite.nextTrafficSecret(c.in.trafficSecret)
 	c.in.setTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret)
 
+	err := c.resetupRX()
+	if err != nil {
+		c.sendAlert(alertInternalError)
+		return c.in.setErrorLocked(fmt.Errorf("tls: resetupRX failed: %w", err))
+	}
+
 	if keyUpdate.updateRequested {
 		c.out.Lock()
 		defer c.out.Unlock()
+
+		resetup, err := c.resetupTX()
+		if err != nil {
+			c.sendAlertLocked(alertInternalError)
+			return c.out.setErrorLocked(fmt.Errorf("tls: resetupTX failed: %w", err))
+		}
 
 		msg := &keyUpdateMsg{}
 		msgBytes, err := msg.marshal()
@@ -1492,9 +1509,14 @@ func (c *Conn) handleKeyUpdate(keyUpdate *keyUpdateMsg) error {
 
 		newSecret := cipherSuite.nextTrafficSecret(c.out.trafficSecret)
 		c.out.setTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret)
+
+		err = resetup()
+		if err != nil {
+			return c.out.setErrorLocked(fmt.Errorf("tls: resetupTX failed: %w", err))
+		}
 	}
 
-	return c.setup()
+	return nil
 }
 
 // Read reads data from the connection.

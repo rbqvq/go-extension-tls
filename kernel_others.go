@@ -12,6 +12,14 @@ func (c *Conn) setup() error {
 	return nil
 }
 
+func (c *Conn) resetupRX() error {
+	return nil
+}
+
+func (c *Conn) resetupTX() (resetup, error) {
+	return nopResetup, nil
+}
+
 func (c *Conn) readKernelRecord(handshakeState uint32) (typ recordType, data []byte, err error) {
 	panic("not implement")
 }

@@ -12,6 +12,12 @@ type wrappedConn struct {
 	io.ReadWriter
 }
 
+type resetup func() error
+
+var nopResetup = func() error {
+	return nil
+}
+
 type kernelCipher struct{}
 
 func (c *halfConn) useKernel() {

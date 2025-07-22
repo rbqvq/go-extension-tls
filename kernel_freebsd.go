@@ -99,6 +99,10 @@ func (c *Conn) setup() error {
 		return nil
 	}
 
+	if c.in.usingKernel() || c.out.usingKernel() {
+		return errors.New("tls: internal error: kernel does not support renegotiation")
+	}
+
 	var rawConn syscall.RawConn
 	{
 		conn, ok := c.conn.(*net.TCPConn)
@@ -144,6 +148,14 @@ func (c *Conn) setupRX(fd uintptr, crypto kernelCrypto) {
 	c.in.useKernel()
 }
 
+func (c *Conn) resetupRX() error {
+	if !c.in.usingKernel() {
+		return nil
+	}
+
+	return errors.New("tls: internal error: kernel does not support rekey")
+}
+
 func (c *Conn) setupTX(fd uintptr, crypto kernelCrypto) {
 	if crypto == nil {
 		return
@@ -154,6 +166,14 @@ func (c *Conn) setupTX(fd uintptr, crypto kernelCrypto) {
 		return
 	}
 	c.out.useKernel()
+}
+
+func (c *Conn) resetupTX() (resetup, error) {
+	if !c.out.usingKernel() {
+		return nopResetup, nil
+	}
+
+	return nil, errors.New("tls: internal error: kernel does not support rekey")
 }
 
 func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, error) {

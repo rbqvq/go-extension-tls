@@ -41,6 +41,8 @@ type kernelInfo struct {
 	TLS_CHACHA20_POLY1305 bool
 	TLS_SM4               bool
 	TLS_ARIA_GCM          bool
+
+	TLS_Version13_KeyUpdate bool
 }
 
 var kernel kernelInfo
@@ -80,6 +82,9 @@ func init() {
 	kernelVersion.Build = nil
 
 	switch {
+	case kernelVersion.GTE(semver.Version{Major: 6, Minor: 14}):
+		kernel.TLS_Version13_KeyUpdate = true
+		fallthrough
 	case kernelVersion.GTE(semver.Version{Major: 6, Minor: 1}):
 		kernel.TLS_ARIA_GCM = true
 		fallthrough
@@ -122,6 +127,10 @@ func (c *Conn) setup() error {
 
 	if !kernel.TLS {
 		return nil
+	}
+
+	if c.in.usingKernel() || c.out.usingKernel() {
+		return errors.New("tls: internal error: kernel does not support renegotiation")
 	}
 
 	var rawConn syscall.RawConn
@@ -178,6 +187,40 @@ func (c *Conn) setupRX(fd uintptr, crypto kernelCrypto) {
 	}
 }
 
+func (c *Conn) resetupRX() error {
+	if !c.in.usingKernel() {
+		return nil
+	}
+
+	if !kernel.TLS_Version13_KeyUpdate {
+		return errors.New("tls: internal error: kernel does not support rekey")
+	}
+
+	conn, ok := c.conn.(*net.TCPConn)
+	if !ok {
+		return fmt.Errorf("tls: internal error: set kernelCipher on invalid connection type, want: %T, have: %T", conn, c.conn)
+	}
+
+	rawConn, err := conn.SyscallConn()
+	if err != nil {
+		return err
+	}
+
+	crypto := c.in.kernelCipher(c.cipherSuite, true)
+	if crypto == nil {
+		return errors.New("tls: internal error: set kernelCipher on unsupported tls session")
+	}
+
+	er := rawConn.Control(func(fd uintptr) {
+		err = syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_RX, crypto.String())
+	})
+	if er != nil {
+		return er
+	}
+
+	return err
+}
+
 func (c *Conn) setupTX(fd uintptr, crypto kernelCrypto) {
 	if crypto == nil {
 		return
@@ -192,6 +235,42 @@ func (c *Conn) setupTX(fd uintptr, crypto kernelCrypto) {
 	if kernel.TLS_TX_ZEROCOPY {
 		syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_TX_ZEROCOPY_RO, 1)
 	}
+}
+
+func (c *Conn) resetupTX() (resetup, error) {
+	if !c.out.usingKernel() {
+		return nopResetup, nil
+	}
+
+	if !kernel.TLS_Version13_KeyUpdate {
+		return nil, errors.New("tls: internal error: kernel does not support rekey")
+	}
+
+	conn, ok := c.conn.(*net.TCPConn)
+	if !ok {
+		return nil, fmt.Errorf("tls: internal error: set kernelCipher on invalid connection type, want: %T, have: %T", conn, c.conn)
+	}
+
+	rawConn, err := conn.SyscallConn()
+	if err != nil {
+		return nil, err
+	}
+
+	crypto := c.out.kernelCipher(c.cipherSuite, false)
+	if crypto == nil {
+		return nil, errors.New("tls: internal error: set kernelCipher on unsupported tls session")
+	}
+
+	return func() error {
+		var err error
+		er := rawConn.Control(func(fd uintptr) {
+			err = syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_TX, crypto.String())
+		})
+		if er != nil {
+			return er
+		}
+		return err
+	}, nil
 }
 
 func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, error) {
