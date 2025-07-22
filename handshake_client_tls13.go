@@ -1043,6 +1043,9 @@ func (hs *clientHandshakeStateTLS13) sendClientData() error {
 		return nil
 	}
 
+	c.out.Lock()
+	defer c.out.Unlock()
+
 	if !hs.earlyData {
 		_, err := c.writeRecordLocked(recordTypeApplicationData, c.earlyData.Bytes())
 		return err

@@ -1247,6 +1247,8 @@ func (hs *clientHandshakeState) sendClientData() error {
 		return nil
 	}
 
+	c.out.Lock()
+	defer c.out.Unlock()
 	_, err := c.writeRecordLocked(recordTypeApplicationData, c.earlyData.Bytes())
 	return err
 }

@@ -117,6 +117,9 @@ func init() {
 }
 
 func (c *Conn) setup() error {
+	c.out.Lock()
+	defer c.out.Unlock()
+
 	if c.quic != nil {
 		return nil
 	}
