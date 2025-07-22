@@ -883,7 +883,7 @@ type Config struct {
 	// used for debugging.
 	KeyLogWriter io.Writer
 
-	// KernelTX and KernelRX control whether the kernel TLS module is enabled
+	// KernelTX and KernelRX control whether kernel TLS offloading is enabled
 	// If the kernel is not supported, it is automatically downgraded to the application implementation
 	//
 	// If this option is enabled, please mount the TLS module before you run application.
