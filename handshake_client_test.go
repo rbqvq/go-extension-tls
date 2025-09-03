@@ -2648,8 +2648,8 @@ func TestClientHandshakeContextCancellation(t *testing.T) {
 	if err != context.Canceled {
 		t.Errorf("Unexpected client handshake error: %v", err)
 	}
-	if runtime.GOARCH == "wasm" {
-		t.Skip("conn.Close does not error as expected when called multiple times on WASM")
+	if runtime.GOOS == "js" || runtime.GOOS == "wasip1" {
+		t.Skip("conn.Close does not error as expected when called multiple times on GOOS=js or GOOS=wasip1")
 	}
 	err = cli.Close()
 	if err == nil {
@@ -2706,7 +2706,6 @@ func testTLS13OnlyClientHelloCipherSuite(t *testing.T, ciphers []uint16) {
 	clientConfig := &Config{
 		MinVersion:         VersionTLS13, // client only supports TLS 1.3
 		CipherSuites:       ciphers,
-		PreferCipherSuites: true,
 		InsecureSkipVerify: true,
 	}
 	if _, _, err := testHandshake(t, clientConfig, serverConfig); err != nil {

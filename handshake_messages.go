@@ -1494,6 +1494,7 @@ type encryptedExtensionsMsg struct {
 	quicTransportParameters []byte
 	earlyData               bool
 	echRetryConfigs         []byte
+	serverNameAck           bool
 
 	extensions []Extension
 }
@@ -1545,6 +1546,11 @@ func (m *encryptedExtensionsMsg) marshal() ([]byte, error) {
 							b.AddBytes(m.echRetryConfigs)
 						})
 					}
+				case *ServerNameIndicationExtension:
+					if m.serverNameAck {
+						b.AddUint16(extensionServerName)
+						b.AddUint16(0) // empty extension_data
+					}
 				default:
 					if extension.Negotiate(typeEncryptedExtensions, false) {
 						b.AddUint16(extension.ExtensionId())
@@ -1570,6 +1576,7 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 		return false
 	}
 
+	seenExts := make(map[uint16]bool)
 	for !extensions.Empty() {
 		var extension uint16
 		var extData cryptobyte.String
@@ -1577,6 +1584,11 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 			!extensions.ReadUint16LengthPrefixed(&extData) {
 			return false
 		}
+
+		if seenExts[extension] {
+			return false
+		}
+		seenExts[extension] = true
 
 		switch extension {
 		case extensionALPN:
@@ -1611,6 +1623,12 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 				return false
 			}
 			m.extensions = append(m.extensions, &EncryptedClientHelloExtension{})
+		case extensionServerName:
+			if len(extData) != 0 {
+				return false
+			}
+			m.serverNameAck = true
+			m.extensions = append(m.extensions, &ServerNameIndicationExtension{})
 		default:
 			var ext Extension
 

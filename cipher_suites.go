@@ -102,8 +102,8 @@ func CipherSuites() []*CipherSuite {
 // Most applications should not use the cipher suites in this list, and should
 // only use those returned by [CipherSuites].
 func InsecureCipherSuites() []*CipherSuite {
-	// This list includes RC4, CBC_SHA256, and 3DES cipher suites. See
-	// cipherSuitesPreferenceOrder for details.
+	// This list includes legacy RSA kex, RC4, CBC_SHA256, and 3DES cipher
+	// suites. See cipherSuitesPreferenceOrder for details.
 	return []*CipherSuite{
 		{TLS_RSA_WITH_RC4_128_SHA, "TLS_RSA_WITH_RC4_128_SHA", supportedUpToTLS12, true},
 		{TLS_RSA_WITH_3DES_EDE_CBC_SHA, "TLS_RSA_WITH_3DES_EDE_CBC_SHA", supportedUpToTLS12, true},
@@ -480,8 +480,7 @@ var disabledCipherSuites = map[uint16]bool{
 	TLS_RSA_WITH_RC4_128_SHA:         true,
 }
 
-// rsaKexCiphers contains the ciphers which use RSA based key exchange,
-// which we also disable by default unless a GODEBUG is set.
+// rsaKexCiphers contains the ciphers which use RSA based key exchange.
 var rsaKexCiphers = map[uint16]bool{
 	TLS_RSA_WITH_RC4_128_SHA:             true,
 	TLS_RSA_WITH_3DES_EDE_CBC_SHA:        true,
@@ -536,9 +535,13 @@ var aesCiphers = map[uint16]bool{
 	TLS_AES_128_CCM_8_SHA256: true,
 }
 
-// aesPreferred returns whether the first known cipher in the preference list
-// is an AES-GCM/CCM cipher, implying the peer has hardware support for it.
-func aesPreferred(ciphers []uint16) bool {
+// isAESGCMPreferred returns whether we have hardware support for AES-GCM/CCM, and the
+// first known cipher in the peer's preference list is an AES-GCM/CCM cipher,
+// implying the peer also has hardware support for it.
+func isAESGCMPreferred(ciphers []uint16) bool {
+	if !hasAESGCMHardwareSupport {
+		return false
+	}
 	for _, cID := range ciphers {
 		if c := cipherSuiteByID(cID); c != nil {
 			return aesCiphers[cID]

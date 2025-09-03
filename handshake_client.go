@@ -14,7 +14,6 @@ import (
 	"crypto/rsa"
 	"crypto/subtle"
 	"crypto/x509"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash"
@@ -42,8 +41,6 @@ type clientHandshakeState struct {
 	extensions   []Extension
 }
 
-var testingOnlyForceClientHelloSignatureAlgorithms []SignatureScheme
-
 func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echClientContext, error) {
 	config := c.config
 	if len(config.ServerName) == 0 && !config.InsecureSkipVerify {
@@ -66,7 +63,11 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
 	if len(supportedVersions) == 0 {
 		return nil, nil, nil, errors.New("tls: no supported versions satisfy MinVersion and MaxVersion")
 	}
-	maxVersion := config.maxSupportedVersion(roleClient)
+	// Since supportedVersions is sorted in descending order, the first element
+	// is the maximum version and the last element is the minimum version.
+	versions := slices.DeleteFunc(supportedVersions, IsGREASE)
+	maxVersion := versions[0]
+	minVersion := versions[len(supportedVersions)-1]
 
 	hello := &clientHelloMsg{
 		vers:                               maxVersion,
@@ -100,13 +101,13 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
 		hello.secureRenegotiation = c.clientFinished[:]
 	}
 
-	configCipherSuites := config.cipherSuites()
+	configCipherSuites := config.supportedCipherSuites()
 	hello.cipherSuites = make([]uint16, 0, len(configCipherSuites))
 
 	var preferenceOrder []uint16
 	switch {
 	case config.PreferCipherSuites:
-		preferenceOrder = configCipherSuites
+		preferenceOrder = config.CipherSuites
 	case hasAESGCMHardwareSupport:
 		preferenceOrder = cipherSuitesPreferenceOrder
 	default:
@@ -126,11 +127,11 @@ CipherSuiteLoop:
 		case suite != nil:
 			// Don't advertise TLS 1.2-only cipher suites unless
 			// we're attempting TLS 1.2.
-			if hello.vers < VersionTLS12 && suite.flags&suiteTLS12 != 0 {
+			if maxVersion < VersionTLS12 && suite.flags&suiteTLS12 != 0 {
 				continue CipherSuiteLoop
 			}
 
-			if config.MinVersion > VersionTLS12 {
+			if minVersion > VersionTLS12 {
 				continue
 			}
 		case suite13 != nil:
@@ -165,10 +166,8 @@ CipherSuiteLoop:
 	}
 
 	if maxVersion >= VersionTLS12 {
-		hello.supportedSignatureAlgorithms = config.signatureAlgorithmsPreferences()
-	}
-	if testingOnlyForceClientHelloSignatureAlgorithms != nil {
-		hello.supportedSignatureAlgorithms = testingOnlyForceClientHelloSignatureAlgorithms
+		hello.supportedSignatureAlgorithms = supportedSignatureAlgorithms(minVersion)
+		hello.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithmsCert()
 	}
 
 	supportedCurves := config.curvePreferences(maxVersion)
@@ -357,6 +356,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 	// This may be a renegotiation handshake, in which case some fields
 	// need to be reset.
 	c.didResume = false
+	c.curveID = 0
 
 	hello, keyShareKeys, ech, err := c.makeClientHello()
 	if err != nil {
@@ -733,6 +733,19 @@ func (hs *clientHandshakeState) handshake() error {
 		c.out.cipher = nil
 	}
 
+	// If we did not load a session (hs.session == nil), but we did set a
+	// session ID in the transmitted client hello (hs.hello.sessionId != nil),
+	// it means we tried to negotiate TLS 1.3 and sent a random session ID as a
+	// compatibility measure (see RFC 8446, Section 4.1.2).
+	//
+	// Since we're now handshaking for TLS 1.2, if the server echoed the
+	// transmitted ID back to us, we know mischief is afoot: the session ID
+	// was random and can't possibly be recognized by the server.
+	if hs.session == nil && hs.hello.sessionId != nil && bytes.Equal(hs.hello.sessionId, hs.serverHello.sessionId) {
+		c.sendAlert(alertIllegalParameter)
+		return errors.New("tls: server echoed TLS 1.3 compatibility session ID in TLS 1.2")
+	}
+
 	isResume, err := hs.processServerHello()
 	if err != nil {
 		return err
@@ -898,8 +911,9 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 			c.sendAlert(alertIllegalParameter)
 			return err
 		}
-		if len(skx.key) >= 3 && skx.key[0] == 3 /* named curve */ {
-			c.curveID = CurveID(binary.BigEndian.Uint16(skx.key[1:]))
+		if keyAgreement, ok := keyAgreement.(*ecdheKeyAgreement); ok {
+			c.curveID = keyAgreement.curveID
+			c.peerSigAlg = keyAgreement.signatureAlgorithm
 		}
 
 		msg, err = c.readHandshake(&hs.finishedHash)
@@ -981,7 +995,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		if c.vers >= VersionTLS12 {
 			signatureAlgorithm, err := selectSignatureScheme(c.vers, chainToSend, certReq.supportedSignatureAlgorithms)
 			if err != nil {
-				c.sendAlert(alertIllegalParameter)
+				c.sendAlert(alertHandshakeFailure)
 				return err
 			}
 			sigType, sigHash, err = typeAndHashFromSignatureScheme(signatureAlgorithm)
@@ -1056,8 +1070,21 @@ func (hs *clientHandshakeState) processServerHello() (bool, error) {
 	}
 
 	if hs.serverHello.compressionMethod != compressionNone {
-		c.sendAlert(alertUnexpectedMessage)
+		c.sendAlert(alertIllegalParameter)
 		return false, errors.New("tls: server selected unsupported compression format")
+	}
+
+	supportsPointFormat := false
+	offeredNonCompressedFormat := false
+	for _, format := range hs.serverHello.supportedPoints {
+		if format == pointFormatUncompressed {
+			supportsPointFormat = true
+		} else {
+			offeredNonCompressedFormat = true
+		}
+	}
+	if !supportsPointFormat && offeredNonCompressedFormat {
+		return false, errors.New("tls: server offered only incompatible point formats")
 	}
 
 	if c.handshakes == 0 && hs.serverHello.secureRenegotiationSupported {
@@ -1110,14 +1137,14 @@ func (hs *clientHandshakeState) processServerHello() (bool, error) {
 	hs.masterSecret = hs.session.secret
 	c.extMasterSecret = hs.session.extMasterSecret
 	c.peerCertificates = hs.session.peerCertificates
-	c.activeCertHandles = hs.c.activeCertHandles
 	c.verifiedChains = hs.session.verifiedChains
 	c.ocspResponse = hs.session.ocspResponse
 	// Let the ServerHello SCTs override the session SCTs from the original
-	// connection, if any are provided
+	// connection, if any are provided.
 	if len(c.scts) == 0 && len(hs.session.scts) != 0 {
 		c.scts = hs.session.scts
 	}
+	c.curveID = hs.session.curveID
 
 	return true, nil
 }
@@ -1264,23 +1291,21 @@ func checkKeySize(n int) (max int, ok bool) {
 // verifyServerCertificate parses and verifies the provided chain, setting
 // c.verifiedChains and c.peerCertificates or sending the appropriate alert.
 func (c *Conn) verifyServerCertificate(certificates [][]byte) error {
-	activeHandles := make([]*activeCert, len(certificates))
 	certs := make([]*x509.Certificate, len(certificates))
 	for i, asn1Data := range certificates {
 		cert, err := globalCertCache.newCert(asn1Data)
 		if err != nil {
-			c.sendAlert(alertBadCertificate)
+			c.sendAlert(alertDecodeError)
 			return errors.New("tls: failed to parse certificate from server: " + err.Error())
 		}
-		if cert.cert.PublicKeyAlgorithm == x509.RSA {
-			n := cert.cert.PublicKey.(*rsa.PublicKey).N.BitLen()
+		if cert.PublicKeyAlgorithm == x509.RSA {
+			n := cert.PublicKey.(*rsa.PublicKey).N.BitLen()
 			if max, ok := checkKeySize(n); !ok {
 				c.sendAlert(alertBadCertificate)
 				return fmt.Errorf("tls: server sent certificate containing RSA key larger than %d bits", max)
 			}
 		}
-		activeHandles[i] = cert
-		certs[i] = cert.cert
+		certs[i] = cert
 	}
 
 	echRejected := c.config.EncryptedClientHelloConfigList != nil && !c.echAccepted
@@ -1335,7 +1360,6 @@ func (c *Conn) verifyServerCertificate(certificates [][]byte) error {
 		return fmt.Errorf("tls: server's certificate contains an unsupported type of public key: %T", certs[0].PublicKey)
 	}
 
-	c.activeCertHandles = activeHandles
 	c.peerCertificates = certs
 
 	if c.config.VerifyPeerCertificate != nil && !echRejected {

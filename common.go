@@ -258,6 +258,11 @@ type ConnectionState struct {
 	// TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, TLS_AES_128_GCM_SHA256).
 	CipherSuite uint16
 
+	// CurveID is the key exchange mechanism used for the connection. The name
+	// refers to elliptic curves for legacy reasons, see [CurveID]. If a legacy
+	// RSA key exchange is used, this value is zero.
+	CurveID CurveID
+
 	// NegotiatedProtocol is the application protocol negotiated with ALPN.
 	NegotiatedProtocol string
 
@@ -322,9 +327,9 @@ type ConnectionState struct {
 	// testingOnlyDidHRR is true if a HelloRetryRequest was sent/received.
 	testingOnlyDidHRR bool
 
-	// testingOnlyCurveID is the selected CurveID, or zero if an RSA exchanges
-	// is performed.
-	testingOnlyCurveID CurveID
+	// testingOnlyPeerSignatureAlgorithm is the signature algorithm used by the
+	// peer to sign the handshake. It is not set for resumed connections.
+	testingOnlyPeerSignatureAlgorithm SignatureScheme
 }
 
 // ExportKeyingMaterial returns length bytes of exported key material in a new
@@ -335,8 +340,7 @@ type ConnectionState struct {
 //
 // Exporting key material without Extended Master Secret or TLS 1.3 was disabled
 // in Go 1.22 due to security issues (see the Security Considerations sections
-// of RFC 5705 and RFC 7627), but can be re-enabled with the GODEBUG setting
-// tlsunsafeekm=1.
+// of RFC 5705 and RFC 7627).
 func (cs *ConnectionState) ExportKeyingMaterial(label string, context []byte, length int) ([]byte, error) {
 	return cs.ekm(label, context, length)
 }
@@ -942,6 +946,20 @@ type Config struct {
 	// when ECH is rejected, even if set, and InsecureSkipVerify is ignored.
 	EncryptedClientHelloRejectionVerify func(ConnectionState) error
 
+	// GetEncryptedClientHelloKeys, if not nil, is called when by a server when
+	// a client attempts ECH.
+	//
+	// If GetEncryptedClientHelloKeys is not nil, [EncryptedClientHelloKeys] is
+	// ignored.
+	//
+	// If GetEncryptedClientHelloKeys returns an error, the handshake will be
+	// aborted and the error will be returned. Otherwise,
+	// GetEncryptedClientHelloKeys must return a non-nil slice of
+	// [EncryptedClientHelloKey] that represents the acceptable ECH keys.
+	//
+	// For further details, see [EncryptedClientHelloKeys].
+	GetEncryptedClientHelloKeys func(*ClientHelloInfo) ([]EncryptedClientHelloKey, error)
+
 	// EncryptedClientHelloKeys are the ECH keys to use when a client
 	// attempts ECH.
 	//
@@ -951,6 +969,9 @@ type Config struct {
 	// If a client attempts ECH, but it is rejected by the server, the server
 	// will send a list of configs to retry based on the set of
 	// EncryptedClientHelloKeys which have the SendAsRetry field set.
+	//
+	// If GetEncryptedClientHelloKeys is non-nil, EncryptedClientHelloKeys is
+	// ignored.
 	//
 	// On the client side, this field is ignored. In order to configure ECH for
 	// clients, see the EncryptedClientHelloConfigList field.
@@ -976,7 +997,7 @@ type EncryptedClientHelloKey struct {
 	// must match the config provided to clients byte-for-byte. The config
 	// should only specify the DHKEM(X25519, HKDF-SHA256) KEM ID (0x0020), the
 	// HKDF-SHA256 KDF ID (0x0001), and a subset of the following AEAD IDs:
-	// AES-128-GCM (0x0000), AES-256-GCM (0x0001), ChaCha20Poly1305 (0x0002).
+	// AES-128-GCM (0x0001), AES-256-GCM (0x0002), ChaCha20Poly1305 (0x0003).
 	Config []byte
 	// PrivateKey should be a marshalled private key. Currently, we expect
 	// this to be the output of [ecdh.PrivateKey.Bytes].
@@ -1045,6 +1066,7 @@ func (c *Config) Clone() *Config {
 		GetCertificate:                      c.GetCertificate,
 		GetClientCertificate:                c.GetClientCertificate,
 		GetConfigForClient:                  c.GetConfigForClient,
+		GetEncryptedClientHelloKeys:         c.GetEncryptedClientHelloKeys,
 		VerifyPeerCertificate:               c.VerifyPeerCertificate,
 		VerifyConnection:                    c.VerifyConnection,
 		RootCAs:                             c.RootCAs,
@@ -1139,6 +1161,7 @@ func (c *Config) ticketKeys(configForClient *Config) []ticketKey {
 	if configForClient != nil {
 		configForClient.mutex.RLock()
 		if configForClient.SessionTicketsDisabled {
+			configForClient.mutex.RUnlock()
 			return nil
 		}
 		configForClient.initLegacySessionTicketKeyRLocked()
@@ -1232,12 +1255,20 @@ func (c *Config) time() time.Time {
 	return t()
 }
 
-func (c *Config) cipherSuites() []uint16 {
+func (c *Config) cipherSuites(aesGCMPreferred bool) []uint16 {
 	if len(c.CipherSuites) > 0 {
-		return c.CipherSuites
+		return slices.DeleteFunc(supportedCipherSuites(aesGCMPreferred), func(id uint16) bool {
+			return !slices.Contains(c.CipherSuites, id)
+		})
 	}
 
-	return defaultCipherSuites()
+	return defaultCipherSuites(aesGCMPreferred)
+}
+
+// supportedCipherSuites returns the supported TLS 1.0–1.2 cipher suites in an
+// undefined order. For preference ordering, use [Config.cipherSuites].
+func (c *Config) supportedCipherSuites() []uint16 {
+	return c.cipherSuites(false)
 }
 
 var supportedVersions = []uint16{
@@ -1252,6 +1283,8 @@ var supportedVersions = []uint16{
 const roleClient = true
 const roleServer = false
 
+// supportedVersions returns the list of supported TLS versions, sorted from
+// highest to lowest (and hence also in preference order).
 func (c *Config) supportedVersions(isClient bool) []uint16 {
 	if c.SupportedVersions != nil {
 		return c.SupportedVersions
@@ -1312,12 +1345,7 @@ func (c *Config) curvePreferences(version uint16) []CurveID {
 }
 
 func (c *Config) supportsCurve(version uint16, curve CurveID) bool {
-	for _, cc := range c.curvePreferences(version) {
-		if cc == curve {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.curvePreferences(version), curve)
 }
 
 var defaultCertCompressionPreferences = []CertCompressionAlgorithm{Zlib, Brotli, Zstd}
@@ -1337,9 +1365,11 @@ func (c *Config) certCompressionPreferences() []CertCompressionAlgorithm {
 	return c.CertCompressionPreferences
 }
 
-func (c *Config) signatureAlgorithmsPreferences() []SignatureScheme {
+func (c *Config) signatureAlgorithmsPreferences(minVers uint16) []SignatureScheme {
 	if c == nil || len(c.SignatureAlgorithmsPreferences) == 0 {
-		return defaultSupportedSignatureAlgorithms
+		return slices.DeleteFunc(defaultSupportedSignatureAlgorithms(), func(s SignatureScheme) bool {
+			return isDisabledSignatureAlgorithm(minVers, s, false)
+		})
 	}
 
 	return c.SignatureAlgorithmsPreferences
@@ -1355,23 +1385,18 @@ func (c *Config) supportsCertCompression(algorithm CertCompressionAlgorithm) boo
 }
 
 // mutualVersion returns the protocol version to use given the advertised
-// versions of the peer. Priority is given to the peer preference order.
+// versions of the peer. The highest supported version is preferred.
 func (c *Config) mutualVersion(isClient bool, peerVersions []uint16) (uint16, bool) {
 	supportedVersions := c.supportedVersions(isClient)
-	for _, peerVersion := range peerVersions {
-		if IsGREASE(peerVersion) {
+	for _, v := range supportedVersions {
+		if IsGREASE(v) {
 			continue
 		}
 
-		for _, v := range supportedVersions {
-			if IsGREASE(v) {
-				continue
-			}
-
-			if v == peerVersion {
-				return v, true
-			}
+		if slices.Contains(peerVersions, v) {
+			return v, true
 		}
+
 	}
 	return 0, false
 }
@@ -1482,7 +1507,7 @@ func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
 		}
 		// Finally, there needs to be a mutual cipher suite that uses the static
 		// RSA key exchange instead of ECDHE.
-		rsaCipherSuite := selectCipherSuite(chi.CipherSuites, config.cipherSuites(), func(c *cipherSuite) bool {
+		rsaCipherSuite := selectCipherSuite(chi.CipherSuites, config.supportedCipherSuites(), func(c *cipherSuite) bool {
 			if c.flags&suiteECDHE != 0 {
 				return false
 			}
@@ -1513,7 +1538,11 @@ func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
 	}
 
 	// The only signed key exchange we support is ECDHE.
-	if !supportsECDHE(config, vers, chi.SupportedCurves, chi.SupportedPoints) {
+	ecdheSupported, err := supportsECDHE(config, vers, chi.SupportedCurves, chi.SupportedPoints)
+	if err != nil {
+		return err
+	}
+	if !ecdheSupported {
 		return supportsRSAFallback(errors.New("client doesn't support ECDHE, can only use legacy RSA key exchange"))
 	}
 
@@ -1559,7 +1588,7 @@ func (chi *ClientHelloInfo) SupportsCertificate(c *Certificate) error {
 	// Make sure that there is a mutually supported cipher suite that works with
 	// this certificate. Cipher suite selection will then apply the logic in
 	// reverse to pick it. See also serverHandshakeState.cipherSuiteOk.
-	cipherSuite := selectCipherSuite(chi.CipherSuites, config.cipherSuites(), func(c *cipherSuite) bool {
+	cipherSuite := selectCipherSuite(chi.CipherSuites, config.supportedCipherSuites(), func(c *cipherSuite) bool {
 		if c.flags&suiteECDHE == 0 {
 			return false
 		}
@@ -1818,18 +1847,59 @@ func unexpectedMessageError(wanted, got any) error {
 	return fmt.Errorf("tls: received unexpected handshake message of type %T when waiting for %T", got, wanted)
 }
 
-// supportedSignatureAlgorithms returns the supported signature algorithms.
-func supportedSignatureAlgorithms() []SignatureScheme {
-	return defaultSupportedSignatureAlgorithms
+var testingOnlySupportedSignatureAlgorithms []SignatureScheme
+
+// supportedSignatureAlgorithms returns the supported signature algorithms for
+// the given minimum TLS version, to advertise in ClientHello and
+// CertificateRequest messages.
+func supportedSignatureAlgorithms(minVers uint16) []SignatureScheme {
+	sigAlgs := defaultSupportedSignatureAlgorithms()
+	if testingOnlySupportedSignatureAlgorithms != nil {
+		sigAlgs = slices.Clone(testingOnlySupportedSignatureAlgorithms)
+	}
+	return slices.DeleteFunc(sigAlgs, func(s SignatureScheme) bool {
+		return isDisabledSignatureAlgorithm(minVers, s, false)
+	})
 }
 
-func isSupportedSignatureAlgorithm(sigAlg SignatureScheme, supportedSignatureAlgorithms []SignatureScheme) bool {
-	for _, s := range supportedSignatureAlgorithms {
-		if s == sigAlg {
+func isDisabledSignatureAlgorithm(version uint16, s SignatureScheme, isCert bool) bool {
+	// For the _cert extension we include all algorithms, including SHA-1 and
+	// PKCS#1 v1.5, because it's more likely that something on our side will be
+	// willing to accept a *-with-SHA1 certificate (e.g. with a custom
+	// VerifyConnection or by a direct match with the CertPool), than that the
+	// peer would have a better certificate but is just choosing not to send it.
+	// crypto/x509 will refuse to verify important SHA-1 signatures anyway.
+	if isCert {
+		return false
+	}
+
+	// TLS 1.3 removed support for PKCS#1 v1.5 and SHA-1 signatures.
+	if version > VersionTLS12 {
+		sigType, sigHash, _ := typeAndHashFromSignatureScheme(s)
+		if sigType == signaturePKCS1v15 || sigHash == crypto.SHA1 {
+			return true
+		}
+	} else {
+		_, sigHash, _ := typeAndHashFromSignatureScheme(s)
+		if sigHash == crypto.SHA1 {
 			return true
 		}
 	}
+
 	return false
+}
+
+// supportedSignatureAlgorithmsCert returns the supported algorithms for
+// signatures in certificates.
+func supportedSignatureAlgorithmsCert() []SignatureScheme {
+	sigAlgs := defaultSupportedSignatureAlgorithms()
+	return slices.DeleteFunc(sigAlgs, func(s SignatureScheme) bool {
+		return isDisabledSignatureAlgorithm(0, s, true)
+	})
+}
+
+func isSupportedSignatureAlgorithm(sigAlg SignatureScheme, supportedSignatureAlgorithms []SignatureScheme) bool {
+	return slices.Contains(supportedSignatureAlgorithms, sigAlg)
 }
 
 // CertificateVerificationError is returned when certificate verification fails during the handshake.
