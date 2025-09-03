@@ -67,7 +67,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
 	// is the maximum version and the last element is the minimum version.
 	versions := slices.DeleteFunc(supportedVersions, IsGREASE)
 	maxVersion := versions[0]
-	minVersion := versions[len(supportedVersions)-1]
+	minVersion := versions[len(versions)-1]
 
 	hello := &clientHelloMsg{
 		vers:                               maxVersion,
