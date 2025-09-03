@@ -1366,13 +1366,19 @@ func (c *Config) certCompressionPreferences() []CertCompressionAlgorithm {
 }
 
 func (c *Config) signatureAlgorithmsPreferences(minVers uint16) []SignatureScheme {
-	if c == nil || len(c.SignatureAlgorithmsPreferences) == 0 {
-		return slices.DeleteFunc(defaultSupportedSignatureAlgorithms(), func(s SignatureScheme) bool {
-			return isDisabledSignatureAlgorithm(minVers, s, false)
-		})
+	if len(c.SignatureAlgorithmsPreferences) > 0 {
+		return c.SignatureAlgorithmsPreferences
 	}
 
-	return c.SignatureAlgorithmsPreferences
+	return supportedSignatureAlgorithms(minVers)
+}
+
+func (c *Config) signatureAlgorithmsCertPreferences() []SignatureScheme {
+	if len(c.SignatureAlgorithmsPreferences) > 0 {
+		return c.SignatureAlgorithmsPreferences
+	}
+
+	return supportedSignatureAlgorithmsCert()
 }
 
 func (c *Config) supportsCertCompression(algorithm CertCompressionAlgorithm) bool {

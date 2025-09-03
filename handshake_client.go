@@ -166,8 +166,8 @@ CipherSuiteLoop:
 	}
 
 	if maxVersion >= VersionTLS12 {
-		hello.supportedSignatureAlgorithms = supportedSignatureAlgorithms(minVersion)
-		hello.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithmsCert()
+		hello.supportedSignatureAlgorithms = config.signatureAlgorithmsPreferences(minVersion)
+		hello.supportedSignatureAlgorithmsCert = config.signatureAlgorithmsCertPreferences()
 	}
 
 	supportedCurves := config.curvePreferences(maxVersion)
