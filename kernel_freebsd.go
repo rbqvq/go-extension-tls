@@ -33,6 +33,12 @@ const (
 	TCP_TLS_MODE_TOE   = 3
 )
 
+var (
+	kernelCmsgSpace      = unix.CmsgSpace(1)
+	kernelCmsgLen        = unix.CmsgLen(1)
+	kernelCmsgDataOffset = unix.CmsgLen(0)
+)
+
 type kernelInfo struct {
 	TLS     bool
 	TLS_CBC bool
@@ -106,7 +112,6 @@ func (c *Conn) setup() error {
 		return errors.New("tls: internal error: kernel does not support renegotiation")
 	}
 
-	var rawConn syscall.RawConn
 	{
 		conn, ok := c.conn.(*net.TCPConn)
 		if !ok {
@@ -114,7 +119,7 @@ func (c *Conn) setup() error {
 		}
 
 		var err error
-		rawConn, err = conn.SyscallConn()
+		c.rawConn, err = conn.SyscallConn()
 		if err != nil {
 			return nil
 		}
@@ -132,7 +137,7 @@ func (c *Conn) setup() error {
 		return nil
 	}
 
-	rawConn.Control(func(fd uintptr) {
+	c.rawConn.Control(func(fd uintptr) {
 		c.setupRX(fd, in)
 		c.setupTX(fd, out)
 	})
@@ -185,21 +190,6 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 		return 0, nil, c.in.setErrorLocked(errors.New("tls: internal error: set kernelCipher before handshake completed"))
 	}
 
-	var rawConn syscall.RawConn
-	{
-		conn, ok := c.conn.(*net.TCPConn)
-		if !ok {
-			c.sendAlertLocked(alertInternalError)
-			return 0, nil, c.in.setErrorLocked(fmt.Errorf("tls: internal error: set kernelCipher on invalid connection type, want: %T, have: %T", conn, c.conn))
-		}
-
-		var err error
-		rawConn, err = conn.SyscallConn()
-		if err != nil {
-			return 0, nil, err
-		}
-	}
-
 	if c.rawInput.Len() < maxPlaintext {
 		c.rawInput.Grow(maxPlaintext - c.rawInput.Len())
 	}
@@ -207,9 +197,9 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 	data := c.rawInput.Bytes()[:maxPlaintext]
 
 	// cmsg for record type
-	buffer := make([]byte, unix.CmsgSpace(1))
+	buffer := make([]byte, kernelCmsgSpace)
 	cmsg := (*unix.Cmsghdr)(unsafe.Pointer(&buffer[0]))
-	cmsg.SetLen(unix.CmsgLen(1))
+	cmsg.SetLen(kernelCmsgLen)
 
 	var iov unix.Iovec
 	iov.Base = &data[0]
@@ -223,12 +213,13 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 
 	var n int
 	var err error
-	er := rawConn.Read(func(fd uintptr) bool {
+	er := c.rawConn.Read(func(fd uintptr) bool {
 		n, err = recvmsg(int(fd), &msg, 0)
 		return err != unix.EAGAIN
 	})
 	if er != nil {
-		return 0, nil, er
+		c.sendAlert(alertInternalError)
+		return 0, nil, c.in.setErrorLocked(er)
 	}
 
 	switch err {
@@ -240,11 +231,12 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 	case syscall.EBADMSG:
 		return 0, nil, c.in.setErrorLocked(c.sendAlert(alertBadRecordMAC))
 	default:
-		return 0, nil, err
+		c.sendAlert(alertInternalError)
+		return 0, nil, c.in.setErrorLocked(err)
 	}
 
 	if n <= 0 {
-		return 0, nil, io.EOF
+		return 0, nil, c.in.setErrorLocked(io.EOF)
 	}
 
 	if cmsg.Level == unix.IPPROTO_TCP && cmsg.Type == TLS_GET_RECORD {
@@ -260,26 +252,11 @@ func (c *Conn) writeKernelRecord(typ recordType, data []byte) (int, error) {
 		return c.write(data)
 	}
 
-	var rawConn syscall.RawConn
-	{
-		conn, ok := c.conn.(*net.TCPConn)
-		if !ok {
-			c.sendAlertLocked(alertInternalError)
-			return 0, c.out.setErrorLocked(fmt.Errorf("tls: internal error: set kernelCipher on invalid connection type, want: %T, have: %T", conn, c.conn))
-		}
-
-		var err error
-		rawConn, err = conn.SyscallConn()
-		if err != nil {
-			return 0, err
-		}
-	}
-
 	// cmsg for record type
-	buffer := make([]byte, unix.CmsgSpace(1))
+	buffer := make([]byte, kernelCmsgSpace)
 	cmsg := (*unix.Cmsghdr)(unsafe.Pointer(&buffer[0]))
-	cmsg.SetLen(unix.CmsgLen(1))
-	buffer[unix.CmsgLen(0)] = byte(typ)
+	cmsg.SetLen(kernelCmsgLen)
+	buffer[kernelCmsgDataOffset] = byte(typ)
 	cmsg.Level = unix.IPPROTO_TCP
 	cmsg.Type = TLS_SET_RECORD_TYPE
 
@@ -295,7 +272,7 @@ func (c *Conn) writeKernelRecord(typ recordType, data []byte) (int, error) {
 
 	var n int
 	var err error
-	ew := rawConn.Write(func(fd uintptr) bool {
+	ew := c.rawConn.Write(func(fd uintptr) bool {
 		n, err = sendmsg(int(fd), &msg, 0)
 		return err != unix.EAGAIN
 	})
@@ -343,40 +320,9 @@ func (c *Conn) ReadFrom(r io.Reader) (int64, error) {
 	return io.Copy(c.conn, r)
 }
 
-func (c *Conn) WriteTo(w io.Writer) (int64, error) {
-	if err := c.Handshake(); err != nil {
-		return 0, err
-	}
-
-	c.in.Lock()
-	defer c.in.Unlock()
-
-	if !c.in.usingKernel() {
-		c.in.Unlock()
-		n, err := io.Copy(w, &wrappedConn{c})
-		c.in.Lock()
-		return n, err
-	}
-
-	if err := c.in.err; err != nil {
-		return 0, err
-	}
-
-	var written int64
-	if c.input.Len() > 0 {
-		n, err := c.input.WriteTo(w)
-		written += n
-
-		if err != nil {
-			return written, err
-		}
-	}
-
-	n, err := io.Copy(w, c.conn)
-	written += n
-
-	return written, err
-}
+// FreeBSD does not implement WriteTo.
+// Record type are discarded on read calls instead of returning an error like on Linux.
+// This can cause control and data messages to be mixed up.
 
 //go:linkname recvmsg golang.org/x/sys/unix.recvmsg
 func recvmsg(fd int, msg *unix.Msghdr, flags int) (n int, err error)

@@ -6,7 +6,6 @@ package tls
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -22,11 +21,17 @@ import (
 const (
 	TLS_TX               = 1
 	TLS_RX               = 2
-	TLS_TX_ZEROCOPY_RO   = 3 // TX zerocopy (only sendfile now)
-	TLS_RX_EXPECT_NO_PAD = 4 // Attempt opportunistic zero-copy, TLS 1.3 only
+	TLS_TX_ZEROCOPY_RO   = 3
+	TLS_RX_EXPECT_NO_PAD = 4
 
 	TLS_SET_RECORD_TYPE = 1
 	TLS_GET_RECORD_TYPE = 2
+)
+
+var (
+	kernelCmsgSpace      = unix.CmsgSpace(1)
+	kernelCmsgLen        = unix.CmsgLen(1)
+	kernelCmsgDataOffset = unix.CmsgLen(0)
 )
 
 type kernelInfo struct {
@@ -136,7 +141,6 @@ func (c *Conn) setup() error {
 		return errors.New("tls: internal error: kernel does not support renegotiation")
 	}
 
-	var rawConn syscall.RawConn
 	{
 		conn, ok := c.conn.(*net.TCPConn)
 		if !ok {
@@ -144,7 +148,7 @@ func (c *Conn) setup() error {
 		}
 
 		var err error
-		rawConn, err = conn.SyscallConn()
+		c.rawConn, err = conn.SyscallConn()
 		if err != nil {
 			return nil
 		}
@@ -162,7 +166,7 @@ func (c *Conn) setup() error {
 		return nil
 	}
 
-	rawConn.Control(func(fd uintptr) {
+	c.rawConn.Control(func(fd uintptr) {
 		err := syscall.SetsockoptString(int(fd), unix.SOL_TCP, unix.TCP_ULP, "tls")
 		if err != nil {
 			return
@@ -199,22 +203,13 @@ func (c *Conn) resetupRX() error {
 		return errors.New("tls: internal error: kernel does not support rekey")
 	}
 
-	conn, ok := c.conn.(*net.TCPConn)
-	if !ok {
-		return fmt.Errorf("tls: internal error: set kernelCipher on invalid connection type, want: %T, have: %T", conn, c.conn)
-	}
-
-	rawConn, err := conn.SyscallConn()
-	if err != nil {
-		return err
-	}
-
 	crypto := c.in.kernelCipher(c.cipherSuite, true)
 	if crypto == nil {
 		return errors.New("tls: internal error: set kernelCipher on unsupported tls session")
 	}
 
-	er := rawConn.Control(func(fd uintptr) {
+	var err error
+	er := c.rawConn.Control(func(fd uintptr) {
 		err = syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_RX, crypto.String())
 	})
 	if er != nil {
@@ -249,16 +244,6 @@ func (c *Conn) resetupTX() (resetup, error) {
 		return nil, errors.New("tls: internal error: kernel does not support rekey")
 	}
 
-	conn, ok := c.conn.(*net.TCPConn)
-	if !ok {
-		return nil, fmt.Errorf("tls: internal error: set kernelCipher on invalid connection type, want: %T, have: %T", conn, c.conn)
-	}
-
-	rawConn, err := conn.SyscallConn()
-	if err != nil {
-		return nil, err
-	}
-
 	crypto := c.out.kernelCipher(c.cipherSuite, false)
 	if crypto == nil {
 		return nil, errors.New("tls: internal error: set kernelCipher on unsupported tls session")
@@ -266,7 +251,7 @@ func (c *Conn) resetupTX() (resetup, error) {
 
 	return func() error {
 		var err error
-		er := rawConn.Control(func(fd uintptr) {
+		er := c.rawConn.Control(func(fd uintptr) {
 			err = syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_TX, crypto.String())
 		})
 		if er != nil {
@@ -282,21 +267,6 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 		return 0, nil, c.in.setErrorLocked(errors.New("tls: internal error: set kernelCipher before handshake completed"))
 	}
 
-	var rawConn syscall.RawConn
-	{
-		conn, ok := c.conn.(*net.TCPConn)
-		if !ok {
-			c.sendAlertLocked(alertInternalError)
-			return 0, nil, c.in.setErrorLocked(fmt.Errorf("tls: internal error: set kernelCipher on invalid connection type, want: %T, have: %T", conn, c.conn))
-		}
-
-		var err error
-		rawConn, err = conn.SyscallConn()
-		if err != nil {
-			return 0, nil, err
-		}
-	}
-
 	if c.rawInput.Len() < maxPlaintext {
 		c.rawInput.Grow(maxPlaintext - c.rawInput.Len())
 	}
@@ -304,9 +274,9 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 	data := c.rawInput.Bytes()[:maxPlaintext]
 
 	// cmsg for record type
-	buffer := make([]byte, unix.CmsgSpace(1))
+	buffer := make([]byte, kernelCmsgSpace)
 	cmsg := (*unix.Cmsghdr)(unsafe.Pointer(&buffer[0]))
-	cmsg.SetLen(unix.CmsgLen(1))
+	cmsg.SetLen(kernelCmsgLen)
 
 	var iov unix.Iovec
 	iov.Base = &data[0]
@@ -320,12 +290,22 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 
 	var n int
 	var err error
-	er := rawConn.Read(func(fd uintptr) bool {
+	er := c.rawConn.Read(func(fd uintptr) bool {
 		n, err = recvmsg(int(fd), &msg, 0)
-		return err != unix.EAGAIN
+		if err != unix.EAGAIN {
+			return true
+		}
+
+		if c.spliceError != nil {
+			err = c.spliceError
+			return true
+		}
+
+		return false
 	})
 	if er != nil {
-		return 0, nil, er
+		c.sendAlert(alertInternalError)
+		return 0, nil, c.in.setErrorLocked(er)
 	}
 	switch err {
 	case nil:
@@ -336,12 +316,15 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 	case syscall.EBADMSG:
 		return 0, nil, c.in.setErrorLocked(c.sendAlert(alertBadRecordMAC))
 	default:
-		return 0, nil, err
+		c.sendAlert(alertInternalError)
+		return 0, nil, c.in.setErrorLocked(err)
 	}
 
 	if n <= 0 {
-		return 0, nil, io.EOF
+		return 0, nil, c.in.setErrorLocked(io.EOF)
 	}
+
+	c.spliceError = nil
 
 	if cmsg.Level == unix.SOL_TLS && cmsg.Type == TLS_GET_RECORD_TYPE {
 		typ := recordType(buffer[unix.CmsgLen(0)])
@@ -356,26 +339,11 @@ func (c *Conn) writeKernelRecord(typ recordType, data []byte) (int, error) {
 		return c.write(data)
 	}
 
-	var rawConn syscall.RawConn
-	{
-		conn, ok := c.conn.(*net.TCPConn)
-		if !ok {
-			c.sendAlertLocked(alertInternalError)
-			return 0, c.out.setErrorLocked(fmt.Errorf("tls: internal error: set kernelCipher on invalid connection type, want: %T, have: %T", conn, c.conn))
-		}
-
-		var err error
-		rawConn, err = conn.SyscallConn()
-		if err != nil {
-			return 0, err
-		}
-	}
-
 	// cmsg for record type
-	buffer := make([]byte, unix.CmsgSpace(1))
+	buffer := make([]byte, kernelCmsgSpace)
 	cmsg := (*unix.Cmsghdr)(unsafe.Pointer(&buffer[0]))
-	cmsg.SetLen(unix.CmsgLen(1))
-	buffer[unix.CmsgLen(0)] = byte(typ)
+	cmsg.SetLen(kernelCmsgLen)
+	buffer[kernelCmsgDataOffset] = byte(typ)
 	cmsg.Level = unix.SOL_TLS
 	cmsg.Type = TLS_SET_RECORD_TYPE
 
@@ -391,7 +359,7 @@ func (c *Conn) writeKernelRecord(typ recordType, data []byte) (int, error) {
 
 	var n int
 	var err error
-	ew := rawConn.Write(func(fd uintptr) bool {
+	ew := c.rawConn.Write(func(fd uintptr) bool {
 		n, err = sendmsg(int(fd), &msg, 0)
 		return err != unix.EAGAIN
 	})
@@ -421,19 +389,19 @@ func (c *Conn) ReadFrom(r io.Reader) (int64, error) {
 	c.out.Lock()
 	defer c.out.Unlock()
 
-	if !c.out.usingKernel() {
-		c.out.Unlock()
-		n, err := io.Copy(&wrappedConn{c}, r)
-		c.out.Lock()
-		return n, err
-	}
-
 	if err := c.out.err; err != nil {
 		return 0, err
 	}
 
 	if c.closeNotifySent {
 		return 0, errShutdown
+	}
+
+	if !c.out.usingKernel() {
+		c.out.Unlock()
+		n, err := io.Copy(&wrappedConn{c}, r)
+		c.out.Lock()
+		return n, err
 	}
 
 	return io.Copy(c.conn, r)
@@ -447,6 +415,10 @@ func (c *Conn) WriteTo(w io.Writer) (int64, error) {
 	c.in.Lock()
 	defer c.in.Unlock()
 
+	if err := c.in.err; err != nil {
+		return 0, err
+	}
+
 	if !c.in.usingKernel() {
 		c.in.Unlock()
 		n, err := io.Copy(w, &wrappedConn{c})
@@ -454,12 +426,7 @@ func (c *Conn) WriteTo(w io.Writer) (int64, error) {
 		return n, err
 	}
 
-	if err := c.in.err; err != nil {
-		return 0, err
-	}
-
 	var written int64
-
 	if c.input.Len() > 0 {
 		n, err := c.input.WriteTo(w)
 		written += n
@@ -470,14 +437,20 @@ func (c *Conn) WriteTo(w io.Writer) (int64, error) {
 	}
 
 	for {
+		// TODO: replace io.Copy to custom splice impl to fix -EINVAL handle.
 		n, err := io.Copy(w, c.conn)
 		written += n
 		switch {
 		case errors.Is(err, syscall.EINVAL):
-			err = nil
+			// splice receive control msg or bad protocol version will return -EINVAL, but [internal/poll.Splice] cannot handle it correctly
+			// If first call spliceDrain return -EINVAL (bad protocol version), it will fallback to generic copy and never reached here
+			// call recvmsg() will return -EAGAIN, then generic copy will blocking until connection close
 
-			// splice receive control msg will return -EINVAL
-			// if receive bad protocol version, splice will blocking until conenction disconnect
+			c.spliceError = syscall.EINVAL
+			fallthrough
+		case errors.Is(err, syscall.EIO):
+			// splice receive handshake msg will return -EIO
+
 			err := c.readRecord()
 			if err != nil {
 				return written, err
@@ -498,13 +471,12 @@ func (c *Conn) WriteTo(w io.Writer) (int64, error) {
 				}
 			}
 		case errors.Is(err, syscall.EMSGSIZE):
-			err = c.in.setErrorLocked(c.sendAlert(alertRecordOverflow))
+			return written, c.in.setErrorLocked(c.sendAlert(alertRecordOverflow))
 		case errors.Is(err, syscall.EBADMSG):
-			err = c.in.setErrorLocked(c.sendAlert(alertBadRecordMAC))
-		}
-
-		if err != nil {
-			return written, err
+			return written, c.in.setErrorLocked(c.sendAlert(alertBadRecordMAC))
+		default:
+			c.sendAlert(alertInternalError)
+			return written, c.in.setErrorLocked(err)
 		}
 	}
 }

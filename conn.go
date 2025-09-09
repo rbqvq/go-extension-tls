@@ -19,6 +19,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -132,6 +133,10 @@ type Conn struct {
 
 	// earlyNotify is a message channel for 0RTT handshake status
 	earlyNotify *sync.Cond
+
+	// kernel tls
+	rawConn     syscall.RawConn
+	spliceError error // for RX only
 
 	// activeCall indicates whether Close has been call in the low bit.
 	// the rest of the bits are the number of goroutines in Conn.Write.
@@ -1419,7 +1424,7 @@ func (c *Conn) handleRenegotiation() error {
 		return errors.New("tls: unknown Renegotiation value")
 	}
 
-	if c.in.usingKernel() || c.KernelTX() {
+	if c.rawConn != nil {
 		c.sendAlert(alertNoRenegotiation)
 		return errors.New("tls: internal error: kernel does not support renegotiation")
 	}
