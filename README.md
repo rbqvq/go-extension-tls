@@ -13,10 +13,8 @@ This repository is an extension of the golang standard library [crypto/go](https
 - Compressed certificate
 - Application-Layer Protocol Settings (ALPS)
 - GREASE
-- Custom cipher suites order
-- Custom cipher suites in tls 1.3
-- Custom supported version list
 - Custom extension
+- Custom fingerprint via [tlsfinger](https://gitlab.com/go-extension/tlsfinger)
 
 # Special thanks
 
