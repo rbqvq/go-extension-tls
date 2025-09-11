@@ -22,7 +22,9 @@ import (
 
 	"github.com/RyuaNerin/go-krypto/aria"
 	"github.com/pedroalbanese/camellia"
+	"github.com/tjfoc/gmsm/sm4"
 	ccm "gitlab.com/go-extension/aes-ccm"
+	ehash "gitlab.com/go-extension/hash"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -56,6 +58,8 @@ var (
 // and might not match those returned by this function.
 func CipherSuites() []*CipherSuite {
 	return []*CipherSuite{
+		{TLS_SM4_GCM_SM3, "TLS_SM4_GCM_SM3", supportedOnlyTLS13, false},
+		{TLS_SM4_CCM_SM3, "TLS_SM4_CCM_SM3", supportedOnlyTLS13, false},
 		{TLS_AES_128_GCM_SHA256, "TLS_AES_128_GCM_SHA256", supportedOnlyTLS13, false},
 		{TLS_AES_256_GCM_SHA384, "TLS_AES_256_GCM_SHA384", supportedOnlyTLS13, false},
 		{TLS_CHACHA20_POLY1305_SHA256, "TLS_CHACHA20_POLY1305_SHA256", supportedOnlyTLS13, false},
@@ -268,7 +272,7 @@ type cipherSuiteTLS13 struct {
 	id     uint16
 	keyLen int
 	aead   func(key, fixedNonce []byte) aead
-	hash   crypto.Hash
+	hash   ehash.Hasher
 }
 
 var cipherSuitesTLS13 = []*cipherSuiteTLS13{ // TODO: replace with a map.
@@ -277,6 +281,8 @@ var cipherSuitesTLS13 = []*cipherSuiteTLS13{ // TODO: replace with a map.
 	{TLS_AES_128_CCM_8_SHA256, 16, aeadAESCCM8TLS13, crypto.SHA256},
 	{TLS_CHACHA20_POLY1305_SHA256, 32, aeadChaCha20Poly1305, crypto.SHA256},
 	{TLS_AES_256_GCM_SHA384, 32, aeadAESGCMTLS13, crypto.SHA384},
+	{TLS_SM4_GCM_SM3, 16, aeadSM4GCMTLS13, ehash.SM3},
+	{TLS_SM4_CCM_SM3, 16, aeadSM4CCMTLS13, ehash.SM3},
 }
 
 // cipherSuitesPreferenceOrder is the order in which we'll select (on the
@@ -348,6 +354,7 @@ var cipherSuitesPreferenceOrder = []uint16{
 	TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384,
 	TLS_AES_128_CCM_SHA256, TLS_AES_128_CCM_8_SHA256,
 	TLS_CHACHA20_POLY1305_SHA256,
+	TLS_SM4_GCM_SM3, TLS_SM4_CCM_SM3,
 
 	// AEADs w/ ECDHE
 	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
@@ -405,6 +412,7 @@ var cipherSuitesPreferenceOrderNoAES = []uint16{
 	TLS_CHACHA20_POLY1305_SHA256,
 	TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384,
 	TLS_AES_128_CCM_SHA256, TLS_AES_128_CCM_8_SHA256,
+	TLS_SM4_GCM_SM3, TLS_SM4_CCM_SM3,
 
 	// ChaCha20Poly1305
 	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
@@ -836,6 +844,42 @@ func aeadAESCCM8TLS13(key, nonceMask []byte) aead {
 	return ret
 }
 
+func aeadSM4GCMTLS13(key, nonceMask []byte) aead {
+	if len(nonceMask) != aeadNonceLength {
+		panic("tls: internal error: wrong nonce length")
+	}
+	sm4, err := sm4.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	aead, err := cipher.NewGCM(sm4)
+	if err != nil {
+		panic(err)
+	}
+
+	ret := &xorNonceAEAD{aead: aead}
+	copy(ret.nonceMask[:], nonceMask)
+	return ret
+}
+
+func aeadSM4CCMTLS13(key, nonceMask []byte) aead {
+	if len(nonceMask) != aeadNonceLength {
+		panic("tls: internal error: wrong nonce length")
+	}
+	sm4, err := sm4.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	aead, err := ccm.NewCCM(sm4)
+	if err != nil {
+		panic(err)
+	}
+
+	ret := &xorNonceAEAD{aead: aead}
+	copy(ret.nonceMask[:], nonceMask)
+	return ret
+}
+
 type constantTimeHash interface {
 	hash.Hash
 	ConstantTimeSum(b []byte) []byte
@@ -995,6 +1039,8 @@ const (
 	TLS_CHACHA20_POLY1305_SHA256 uint16 = 0x1303
 	TLS_AES_128_CCM_SHA256       uint16 = 0x1304
 	TLS_AES_128_CCM_8_SHA256     uint16 = 0x1305
+	TLS_SM4_GCM_SM3              uint16 = 0x00c6
+	TLS_SM4_CCM_SM3              uint16 = 0x00c7
 
 	// TLS_FALLBACK_SCSV isn't a standard cipher suite but an indicator
 	// that the client is doing version fallback. See RFC 7507.

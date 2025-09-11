@@ -1690,6 +1690,18 @@ func TestCipherSuites(t *testing.T) {
 						return +1
 					}
 				}
+				// AES < SM4
+				if strings.Contains(aName, "AES") && strings.Contains(bName, "SM4") {
+					return -1
+				} else if strings.Contains(aName, "SM4") && strings.Contains(bName, "AES") {
+					return +1
+				}
+				// ChaCha20 < SM4
+				if strings.Contains(aName, "CHACHA20") && strings.Contains(bName, "SM4") {
+					return -1
+				} else if strings.Contains(aName, "SM4") && strings.Contains(bName, "CHACHA20") {
+					return +1
+				}
 				// AES-GCM < AES-CCM
 				if strings.Contains(aName, "GCM") && strings.Contains(bName, "CCM") {
 					return -1

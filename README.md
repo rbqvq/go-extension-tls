@@ -7,6 +7,7 @@ This repository is an extension of the golang standard library [crypto/go](https
 - AES CCM cipher
 - ARIA cipher
 - CEMALLIA cipher
+- SM4 cipher
 - Kernel TLS
 - TLS 1.3 0RTT (Early Data)
 - Compressed certificate

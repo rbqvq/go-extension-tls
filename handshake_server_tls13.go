@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	ehash "gitlab.com/go-extension/hash"
 	"gitlab.com/go-extension/hpke"
 	"gitlab.com/go-extension/mlkem768"
 	"golang.org/x/crypto/hkdf"
@@ -600,7 +601,7 @@ func (hs *serverHandshakeStateTLS13) doEarlyHandshake() {
 // cloneHash uses the encoding.BinaryMarshaler and encoding.BinaryUnmarshaler
 // interfaces implemented by standard library hashes to clone the state of in
 // to a new instance of h. It returns nil if the operation fails.
-func cloneHash(in hash.Hash, h crypto.Hash) hash.Hash {
+func cloneHash(in hash.Hash, h ehash.Hasher) hash.Hash {
 	// Recreate the interface to avoid importing encoding.
 	type binaryMarshaler interface {
 		MarshalBinary() (data []byte, err error)

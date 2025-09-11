@@ -37,19 +37,19 @@ const (
 	TLS_CIPHER_CHACHA20_POLY1305_TAG_SIZE     kernelCryptoCipherType = 16
 	TLS_CIPHER_CHACHA20_POLY1305_REC_SEQ_SIZE kernelCryptoCipherType = 8
 
-	// TLS_CIPHER_SM4_GCM              kernelCryptoCipherType = 55
-	// TLS_CIPHER_SM4_GCM_IV_SIZE      kernelCryptoCipherType = 8
-	// TLS_CIPHER_SM4_GCM_KEY_SIZE     kernelCryptoCipherType = 16
-	// TLS_CIPHER_SM4_GCM_SALT_SIZE    kernelCryptoCipherType = 4
-	// TLS_CIPHER_SM4_GCM_TAG_SIZE     kernelCryptoCipherType = 16
-	// TLS_CIPHER_SM4_GCM_REC_SEQ_SIZE kernelCryptoCipherType = 8
+	TLS_CIPHER_SM4_GCM              kernelCryptoCipherType = 55
+	TLS_CIPHER_SM4_GCM_IV_SIZE      kernelCryptoCipherType = 8
+	TLS_CIPHER_SM4_GCM_KEY_SIZE     kernelCryptoCipherType = 16
+	TLS_CIPHER_SM4_GCM_SALT_SIZE    kernelCryptoCipherType = 4
+	TLS_CIPHER_SM4_GCM_TAG_SIZE     kernelCryptoCipherType = 16
+	TLS_CIPHER_SM4_GCM_REC_SEQ_SIZE kernelCryptoCipherType = 8
 
-	// TLS_CIPHER_SM4_CCM              kernelCryptoCipherType = 56
-	// TLS_CIPHER_SM4_CCM_IV_SIZE      kernelCryptoCipherType = 8
-	// TLS_CIPHER_SM4_CCM_KEY_SIZE     kernelCryptoCipherType = 16
-	// TLS_CIPHER_SM4_CCM_SALT_SIZE    kernelCryptoCipherType = 4
-	// TLS_CIPHER_SM4_CCM_TAG_SIZE     kernelCryptoCipherType = 16
-	// TLS_CIPHER_SM4_CCM_REC_SEQ_SIZE kernelCryptoCipherType = 8
+	TLS_CIPHER_SM4_CCM              kernelCryptoCipherType = 56
+	TLS_CIPHER_SM4_CCM_IV_SIZE      kernelCryptoCipherType = 8
+	TLS_CIPHER_SM4_CCM_KEY_SIZE     kernelCryptoCipherType = 16
+	TLS_CIPHER_SM4_CCM_SALT_SIZE    kernelCryptoCipherType = 4
+	TLS_CIPHER_SM4_CCM_TAG_SIZE     kernelCryptoCipherType = 16
+	TLS_CIPHER_SM4_CCM_REC_SEQ_SIZE kernelCryptoCipherType = 8
 
 	TLS_CIPHER_ARIA_GCM_128              kernelCryptoCipherType = 57
 	TLS_CIPHER_ARIA_GCM_128_IV_SIZE      kernelCryptoCipherType = 8
@@ -135,35 +135,35 @@ func (crypto *kernelCryptoChacha20Poly1035) String() string {
 	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
 }
 
-// var _ kernelCrypto = &kernelCryptoSM4GCM{}
+var _ kernelCrypto = &kernelCryptoSM4GCM{}
 
-// type kernelCryptoSM4GCM struct {
-// 	kernelCryptoInfo
-// 	iv      [TLS_CIPHER_SM4_GCM_IV_SIZE]byte
-// 	key     [TLS_CIPHER_SM4_GCM_KEY_SIZE]byte
-// 	salt    [TLS_CIPHER_SM4_GCM_SALT_SIZE]byte
-// 	rec_seq [TLS_CIPHER_SM4_GCM_REC_SEQ_SIZE]byte
-// }
+type kernelCryptoSM4GCM struct {
+	kernelCryptoInfo
+	iv      [TLS_CIPHER_SM4_GCM_IV_SIZE]byte
+	key     [TLS_CIPHER_SM4_GCM_KEY_SIZE]byte
+	salt    [TLS_CIPHER_SM4_GCM_SALT_SIZE]byte
+	rec_seq [TLS_CIPHER_SM4_GCM_REC_SEQ_SIZE]byte
+}
 
-// func (crypto *kernelCryptoSM4GCM) String() string {
-// 	crypto.cipher_type = TLS_CIPHER_SM4_GCM
-// 	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
-// }
+func (crypto *kernelCryptoSM4GCM) String() string {
+	crypto.cipher_type = TLS_CIPHER_SM4_GCM
+	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
+}
 
-// var _ kernelCrypto = &kernelCryptoSM4CCM{}
+var _ kernelCrypto = &kernelCryptoSM4CCM{}
 
-// type kernelCryptoSM4CCM struct {
-// 	kernelCryptoInfo
-// 	iv      [TLS_CIPHER_SM4_CCM_IV_SIZE]byte
-// 	key     [TLS_CIPHER_SM4_CCM_KEY_SIZE]byte
-// 	salt    [TLS_CIPHER_SM4_CCM_SALT_SIZE]byte
-// 	rec_seq [TLS_CIPHER_SM4_CCM_REC_SEQ_SIZE]byte
-// }
+type kernelCryptoSM4CCM struct {
+	kernelCryptoInfo
+	iv      [TLS_CIPHER_SM4_CCM_IV_SIZE]byte
+	key     [TLS_CIPHER_SM4_CCM_KEY_SIZE]byte
+	salt    [TLS_CIPHER_SM4_CCM_SALT_SIZE]byte
+	rec_seq [TLS_CIPHER_SM4_CCM_REC_SEQ_SIZE]byte
+}
 
-// func (crypto *kernelCryptoSM4CCM) String() string {
-// 	crypto.cipher_type = TLS_CIPHER_SM4_CCM
-// 	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
-// }
+func (crypto *kernelCryptoSM4CCM) String() string {
+	crypto.cipher_type = TLS_CIPHER_SM4_CCM
+	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
+}
 
 var _ kernelCrypto = &kernelCryptoARIA128GCM{}
 
@@ -268,6 +268,34 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 		crypto.version = hc.version
 		copy(crypto.key[:], hc.key)
 		copy(crypto.iv[:], hc.iv)
+		crypto.rec_seq = hc.seq
+
+		return crypto
+	case TLS_SM4_GCM_SM3:
+		if !kernel.TLS_SM4 {
+			return nil
+		}
+
+		crypto := new(kernelCryptoSM4GCM)
+
+		crypto.version = hc.version
+		copy(crypto.key[:], hc.key)
+		copy(crypto.iv[:], hc.iv[4:])
+		copy(crypto.salt[:], hc.iv[:4])
+		crypto.rec_seq = hc.seq
+
+		return crypto
+	case TLS_SM4_CCM_SM3:
+		if !kernel.TLS_SM4 {
+			return nil
+		}
+
+		crypto := new(kernelCryptoSM4CCM)
+
+		crypto.version = hc.version
+		copy(crypto.key[:], hc.key)
+		copy(crypto.iv[:], hc.iv[4:])
+		copy(crypto.salt[:], hc.iv[:4])
 		crypto.rec_seq = hc.seq
 
 		return crypto
