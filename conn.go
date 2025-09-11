@@ -437,9 +437,10 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 			if explicitNonceLen > 0 {
 				c.SetIV(payload[:explicitNonceLen])
 				payload = payload[explicitNonceLen:]
+			} else {
+				copy(hc.iv, payload[len(payload)-blockSize:])
 			}
 			c.CryptBlocks(payload, payload)
-
 			// In a limited attempt to protect against CBC padding oracles like
 			// Lucky13, the data past paddingLen (which is secret) is passed to
 			// the MAC function as extra data, to be fed into the HMAC after
@@ -594,6 +595,9 @@ func (hc *halfConn) encrypt(record, payload []byte, rand io.Reader) ([]byte, err
 			c.SetIV(explicitNonce)
 		}
 		c.CryptBlocks(dst, dst)
+		if len(explicitNonce) == 0 {
+			copy(hc.iv, dst[len(dst)-blockSize:])
+		}
 	default:
 		panic("unknown cipher type")
 	}

@@ -104,19 +104,8 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
-		// TODO: CBC TLS 1.0 Offload, its cause Bad Record MAC now
-		if hc.version == VersionTLS10 {
+		if isRX && (hc.version == VersionTLS10 || !kernel.TLS_Version11_12_CBC_RX) {
 			return nil
-		}
-
-		if isRX {
-			if !kernel.TLS_Version11_12_CBC_RX {
-				return nil
-			}
-
-			if hc.version == VersionTLS10 {
-				return nil
-			}
 		}
 
 		crypto.cipher_algorithm = CRYPTO_AES_CBC
@@ -129,19 +118,8 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
-		// TODO: CBC TLS 1.0 Offload, its cause Bad Record MAC now
-		if hc.version == VersionTLS10 {
+		if isRX && !kernel.TLS_Version11_12_CBC_RX {
 			return nil
-		}
-
-		if isRX {
-			if !kernel.TLS_Version11_12_CBC_RX {
-				return nil
-			}
-
-			if hc.version == VersionTLS10 {
-				return nil
-			}
 		}
 
 		crypto.cipher_algorithm = CRYPTO_AES_CBC
@@ -154,19 +132,8 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
-		// TODO: CBC TLS 1.0 Offload, its cause Bad Record MAC now
-		if hc.version == VersionTLS10 {
+		if isRX && !kernel.TLS_Version11_12_CBC_RX {
 			return nil
-		}
-
-		if isRX {
-			if !kernel.TLS_Version11_12_CBC_RX {
-				return nil
-			}
-
-			if hc.version == VersionTLS10 {
-				return nil
-			}
 		}
 
 		crypto.cipher_algorithm = CRYPTO_AES_CBC
