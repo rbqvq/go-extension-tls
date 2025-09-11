@@ -33,9 +33,19 @@ const (
 	TCP_TLS_MODE_TOE   = 3
 )
 
+// tls_get_record
+type kernelGetRecord struct {
+	RecordType    uint8  // uint8_t  tls_type;
+	VersionMajor  uint8  // uint8_t  tls_vmajor;
+	VersionMinjor uint8  // uint8_t  tls_vminor;
+	Length        uint16 // uint16_t tls_length;
+}
+
 var (
-	kernelCmsgSpace      = unix.CmsgSpace(1)
-	kernelCmsgLen        = unix.CmsgLen(1)
+	kernelRecvCmsgSpace  = unix.CmsgSpace(int(unsafe.Sizeof(&kernelGetRecord{})))
+	kernelRecvCmsgLen    = unix.CmsgLen(int(unsafe.Sizeof(&kernelGetRecord{})))
+	kernelSendCmsgSpace  = unix.CmsgSpace(1)
+	kernelSendCmsgLen    = unix.CmsgLen(1)
 	kernelCmsgDataOffset = unix.CmsgLen(0)
 )
 
@@ -197,9 +207,9 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 	data := c.rawInput.Bytes()[:maxPlaintext]
 
 	// cmsg for record type
-	buffer := make([]byte, kernelCmsgSpace)
+	buffer := make([]byte, kernelRecvCmsgSpace)
 	cmsg := (*unix.Cmsghdr)(unsafe.Pointer(&buffer[0]))
-	cmsg.SetLen(kernelCmsgLen)
+	cmsg.SetLen(kernelRecvCmsgLen)
 
 	var iov unix.Iovec
 	iov.Base = &data[0]
@@ -240,8 +250,8 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 	}
 
 	if cmsg.Level == unix.IPPROTO_TCP && cmsg.Type == TLS_GET_RECORD {
-		typ := recordType(buffer[unix.CmsgLen(0)])
-		return typ, data[:n], nil
+		hdr := (*kernelGetRecord)(unsafe.Pointer(&buffer[kernelCmsgDataOffset]))
+		return recordType(hdr.RecordType), data[:n], nil
 	}
 
 	return recordTypeApplicationData, data[:n], nil
@@ -253,9 +263,9 @@ func (c *Conn) writeKernelRecord(typ recordType, data []byte) (int, error) {
 	}
 
 	// cmsg for record type
-	buffer := make([]byte, kernelCmsgSpace)
+	buffer := make([]byte, kernelSendCmsgSpace)
 	cmsg := (*unix.Cmsghdr)(unsafe.Pointer(&buffer[0]))
-	cmsg.SetLen(kernelCmsgLen)
+	cmsg.SetLen(kernelSendCmsgLen)
 	buffer[kernelCmsgDataOffset] = byte(typ)
 	cmsg.Level = unix.IPPROTO_TCP
 	cmsg.Type = TLS_SET_RECORD_TYPE
