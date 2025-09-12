@@ -1738,6 +1738,12 @@ func TestCipherSuites(t *testing.T) {
 			} else if strings.Contains(aName, "RC4") && !strings.Contains(bName, "RC4") {
 				return +1
 			}
+			// * < CBC_SHA384
+			if !strings.Contains(aName, "CBC_SHA384") && strings.Contains(bName, "CBC_SHA384") {
+				return -1
+			} else if strings.Contains(aName, "CBC_SHA384") && !strings.Contains(bName, "CBC_SHA384") {
+				return +1
+			}
 			// * < CBC_SHA256
 			if !strings.Contains(aName, "CBC_SHA256") && strings.Contains(bName, "CBC_SHA256") {
 				return -1
@@ -1778,10 +1784,10 @@ func TestCipherSuites(t *testing.T) {
 					return +1
 				}
 			}
-			// AES < ARIA
-			if strings.Contains(aName, "AES") && strings.Contains(bName, "ARIA") {
+			// AES/ChaCha20 < ARIA
+			if (strings.Contains(aName, "AES") || strings.Contains(aName, "CHACHA20")) && strings.Contains(bName, "ARIA") {
 				return -1
-			} else if strings.Contains(aName, "ARIA") && strings.Contains(bName, "AES") {
+			} else if strings.Contains(aName, "ARIA") && (strings.Contains(bName, "AES") || strings.Contains(bName, "CHACHA20")) {
 				return +1
 			}
 			// ARIA < CAMELLIA
@@ -1790,44 +1796,16 @@ func TestCipherSuites(t *testing.T) {
 			} else if strings.Contains(aName, "CAMELLIA") && strings.Contains(bName, "ARIA") {
 				return +1
 			}
-			// CAMELLIA < ChaCha20
-			if strings.Contains(aName, "CAMELLIA") && strings.Contains(bName, "CHACHA20") {
-				// negative for cipherSuitesPreferenceOrder
-				if i == 0 {
-					return -1
-				} else {
-					return +1
-				}
-			} else if strings.Contains(aName, "CHACHA20") && strings.Contains(bName, "CAMELLIA") {
-				// negative for cipherSuitesPreferenceOrderNoAES
-				if i != 0 {
-					return -1
-				} else {
-					return +1
-				}
-			}
-			// AES-GCM < AES-CCM
+			// GCM < CCM
 			if strings.Contains(aName, "GCM") && strings.Contains(bName, "CCM") {
 				return -1
 			} else if strings.Contains(aName, "CCM") && strings.Contains(bName, "GCM") {
 				return +1
 			}
-			// ARIA-128 < ARIA-256
-			if strings.Contains(aName, "ARIA_128") && strings.Contains(bName, "ARIA_256") {
+			// *-128 < *-256
+			if strings.Contains(aName, "_128_") && strings.Contains(bName, "_256_") {
 				return -1
-			} else if strings.Contains(aName, "ARIA_256") && strings.Contains(bName, "ARIA_128") {
-				return +1
-			}
-			// CAMELLIA-128 < CAMELLIA-256
-			if strings.Contains(aName, "CAMELLIA_128") && strings.Contains(bName, "CAMELLIA_256") {
-				return -1
-			} else if strings.Contains(aName, "CAMELLIA_256") && strings.Contains(bName, "CAMELLIA_128") {
-				return +1
-			}
-			// AES-128 < AES-256
-			if strings.Contains(aName, "AES_128") && strings.Contains(bName, "AES_256") {
-				return -1
-			} else if strings.Contains(aName, "AES_256") && strings.Contains(bName, "AES_128") {
+			} else if strings.Contains(aName, "_256_") && strings.Contains(bName, "_128_") {
 				return +1
 			}
 			// AES-CCM < AES-CCM-8
@@ -1890,6 +1868,7 @@ func http2isBadCipher(cipher uint16) bool {
 		TLS_ECDHE_ECDSA_WITH_RC4_128_SHA,
 		TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
 		TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+		TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
 		TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384,
 		TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256,
 		TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384,
@@ -1900,12 +1879,12 @@ func http2isBadCipher(cipher uint16) bool {
 		TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
 		TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
 		TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+		TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
+		TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384,
 		TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256,
 		TLS_ECDHE_RSA_WITH_ARIA_256_CBC_SHA384,
 		TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256,
-		TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384,
-		TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
-		TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:
+		TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384:
 		return true
 	default:
 		return false
