@@ -21,8 +21,8 @@ import (
 	"golang.org/x/sys/cpu"
 
 	"github.com/RyuaNerin/go-krypto/aria"
+	"github.com/emmansun/gmsm/sm4"
 	"github.com/pedroalbanese/camellia"
-	"github.com/tjfoc/gmsm/sm4"
 	ccm "gitlab.com/go-extension/aes-ccm"
 	ehash "gitlab.com/go-extension/hash"
 	"golang.org/x/crypto/chacha20poly1305"

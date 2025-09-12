@@ -14,11 +14,11 @@ require (
 
 require (
 	github.com/RyuaNerin/go-krypto v1.3.0
+	github.com/emmansun/gmsm v0.32.0
 	github.com/pedroalbanese/camellia v0.0.0-20220911183557-30cc05c20118
 	github.com/pmorjan/kmod v1.1.1
-	github.com/tjfoc/gmsm v1.4.1
 	gitlab.com/go-extension/aes-ccm v0.0.0-20230221065045-e58665ef23c7
-	gitlab.com/go-extension/hash v0.0.0-20250911163350-c735d1c33474
+	gitlab.com/go-extension/hash v0.0.0-20250912170447-263d1d8375e4
 	gitlab.com/go-extension/hpke v0.0.0-20250903154322-ae11394c5e06
 	gitlab.com/go-extension/mlkem768 v0.0.0-20240814071630-937354a2177e
 	gitlab.com/go-extension/rand v0.0.0-20240303103951-707937a049b5
