@@ -614,25 +614,19 @@ var (
 	hasAESGCMHardwareSupport = hasGCMAsmAMD64 || hasGCMAsmARM64 || hasGCMAsmS390X || hasGCMAsmPPC64
 )
 
-var aesCiphers = map[uint16]bool{
+var aesgcmCiphers = map[uint16]bool{
 	// TLS 1.2
-	TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:     true,
-	TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:     true,
-	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:   true,
-	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:   true,
-	TLS_ECDHE_ECDSA_WITH_AES_128_CCM_SHA256:   true,
-	TLS_ECDHE_ECDSA_WITH_AES_256_CCM_SHA256:   true,
-	TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8_SHA256: true,
-	TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8_SHA256: true,
+	TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:   true,
+	TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:   true,
+	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: true,
 	// TLS 1.3
-	TLS_AES_128_GCM_SHA256:   true,
-	TLS_AES_256_GCM_SHA384:   true,
-	TLS_AES_128_CCM_SHA256:   true,
-	TLS_AES_128_CCM_8_SHA256: true,
+	TLS_AES_128_GCM_SHA256: true,
+	TLS_AES_256_GCM_SHA384: true,
 }
 
-// isAESGCMPreferred returns whether we have hardware support for AES-GCM/CCM, and the
-// first known cipher in the peer's preference list is an AES-GCM/CCM cipher,
+// isAESGCMPreferred returns whether we have hardware support for AES-GCM, and the
+// first known cipher in the peer's preference list is an AES-GCM cipher,
 // implying the peer also has hardware support for it.
 func isAESGCMPreferred(ciphers []uint16) bool {
 	if !hasAESGCMHardwareSupport {
@@ -640,10 +634,10 @@ func isAESGCMPreferred(ciphers []uint16) bool {
 	}
 	for _, cID := range ciphers {
 		if c := cipherSuiteByID(cID); c != nil {
-			return aesCiphers[cID]
+			return aesgcmCiphers[cID]
 		}
 		if c := cipherSuiteTLS13ByID(cID); c != nil {
-			return aesCiphers[cID]
+			return aesgcmCiphers[cID]
 		}
 	}
 	return false
