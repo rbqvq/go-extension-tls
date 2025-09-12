@@ -452,7 +452,7 @@ func TestCipherSuitePreference(t *testing.T) {
 		Certificates: testConfig.Certificates,
 		MaxVersion:   VersionTLS12,
 		GetConfigForClient: func(chi *ClientHelloInfo) (*Config, error) {
-			if chi.CipherSuites[3] != TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 {
+			if chi.CipherSuites[0] != TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 {
 				t.Error("the advertised order should not depend on Config.CipherSuites")
 			}
 			return nil, nil

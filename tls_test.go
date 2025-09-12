@@ -1661,6 +1661,10 @@ func TestCipherSuites(t *testing.T) {
 				continue
 			}
 
+			if slices.Contains(c.SupportedVersions, VersionTLS13) {
+				continue
+			}
+
 			if c.Insecure {
 				sawInsecure = true
 			} else if sawInsecure {
@@ -1730,11 +1734,11 @@ func TestCipherSuites(t *testing.T) {
 				t.Fatalf("two ciphersuites are equal by all criteria: %v and %v", aName, bName)
 				panic("unreachable")
 			case aSuite13 != nil: // aSuite13 is TLS 1.3 cipher, bSuite13 is TLS 1.2 cipher
-				// TLS 1.3 < TLS 1.2
-				return -1
-			case bSuite13 != nil: // bSuite13 is TLS 1.3 cipher, aSuite13 is TLS 1.2 cipher
-				// TLS 1.3 < TLS 1.2
+				// TLS 1.2 < TLS 1.3
 				return +1
+			case bSuite13 != nil: // bSuite13 is TLS 1.3 cipher, aSuite13 is TLS 1.2 cipher
+				// TLS 1.2 < TLS 1.3
+				return -1
 			default: // Both TLS 1.2 cipher
 			}
 

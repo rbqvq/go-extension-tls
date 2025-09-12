@@ -299,6 +299,10 @@ var cipherSuitesTLS13 = []*cipherSuiteTLS13{ // TODO: replace with a map.
 // The list is sorted by applying the following priority rules, stopping at the
 // first (most important) applicable one:
 //
+//   - Anything else comes before TLS 1.3
+//
+//     In crypto/tls, the TLS 1.3 suites is appended at the end
+//
 //   - Anything else comes before RC4
 //
 //     RC4 has practically exploitable biases. See https://www.rc4nomore.com.
@@ -369,12 +373,6 @@ var cipherSuitesTLS13 = []*cipherSuiteTLS13{ // TODO: replace with a map.
 //     The relative order of ECDSA and RSA cipher suites doesn't matter,
 //     as they depend on the certificate. Pick one to get a stable order.
 var cipherSuitesPreferenceOrder = []uint16{
-	// TLS 1.3
-	TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384,
-	TLS_AES_128_CCM_SHA256, TLS_AES_128_CCM_8_SHA256,
-	TLS_CHACHA20_POLY1305_SHA256,
-	TLS_SM4_GCM_SM3, TLS_SM4_CCM_SM3,
-
 	// AEADs w/ ECDHE
 	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
@@ -427,15 +425,15 @@ var cipherSuitesPreferenceOrder = []uint16{
 	// RC4
 	TLS_ECDHE_ECDSA_WITH_RC4_128_SHA, TLS_ECDHE_RSA_WITH_RC4_128_SHA,
 	TLS_RSA_WITH_RC4_128_SHA,
+
+	// TLS 1.3
+	TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384,
+	TLS_AES_128_CCM_SHA256, TLS_AES_128_CCM_8_SHA256,
+	TLS_CHACHA20_POLY1305_SHA256,
+	TLS_SM4_GCM_SM3, TLS_SM4_CCM_SM3,
 }
 
 var cipherSuitesPreferenceOrderNoAES = []uint16{
-	// TLS 1.3
-	TLS_CHACHA20_POLY1305_SHA256,
-	TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384,
-	TLS_AES_128_CCM_SHA256, TLS_AES_128_CCM_8_SHA256,
-	TLS_SM4_GCM_SM3, TLS_SM4_CCM_SM3,
-
 	// ChaCha20Poly1305
 	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 
@@ -490,6 +488,12 @@ var cipherSuitesPreferenceOrderNoAES = []uint16{
 	// RC4
 	TLS_ECDHE_ECDSA_WITH_RC4_128_SHA, TLS_ECDHE_RSA_WITH_RC4_128_SHA,
 	TLS_RSA_WITH_RC4_128_SHA,
+
+	// TLS 1.3
+	TLS_CHACHA20_POLY1305_SHA256,
+	TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384,
+	TLS_AES_128_CCM_SHA256, TLS_AES_128_CCM_8_SHA256,
+	TLS_SM4_GCM_SM3, TLS_SM4_CCM_SM3,
 }
 
 var extendedCipherSuites = map[uint16]bool{
