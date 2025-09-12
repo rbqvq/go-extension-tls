@@ -49,7 +49,8 @@ func supportedCipherSuites(aesGCMPreferred bool) []uint16 {
 func defaultCipherSuites(aesGCMPreferred bool) []uint16 {
 	cipherSuites := supportedCipherSuites(aesGCMPreferred)
 	return slices.DeleteFunc(cipherSuites, func(c uint16) bool {
-		return disabledCipherSuites[c] ||
+		return extendedCipherSuites[c] ||
+			disabledCipherSuites[c] ||
 			rsaKexCiphers[c] ||
 			tdesCiphers[c]
 	})

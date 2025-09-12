@@ -1585,6 +1585,13 @@ func TestCipherSuites(t *testing.T) {
 			t.Errorf("%#04x: suite TLS 1.0-1.2, but SupportedVersions is %v", c.id, cc.SupportedVersions)
 		}
 
+		if extendedCipherSuites[c.id] {
+			if slices.Contains(defaultCipherSuites(false), c.id) {
+				t.Errorf("%#04x: extended suite in default list", c.id)
+			}
+			continue
+		}
+
 		if cc.Insecure {
 			if slices.Contains(defaultCipherSuites(false), c.id) {
 				t.Errorf("%#04x: insecure suite in default list", c.id)

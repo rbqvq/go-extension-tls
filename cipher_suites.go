@@ -346,7 +346,7 @@ var cipherSuitesTLS13 = []*cipherSuiteTLS13{ // TODO: replace with a map.
 //     slower, way more complex, and less safe (because it's not constant time)
 //     than AES/ChaCha20Poly1305.
 //
-//	 - GCM comes before CCM
+//   - GCM comes before CCM
 //
 //     The main advantages of GCM are performance and hardware support.
 //     GCM supports parallel processing (both encryption via CTR mode
@@ -492,20 +492,70 @@ var cipherSuitesPreferenceOrderNoAES = []uint16{
 	TLS_RSA_WITH_RC4_128_SHA,
 }
 
+var extendedCipherSuites = map[uint16]bool{
+	// SM4
+	TLS_SM4_GCM_SM3: true,
+	TLS_SM4_CCM_SM3: true,
+
+	// AES CCM
+	TLS_AES_128_CCM_SHA256:                  true,
+	TLS_ECDHE_ECDSA_WITH_AES_128_CCM_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_AES_256_CCM_SHA256: true,
+	TLS_RSA_WITH_AES_128_CCM_SHA256:         true,
+	TLS_RSA_WITH_AES_256_CCM_SHA256:         true,
+
+	// AES CCM 8
+	TLS_AES_128_CCM_8_SHA256:                  true,
+	TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8_SHA256: true,
+	TLS_RSA_WITH_AES_128_CCM_8_SHA256:         true,
+	TLS_RSA_WITH_AES_256_CCM_8_SHA256:         true,
+
+	// ARIA
+	TLS_ECDHE_ECDSA_WITH_ARIA_128_GCM_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_ARIA_256_GCM_SHA384: true,
+	TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384: true,
+	TLS_ECDHE_RSA_WITH_ARIA_128_GCM_SHA256:   true,
+	TLS_ECDHE_RSA_WITH_ARIA_256_GCM_SHA384:   true,
+	TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256:   true,
+	TLS_ECDHE_RSA_WITH_ARIA_256_CBC_SHA384:   true,
+	TLS_RSA_WITH_ARIA_128_GCM_SHA256:         true,
+	TLS_RSA_WITH_ARIA_256_GCM_SHA384:         true,
+	TLS_RSA_WITH_ARIA_128_CBC_SHA256:         true,
+	TLS_RSA_WITH_ARIA_256_CBC_SHA384:         true,
+
+	// CAMELLIA
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_GCM_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_GCM_SHA384: true,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384: true,
+	TLS_ECDHE_RSA_WITH_CAMELLIA_128_GCM_SHA256:   true,
+	TLS_ECDHE_RSA_WITH_CAMELLIA_256_GCM_SHA384:   true,
+	TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256:   true,
+	TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384:   true,
+	TLS_RSA_WITH_CAMELLIA_128_GCM_SHA256:         true,
+	TLS_RSA_WITH_CAMELLIA_256_GCM_SHA384:         true,
+
+	// 3DES
+	TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA: true,
+
+	// CBC_SHA384
+	TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384: true,
+	TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384:   true,
+}
+
 // disabledCipherSuites are not used unless explicitly listed in Config.CipherSuites.
 var disabledCipherSuites = map[uint16]bool{
 	// CBC_SHA256
-	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256: true,
-	TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:   true,
-
-	TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256: true,
-	TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256:   true,
-
+	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256:      true,
+	TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:        true,
+	TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256:     true,
+	TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256:       true,
 	TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256: true,
 	TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256:   true,
-
-	TLS_RSA_WITH_AES_128_CBC_SHA256:  true,
-	TLS_RSA_WITH_ARIA_128_CBC_SHA256: true,
+	TLS_RSA_WITH_AES_128_CBC_SHA256:              true,
+	TLS_RSA_WITH_ARIA_128_CBC_SHA256:             true,
 
 	// CBC_SHA384
 	TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384:     true,
