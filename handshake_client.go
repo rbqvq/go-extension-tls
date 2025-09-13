@@ -63,9 +63,9 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
 	if len(supportedVersions) == 0 {
 		return nil, nil, nil, errors.New("tls: no supported versions satisfy MinVersion and MaxVersion")
 	}
-	// Since supportedVersions is sorted in descending order, the first element
-	// is the maximum version and the last element is the minimum version.
-	versions := slices.DeleteFunc(supportedVersions, IsGREASE)
+
+	versions := slices.DeleteFunc(slices.Clone(supportedVersions), IsGREASE)
+	slices.SortFunc(versions, func(a, b uint16) int { return int(b) - int(a) })
 	maxVersion := versions[0]
 	minVersion := versions[len(versions)-1]
 
@@ -176,14 +176,14 @@ CipherSuiteLoop:
 		if IsGREASE(uint16(curveID)) {
 			groupId := CurveID(c.GREASE())
 			hello.supportedCurves = append(hello.supportedCurves, groupId)
-			if config.maxSupportedVersion(c.isClient) >= VersionTLS13 {
+			if maxVersion >= VersionTLS13 {
 				hello.keyShares = append(hello.keyShares, keyShare{group: groupId, data: []byte{0}})
 			}
 			continue
 		}
 		hello.supportedCurves = append(hello.supportedCurves, curveID)
 
-		if config.maxSupportedVersion(roleClient) < VersionTLS13 || keyShareKeys != nil {
+		if maxVersion < VersionTLS13 || keyShareKeys != nil {
 			continue
 		}
 

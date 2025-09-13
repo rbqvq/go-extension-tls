@@ -1287,7 +1287,7 @@ const roleServer = false
 // highest to lowest (and hence also in preference order).
 func (c *Config) supportedVersions(isClient bool) []uint16 {
 	if c.SupportedVersions != nil {
-		return c.SupportedVersions
+		return slices.Clone(c.SupportedVersions)
 	}
 
 	versions := make([]uint16, 0, len(supportedVersions))
@@ -1310,10 +1310,11 @@ func (c *Config) supportedVersions(isClient bool) []uint16 {
 }
 
 func (c *Config) maxSupportedVersion(isClient bool) uint16 {
-	supportedVersions := slices.DeleteFunc(slices.Clone(c.supportedVersions(isClient)), IsGREASE)
+	supportedVersions := slices.DeleteFunc(c.supportedVersions(isClient), IsGREASE)
 	if len(supportedVersions) == 0 {
 		return 0
 	}
+	slices.SortFunc(supportedVersions, func(a, b uint16) int { return int(b) - int(a) })
 	return supportedVersions[0]
 }
 
