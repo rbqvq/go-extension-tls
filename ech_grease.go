@@ -14,43 +14,13 @@ var (
 		81, 163, 222, 52, 211, 54, 210, 46, 37, 78, 216, 157, 97, 241, 244,
 	}
 
-	defaultHpkeSuite = ECHCipher{KEM: KEM_X25519_HKDF_SHA256, KDF: KDF_HKDF_SHA256, AEAD: AEAD_AES128GCM}
-)
-
-type KEM uint16
-
-const (
-	// RFC 9180, Section 7.2
-	// KEM_X25519_HKDF_SHA256 is a KEM using X25519 Diffie-Hellman function
-	// and HKDF with SHA-256.
-	KEM_X25519_HKDF_SHA256 KEM = 0x20
-)
-
-type KDF uint16
-
-const (
-	// RFC 9180, Section 7.2
-	// KDF_HKDF_SHA256 is a KDF using HKDF with SHA-256.
-	KDF_HKDF_SHA256 KDF = 0x01
-)
-
-type AEAD uint16
-
-const (
-	// RFC 9180, Section 7.2
-
-	// AEAD_AES128GCM is AES-128 block cipher in Galois Counter Mode (GCM).
-	AEAD_AES128GCM AEAD = 0x01
-	// AEAD_AES256GCM is AES-256 block cipher in Galois Counter Mode (GCM).
-	AEAD_AES256GCM AEAD = 0x02
-	// AEAD_ChaCha20Poly1305 is ChaCha20 stream cipher and Poly1305 MAC.
-	AEAD_ChaCha20Poly1305 AEAD = 0x03
+	defaultHpkeSuite = ECHCipher{KEM: hpke.DHKEM_X25519_HKDF_SHA256, KDF: hpke.KDF_HKDF_SHA256, AEAD: hpke.AEAD_AES_128_GCM}
 )
 
 type ECHCipher struct {
-	KEM  KEM
-	KDF  KDF
-	AEAD AEAD
+	KEM  uint16
+	KDF  uint16
+	AEAD uint16
 }
 
 // ECHDummyConfig represents an ECH dummy configuration.
@@ -89,7 +59,7 @@ func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, e
 
 	var dummyPublicKey []byte
 	switch suite.KEM {
-	case KEM_X25519_HKDF_SHA256:
+	case hpke.DHKEM_X25519_HKDF_SHA256:
 		dummyPublicKey = dummyX25519PublicKey
 	default:
 		return fmt.Errorf("tls: dummy ech: invalid kem %#x", suite.KEM)
@@ -97,7 +67,7 @@ func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, e
 
 	var length uint16
 	switch suite.AEAD {
-	case AEAD_AES128GCM, AEAD_AES256GCM, AEAD_ChaCha20Poly1305:
+	case hpke.AEAD_AES_128_GCM, hpke.AEAD_AES_256_GCM, hpke.AEAD_ChaCha20Poly1305:
 		length = ech.helloInnerLen() + 16
 	default:
 		return fmt.Errorf("tls: dummy ech: invalid aead %#x", suite.AEAD)
@@ -108,17 +78,17 @@ func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, e
 		return fmt.Errorf("tls: grease ech: %s", err)
 	}
 
-	echPK, err := hpke.ParseHPKEPublicKey(uint16(suite.KEM), dummyPublicKey)
+	echPK, err := hpke.ParseHPKEPublicKey(suite.KEM, dummyPublicKey)
 	if err != nil {
 		return err
 	}
 
-	encapKey, _, err := hpke.SetupSender(uint16(suite.KEM), uint16(suite.KDF), uint16(suite.AEAD), echPK, nil)
+	encapKey, _, err := hpke.SetupSender(suite.KEM, suite.KDF, suite.AEAD, echPK, nil)
 	if err != nil {
 		return err
 	}
 
-	outer.encryptedClientHello, err = generateOuterECHExt(ech.configId(), uint16(suite.KDF), uint16(suite.AEAD), encapKey, payload)
+	outer.encryptedClientHello, err = generateOuterECHExt(ech.configId(), suite.KDF, suite.AEAD, encapKey, payload)
 	if err != nil {
 		return err
 	}
