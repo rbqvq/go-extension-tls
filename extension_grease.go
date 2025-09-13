@@ -49,7 +49,6 @@ func (extension *GREASEExtension) Clone() Extension {
 // https://tools.ietf.org/html/draft-ietf-tls-grease-01
 const GREASE_PLACEHOLDER = 0x0a0a
 
-// will panic if ssl_grease_last_index[index] is out of bounds.
 func (c *Conn) GREASE() uint16 {
 	grease_bytes := make([]byte, 2)
 	// GREASE value is back from deterministic to random.
@@ -60,14 +59,16 @@ func (c *Conn) GREASE() uint16 {
 	}
 
 	ret := binary.LittleEndian.Uint16(grease_bytes)
-	/* This generates a random value of the form 0xωaωa, for all 0 ≤ ω < 16. */
+	/* This generates a random value of the form 0x?A?A, where ? can be any hex digit */
 	ret = (ret & 0xf0) | 0x0a
 	ret |= ret << 8
 	return ret
 }
 
 func IsGREASE(v uint16) bool {
-	// First byte is same as second byte
-	// and lowest nibble is 0xa
-	return ((v >> 8) == v&0xff) && v&0xf == 0xa
+	// GREASE (Generate Random Extensions And Sustain Extensibility) is a mechanism used by
+	// browsers like Chrome to ensure TLS implementations correctly ignore unknown values.
+	// GREASE values follow a specific pattern: 0x?A?A, where ? can be any hex digit.
+	// These values should be ignored when processing supported TLS versions.
+	return v&0x0F0F == 0x0A0A && v&0xff == v>>8
 }

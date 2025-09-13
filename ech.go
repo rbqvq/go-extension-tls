@@ -399,7 +399,7 @@ func decodeInnerClientHello(outer *clientHelloMsg, encoded []byte) (*clientHello
 		// browsers like Chrome to ensure TLS implementations correctly ignore unknown values.
 		// GREASE values follow a specific pattern: 0x?A0A, where ? can be any hex digit.
 		// These values should be ignored when processing supported TLS versions.
-		if v&0x0F0F == 0x0A0A && v&0xff == v>>8 {
+		if IsGREASE(v) {
 			continue
 		}
 

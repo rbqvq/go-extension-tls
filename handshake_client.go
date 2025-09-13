@@ -292,7 +292,11 @@ CipherSuiteLoop:
 	}
 
 	var ech *echClientContext
-	if c.config.EncryptedClientHelloConfigList != nil {
+	if c.config.EncryptedClientHelloConfigList == nil {
+		if err := generateAndUpdateOuterECHExtension(c.config.rand(), hello, c.config.EncryptedClientHelloDummyConfig); err != nil {
+			return nil, nil, nil, err
+		}
+	} else {
 		if c.config.MinVersion != 0 && c.config.MinVersion < VersionTLS13 {
 			return nil, nil, nil, errors.New("tls: MinVersion must be >= VersionTLS13 if EncryptedClientHelloConfigList is populated")
 		}
@@ -383,13 +387,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		}()
 	}
 
-	if ech == nil {
-		if ech := c.config.EncryptedClientHelloDummyConfig; ech != nil {
-			if err := generateAndUpdateOuterECHExtension(c.config.rand(), hello, ech); err != nil {
-				return err
-			}
-		}
-	} else {
+	if ech != nil {
 		// Split hello into inner and outer
 		ech.innerHello = hello.clone()
 

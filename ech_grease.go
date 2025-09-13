@@ -54,8 +54,12 @@ func (config *ECHDummyConfig) helloInnerLen() uint16 {
 	return config.HelloInnerLens[rand.Crypto.IntN(len(config.HelloInnerLens))]
 }
 
-func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, ech *ECHDummyConfig) error {
-	suite := ech.cipherSuite()
+func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, echConfig *ECHDummyConfig) error {
+	if echConfig == nil {
+		return nil
+	}
+
+	suite := echConfig.cipherSuite()
 
 	var dummyPublicKey []byte
 	switch suite.KEM {
@@ -68,7 +72,7 @@ func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, e
 	var length uint16
 	switch suite.AEAD {
 	case hpke.AEAD_AES_128_GCM, hpke.AEAD_AES_256_GCM, hpke.AEAD_ChaCha20Poly1305:
-		length = ech.helloInnerLen() + 16
+		length = echConfig.helloInnerLen() + 16
 	default:
 		return fmt.Errorf("tls: dummy ech: invalid aead %#x", suite.AEAD)
 	}
@@ -88,7 +92,7 @@ func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, e
 		return err
 	}
 
-	outer.encryptedClientHello, err = generateOuterECHExt(ech.configId(), suite.KDF, suite.AEAD, encapKey, payload)
+	outer.encryptedClientHello, err = generateOuterECHExt(echConfig.configId(), suite.KDF, suite.AEAD, encapKey, payload)
 	if err != nil {
 		return err
 	}
