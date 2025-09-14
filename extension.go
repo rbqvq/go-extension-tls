@@ -37,9 +37,7 @@ var (
 		&SignatureAlgorithmsExtension{},
 		&SignatureAlgorithmsCertExtension{},
 		&ALPNExtension{},
-		&ALPSExtension{},
 		&SupportedVersionsExtension{},
-		&CompressedCertificateExtension{},
 		&CookieExtension{},
 		&KeyShareExtension{},
 		&PSKModesExtension{},
@@ -175,6 +173,16 @@ func (*ALPNExtension) ExtensionId() uint16 {
 
 func (*ALPNExtension) Clone() Extension {
 	return &ALPNExtension{}
+}
+
+type LegacyALPSExtension struct{ implementedExtension }
+
+func (*LegacyALPSExtension) ExtensionId() uint16 {
+	return extensionLegacyALPS
+}
+
+func (*LegacyALPSExtension) Clone() Extension {
+	return &LegacyALPSExtension{}
 }
 
 type ALPSExtension struct{ implementedExtension }

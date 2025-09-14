@@ -125,7 +125,8 @@ const (
 	extensionSignatureAlgorithmsCert uint16 = 50
 	extensionKeyShare                uint16 = 51
 	extensionQUICTransportParameters uint16 = 57
-	extensionALPS                    uint16 = 17513
+	extensionLegacyALPS              uint16 = 17513
+	extensionALPS                    uint16 = 17613
 	extensionRenegotiationInfo       uint16 = 0xff01
 	extensionECHOuterExtensions      uint16 = 0xfd00
 	extensionEncryptedClientHello    uint16 = 0xfe0d

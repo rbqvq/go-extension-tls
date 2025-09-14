@@ -147,6 +147,10 @@ func (m *clientHelloMsg) echOuterExtensions() []uint16 {
 			if len(m.alpnProtocols) > 0 {
 				echOuterExts = append(echOuterExts, extensionALPN)
 			}
+		case *LegacyALPSExtension:
+			if len(m.alpsProtocols) > 0 {
+				echOuterExts = append(echOuterExts, extensionLegacyALPS)
+			}
 		case *ALPSExtension:
 			if len(m.alpsProtocols) > 0 {
 				echOuterExts = append(echOuterExts, extensionALPS)
@@ -313,6 +317,19 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 					exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 						for _, proto := range m.alpnProtocols {
+							exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
+								exts.AddBytes([]byte(proto))
+							})
+						}
+					})
+				})
+			}
+		case *LegacyALPSExtension:
+			if len(m.alpsProtocols) > 0 && !echInner {
+				exts.AddUint16(extensionLegacyALPS)
+				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+						for _, proto := range m.alpsProtocols {
 							exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
 								exts.AddBytes([]byte(proto))
 							})
@@ -574,7 +591,7 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 						extLength += len(proto)
 					}
 				}
-			case *ALPSExtension:
+			case *LegacyALPSExtension, *ALPSExtension:
 				if len(m.alpsProtocols) > 0 {
 					extLength += 4
 
@@ -954,6 +971,19 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				m.alpnProtocols = append(m.alpnProtocols, string(proto))
 			}
 			m.extensionList = append(m.extensionList, &ALPNExtension{})
+		case extensionLegacyALPS:
+			var protoList cryptobyte.String
+			if !extData.ReadUint16LengthPrefixed(&protoList) || protoList.Empty() {
+				return false
+			}
+			for !protoList.Empty() {
+				var proto cryptobyte.String
+				if !protoList.ReadUint8LengthPrefixed(&proto) || proto.Empty() {
+					return false
+				}
+				m.alpsProtocols = append(m.alpsProtocols, string(proto))
+			}
+			m.extensionList = append(m.extensionList, &LegacyALPSExtension{})
 		case extensionALPS:
 			var protoList cryptobyte.String
 			if !extData.ReadUint16LengthPrefixed(&protoList) || protoList.Empty() {
@@ -1518,6 +1548,13 @@ func (m *encryptedExtensionsMsg) marshal() ([]byte, error) {
 							})
 						})
 					}
+				case *LegacyALPSExtension:
+					if m.alps {
+						b.AddUint16(extensionLegacyALPS)
+						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+							b.AddBytes([]byte(m.alpnSetting))
+						})
+					}
 				case *ALPSExtension:
 					if m.alps {
 						b.AddUint16(extensionALPS)
@@ -1603,6 +1640,11 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 			}
 			m.alpnProtocol = string(proto)
 			m.extensions = append(m.extensions, &ALPNExtension{})
+		case extensionLegacyALPS:
+			m.alps = true
+			m.alpnSetting = extData
+			m.extensions = append(m.extensions, &LegacyALPSExtension{})
+			continue
 		case extensionALPS:
 			m.alps = true
 			m.alpnSetting = extData
