@@ -245,7 +245,7 @@ func (hs *serverHandshakeState) processClientHello() error {
 
 	hs.hello = new(serverHelloMsg)
 	hs.hello.vers = c.vers
-	hs.hello.extensions = hs.clientHello.extensionList
+	hs.hello.extensions = hs.extensions
 
 	foundCompression := false
 	// We only support null compression, so check that the client offered it.
