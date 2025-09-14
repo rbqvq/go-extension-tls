@@ -494,6 +494,10 @@ func (m *clientHelloMsg) marshal() ([]byte, error) {
 
 func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 	if minSize == 0 {
+		m.extensionList = slices.DeleteFunc(m.extensionList, func(extension Extension) bool {
+			_, ok := extension.(*PaddingExtension)
+			return ok
+		})
 		return
 	}
 
@@ -694,12 +698,10 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 
 	paddingLength := int(minSize) - length
 	if paddingLength <= 0 {
-		for i, extension := range m.extensionList {
-			switch extension.(type) {
-			case *PaddingExtension:
-				m.extensionList[i] = nil
-			}
-		}
+		m.extensionList = slices.DeleteFunc(m.extensionList, func(extension Extension) bool {
+			_, ok := extension.(*PaddingExtension)
+			return ok
+		})
 		return
 	}
 
@@ -720,6 +722,10 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 			}
 		}
 	}
+
+	m.extensionList = slices.DeleteFunc(m.extensionList, func(extension Extension) bool {
+		return extension == nil
+	})
 }
 
 // Shuffle extensions to avoid fingerprinting -- introduced in Chrome 106
