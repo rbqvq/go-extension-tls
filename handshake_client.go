@@ -117,7 +117,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echCli
 CipherSuiteLoop:
 	for _, suiteId := range preferenceOrder {
 		if IsGREASE(suiteId) {
-			hello.cipherSuites = append(hello.cipherSuites, c.GREASE())
+			hello.cipherSuites = append(hello.cipherSuites, config.GREASE())
 			continue
 		}
 
@@ -174,7 +174,7 @@ CipherSuiteLoop:
 	var keyShareKeys *keySharePrivateKeys
 	for _, curveID := range supportedCurves {
 		if IsGREASE(uint16(curveID)) {
-			groupId := CurveID(c.GREASE())
+			groupId := CurveID(config.GREASE())
 			hello.supportedCurves = append(hello.supportedCurves, groupId)
 			if maxVersion >= VersionTLS13 {
 				hello.keyShares = append(hello.keyShares, keyShare{group: groupId, data: []byte{0}})
@@ -261,9 +261,9 @@ CipherSuiteLoop:
 		case *GREASEExtension:
 			switch len(grease_extensions_ids) {
 			case 0:
-				extension.Id = c.GREASE()
+				extension.Id = config.GREASE()
 			case 1:
-				extension.Id = c.GREASE()
+				extension.Id = config.GREASE()
 				if extension.Id == grease_extensions_ids[0] {
 					extension.Id ^= 0x1010
 				}

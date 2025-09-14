@@ -1288,7 +1288,12 @@ const roleServer = false
 // highest to lowest (and hence also in preference order).
 func (c *Config) supportedVersions(isClient bool) []uint16 {
 	if c.SupportedVersions != nil {
-		return slices.Clone(c.SupportedVersions)
+		versions := slices.Clone(c.SupportedVersions)
+		for i,v :=range versions {
+			if IsGREASE(v){
+				versions[i] = c.GREASE()
+			}
+		}
 	}
 
 	versions := make([]uint16, 0, len(supportedVersions))

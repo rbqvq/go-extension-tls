@@ -49,11 +49,11 @@ func (extension *GREASEExtension) Clone() Extension {
 // https://tools.ietf.org/html/draft-ietf-tls-grease-01
 const GREASE_PLACEHOLDER = 0x0a0a
 
-func (c *Conn) GREASE() uint16 {
+func (c *Config) GREASE() uint16 {
 	grease_bytes := make([]byte, 2)
 	// GREASE value is back from deterministic to random.
 
-	_, err := io.ReadFull(c.config.rand(), grease_bytes)
+	_, err := io.ReadFull(c.rand(), grease_bytes)
 	if err != nil {
 		return GREASE_PLACEHOLDER
 	}
