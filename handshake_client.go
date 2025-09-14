@@ -660,11 +660,8 @@ func (c *Conn) loadSession(hello *clientHelloMsg) (
 			if len(hello.alpnProtocols) == 0 && session.alpnProtocol == "" {
 				hello.earlyData = true
 			} else {
-				for _, alpn := range hello.alpnProtocols {
-					if alpn == session.alpnProtocol {
-						hello.earlyData = true
-						break
-					}
+				if slices.Contains(hello.alpnProtocols, session.alpnProtocol) {
+					hello.earlyData = true
 				}
 			}
 		}
