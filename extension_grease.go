@@ -21,7 +21,7 @@ func (extension *GREASEExtension) ExtensionId() uint16 {
 func (*GREASEExtension) NegotiatedVersion(vers uint16) {}
 
 func (*GREASEExtension) Negotiate(messageType uint8, encryptedClientHello bool) bool {
-	return messageType == typeClientHello
+	return !encryptedClientHello && messageType == typeClientHello
 }
 func (extension *GREASEExtension) Marshal(messageType uint8, encryptedClientHello bool, b *cryptobyte.Builder) {
 	if messageType == typeClientHello {
