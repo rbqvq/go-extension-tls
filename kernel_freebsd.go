@@ -17,18 +17,18 @@ import (
 )
 
 const (
-	TCP_TXTLS_ENABLE = 39 /* TLS framing and encryption for transmit */
-	TCP_TXTLS_MODE   = 40 /* Transmit TLS mode */
-	TCP_RXTLS_ENABLE = 41 /* TLS framing and encryption for receive */
-	TCP_RXTLS_MODE   = 42 /* Receive TLS mode */
+	_TCP_TXTLS_ENABLE = 39 /* TLS framing and encryption for transmit */
+	_TCP_TXTLS_MODE   = 40 /* Transmit TLS mode */
+	_TCP_RXTLS_ENABLE = 41 /* TLS framing and encryption for receive */
+	_TCP_RXTLS_MODE   = 42 /* Receive TLS mode */
 
-	TLS_SET_RECORD_TYPE = 1
-	TLS_GET_RECORD      = 2
+	_TLS_SET_RECORD_TYPE = 1
+	_TLS_GET_RECORD      = 2
 
-	TCP_TLS_MODE_NONE  = 0
-	TCP_TLS_MODE_SW    = 1
-	TCP_TLS_MODE_IFNET = 2
-	TCP_TLS_MODE_TOE   = 3
+	_TCP_TLS_MODE_NONE  = 0
+	_TCP_TLS_MODE_SW    = 1
+	_TCP_TLS_MODE_IFNET = 2
+	_TCP_TLS_MODE_TOE   = 3
 )
 
 // tls_get_record
@@ -157,7 +157,7 @@ func (c *Conn) setupRX(fd uintptr, crypto kernelCrypto) {
 		return
 	}
 
-	err := syscall.SetsockoptString(int(fd), unix.IPPROTO_TCP, TCP_RXTLS_ENABLE, crypto.String())
+	err := syscall.SetsockoptString(int(fd), unix.IPPROTO_TCP, _TCP_RXTLS_ENABLE, crypto.String())
 	if err != nil {
 		return
 	}
@@ -177,7 +177,7 @@ func (c *Conn) setupTX(fd uintptr, crypto kernelCrypto) {
 		return
 	}
 
-	err := syscall.SetsockoptString(int(fd), unix.IPPROTO_TCP, TCP_TXTLS_ENABLE, crypto.String())
+	err := syscall.SetsockoptString(int(fd), unix.IPPROTO_TCP, _TCP_TXTLS_ENABLE, crypto.String())
 	if err != nil {
 		return
 	}
@@ -247,7 +247,7 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 		return 0, nil, c.in.setErrorLocked(io.EOF)
 	}
 
-	if cmsg.Level == unix.IPPROTO_TCP && cmsg.Type == TLS_GET_RECORD {
+	if cmsg.Level == unix.IPPROTO_TCP && cmsg.Type == _TLS_GET_RECORD {
 		hdr := (*kernelGetRecord)(unsafe.Pointer(&buffer[kernelCmsgDataOffset]))
 		return recordType(hdr.RecordType), data[:n], nil
 	}
@@ -266,7 +266,7 @@ func (c *Conn) writeKernelRecord(typ recordType, data []byte) (int, error) {
 	cmsg.SetLen(kernelSendCmsgLen)
 	buffer[kernelCmsgDataOffset] = byte(typ)
 	cmsg.Level = unix.IPPROTO_TCP
-	cmsg.Type = TLS_SET_RECORD_TYPE
+	cmsg.Type = _TLS_SET_RECORD_TYPE
 
 	var iov unix.Iovec
 	iov.Base = &data[0]

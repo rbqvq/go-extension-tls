@@ -19,13 +19,13 @@ import (
 )
 
 const (
-	TLS_TX               = 1
-	TLS_RX               = 2
-	TLS_TX_ZEROCOPY_RO   = 3
-	TLS_RX_EXPECT_NO_PAD = 4
+	_TLS_TX               = 1
+	_TLS_RX               = 2
+	_TLS_TX_ZEROCOPY_RO   = 3
+	_TLS_RX_EXPECT_NO_PAD = 4
 
-	TLS_SET_RECORD_TYPE = 1
-	TLS_GET_RECORD_TYPE = 2
+	_TLS_SET_RECORD_TYPE = 1
+	_TLS_GET_RECORD_TYPE = 2
 )
 
 var (
@@ -183,14 +183,14 @@ func (c *Conn) setupRX(fd uintptr, crypto kernelCrypto) {
 		return
 	}
 
-	err := syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_RX, crypto.String())
+	err := syscall.SetsockoptString(int(fd), unix.SOL_TLS, _TLS_RX, crypto.String())
 	if err != nil {
 		return
 	}
 	c.in.useKernel()
 
 	if c.config.KernelRXExpectNoPad && c.vers >= VersionTLS13 && kernel.TLS_RX_NOPADDING {
-		syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_RX_EXPECT_NO_PAD, 1)
+		syscall.SetsockoptInt(int(fd), unix.SOL_TLS, _TLS_RX_EXPECT_NO_PAD, 1)
 	}
 }
 
@@ -210,7 +210,7 @@ func (c *Conn) resetupRX() error {
 
 	var err error
 	er := c.rawConn.Control(func(fd uintptr) {
-		err = syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_RX, crypto.String())
+		err = syscall.SetsockoptString(int(fd), unix.SOL_TLS, _TLS_RX, crypto.String())
 	})
 	if er != nil {
 		return er
@@ -224,14 +224,14 @@ func (c *Conn) setupTX(fd uintptr, crypto kernelCrypto) {
 		return
 	}
 
-	err := syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_TX, crypto.String())
+	err := syscall.SetsockoptString(int(fd), unix.SOL_TLS, _TLS_TX, crypto.String())
 	if err != nil {
 		return
 	}
 	c.out.useKernel()
 
 	if kernel.TLS_TX_ZEROCOPY {
-		syscall.SetsockoptInt(int(fd), unix.SOL_TLS, TLS_TX_ZEROCOPY_RO, 1)
+		syscall.SetsockoptInt(int(fd), unix.SOL_TLS, _TLS_TX_ZEROCOPY_RO, 1)
 	}
 }
 
@@ -252,7 +252,7 @@ func (c *Conn) resetupTX() (resetup, error) {
 	return func() error {
 		var err error
 		er := c.rawConn.Control(func(fd uintptr) {
-			err = syscall.SetsockoptString(int(fd), unix.SOL_TLS, TLS_TX, crypto.String())
+			err = syscall.SetsockoptString(int(fd), unix.SOL_TLS, _TLS_TX, crypto.String())
 		})
 		if er != nil {
 			return er
@@ -326,7 +326,7 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 
 	c.spliceError = nil
 
-	if cmsg.Level == unix.SOL_TLS && cmsg.Type == TLS_GET_RECORD_TYPE {
+	if cmsg.Level == unix.SOL_TLS && cmsg.Type == _TLS_GET_RECORD_TYPE {
 		typ := recordType(buffer[unix.CmsgLen(0)])
 		return typ, data[:n], nil
 	}
@@ -345,7 +345,7 @@ func (c *Conn) writeKernelRecord(typ recordType, data []byte) (int, error) {
 	cmsg.SetLen(kernelCmsgLen)
 	buffer[kernelCmsgDataOffset] = byte(typ)
 	cmsg.Level = unix.SOL_TLS
-	cmsg.Type = TLS_SET_RECORD_TYPE
+	cmsg.Type = _TLS_SET_RECORD_TYPE
 
 	var iov unix.Iovec
 	iov.Base = &data[0]
