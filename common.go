@@ -819,6 +819,15 @@ type Config struct {
 	// If empty, the default will be used.
 	CurvePreferences []CurveID
 
+	// IndependentlyHybridKeyShare controls whether new public keys should be
+	// generated instead of reusing public keys from the same component algorithm.
+	//
+	// See Section 3.2
+	// https://datatracker.ietf.org/doc/draft-ietf-tls-hybrid-design
+	//
+	// It only works on client.
+	IndependentlyHybridKeyShare bool
+
 	// CertCompressionDisabled disables TLS certificate compressions.
 	// When true, the certificate message will not be compressed.
 	//
@@ -1096,6 +1105,7 @@ func (c *Config) Clone() *Config {
 		MaxVersion:                          c.MaxVersion,
 		SupportedVersions:                   c.SupportedVersions,
 		CurvePreferences:                    c.CurvePreferences,
+		IndependentlyHybridKeyShare:         c.IndependentlyHybridKeyShare,
 		CertCompressionDisabled:             c.CertCompressionDisabled,
 		CertCompressionPreferences:          c.CertCompressionPreferences,
 		SignatureAlgorithmsPreferences:      c.SignatureAlgorithmsPreferences,

@@ -26,7 +26,7 @@ type clientHandshakeStateTLS13 struct {
 	ctx          context.Context
 	serverHello  *serverHelloMsg
 	hello        *clientHelloMsg
-	keyShareKeys *keySharePrivateKeys
+	keyShareKeys []*keySharePrivateKeys
 
 	session     *SessionState
 	earlySecret []byte
@@ -62,7 +62,9 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 	}
 
 	// Consistency check on the presence of a keyShare and its parameters.
-	if hs.keyShareKeys == nil || hs.keyShareKeys.ecdhe == nil || len(hs.hello.keyShares) == 0 {
+	if len(hs.keyShareKeys) < 1 ||
+		slices.ContainsFunc(hs.keyShareKeys, func(keyShareKeys *keySharePrivateKeys) bool { return keyShareKeys == nil || keyShareKeys.ecdhe == nil }) ||
+		len(hs.hello.keyShares) == 0 {
 		return c.sendAlert(alertInternalError)
 	}
 
@@ -412,7 +414,7 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
 			x25519EphemeralKey := key.PublicKey().Bytes()
 
-			hs.keyShareKeys = &keySharePrivateKeys{curveID: curveID, ecdhe: key, mlkem: mlkem}
+			hs.keyShareKeys = []*keySharePrivateKeys{{curveID: curveID, ecdhe: key, mlkem: mlkem}}
 			hello.keyShares = []keyShare{{group: curveID, data: append(mlkemEncapsulationKey, x25519EphemeralKey...)}}
 		case X25519Kyber768Draft00:
 			key, err := generateECDHEKey(c.config.rand(), curveID)
@@ -433,7 +435,7 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
 			x25519EphemeralKey := key.PublicKey().Bytes()
 
-			hs.keyShareKeys = &keySharePrivateKeys{curveID: curveID, ecdhe: key, mlkem: mlkem}
+			hs.keyShareKeys = []*keySharePrivateKeys{{curveID: curveID, ecdhe: key, mlkem: mlkem}}
 			hello.keyShares = []keyShare{{group: curveID, data: append(x25519EphemeralKey, mlkemEncapsulationKey...)}}
 		default:
 			if _, ok := curveForCurveID(curveID); !ok {
@@ -445,7 +447,7 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 				c.sendAlert(alertInternalError)
 				return err
 			}
-			hs.keyShareKeys = &keySharePrivateKeys{curveID: curveID, ecdhe: key}
+			hs.keyShareKeys = []*keySharePrivateKeys{{curveID: curveID, ecdhe: key}}
 			hello.keyShares = []keyShare{{group: curveID, data: key.PublicKey().Bytes()}}
 		}
 	}
@@ -592,8 +594,13 @@ func (hs *clientHandshakeStateTLS13) processServerHello() error {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: server did not send a key share")
 	}
-	if !slices.ContainsFunc(hs.hello.keyShares, func(ks keyShare) bool {
-		return ks.group == hs.serverHello.serverShare.group
+	if !slices.ContainsFunc(hs.keyShareKeys, func(keyShareKeys *keySharePrivateKeys) bool {
+		if keyShareKeys.curveID != hs.serverHello.serverShare.group {
+			return false
+		}
+
+		hs.keyShareKeys = []*keySharePrivateKeys{keyShareKeys}
+		return true
 	}) {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: server selected unsupported group")
@@ -631,6 +638,7 @@ func (hs *clientHandshakeStateTLS13) processServerHello() error {
 
 func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 	c := hs.c
+	keyShareKeys := hs.keyShareKeys[0]
 
 	ecdhePeerData := hs.serverHello.serverShare.data
 	switch hs.serverHello.serverShare.group {
@@ -648,34 +656,34 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 		ecdhePeerData = hs.serverHello.serverShare.data[:x25519PublicKeySize]
 	}
 
-	peerKey, err := hs.keyShareKeys.ecdhe.Curve().NewPublicKey(ecdhePeerData)
+	peerKey, err := keyShareKeys.ecdhe.Curve().NewPublicKey(ecdhePeerData)
 	if err != nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: invalid server key share")
 	}
-	sharedKey, err := hs.keyShareKeys.ecdhe.ECDH(peerKey)
+	sharedKey, err := keyShareKeys.ecdhe.ECDH(peerKey)
 	if err != nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: invalid server key share")
 	}
 	switch hs.serverHello.serverShare.group {
 	case X25519MLKEM768:
-		if hs.keyShareKeys.mlkem == nil {
+		if keyShareKeys.mlkem == nil {
 			return c.sendAlert(alertInternalError)
 		}
 		ciphertext := hs.serverHello.serverShare.data[:mlkem.CiphertextSize768]
-		mlkemShared, err := hs.keyShareKeys.mlkem.Decapsulate(ciphertext)
+		mlkemShared, err := keyShareKeys.mlkem.Decapsulate(ciphertext)
 		if err != nil {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: invalid X25519MLKEM768 server key share")
 		}
 		sharedKey = append(mlkemShared, sharedKey...)
 	case X25519Kyber768Draft00:
-		if hs.keyShareKeys.mlkem == nil {
+		if keyShareKeys.mlkem == nil {
 			return c.sendAlert(alertInternalError)
 		}
 		ciphertext := hs.serverHello.serverShare.data[x25519PublicKeySize:]
-		mlkemShared, err := hs.keyShareKeys.mlkem.Decapsulate(ciphertext)
+		mlkemShared, err := keyShareKeys.mlkem.Decapsulate(ciphertext)
 		if err != nil {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: invalid X25519Kyber768Draft00 server key share")

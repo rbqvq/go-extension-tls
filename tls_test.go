@@ -897,6 +897,8 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf([]uint16{1, 2}))
 		case "CurvePreferences":
 			f.Set(reflect.ValueOf([]CurveID{CurveP256}))
+		case "IndependentlyHybridKeyShare":
+			f.Set(reflect.ValueOf(true))
 		case "Renegotiation":
 			f.Set(reflect.ValueOf(RenegotiateOnceAsClient))
 		case "EncryptedClientHelloConfig":

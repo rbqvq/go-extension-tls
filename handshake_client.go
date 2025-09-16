@@ -78,7 +78,7 @@ func (c *Conn) makeClientHelloExtensions(hello *clientHelloMsg, extensions []Ext
 	return nil
 }
 
-func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echClientContext, error) {
+func (c *Conn) makeClientHello() (*clientHelloMsg, []*keySharePrivateKeys, *echClientContext, error) {
 	config := c.config
 	if len(config.ServerName) == 0 && !config.InsecureSkipVerify {
 		return nil, nil, nil, errors.New("tls: either ServerName or InsecureSkipVerify must be specified in the tls.Config")
@@ -208,7 +208,7 @@ CipherSuiteLoop:
 	}
 
 	supportedCurves := config.curvePreferences(maxVersion)
-	var keyShareKeys *keySharePrivateKeys
+	var keyShareKeys []*keySharePrivateKeys
 	for _, curveID := range supportedCurves {
 		if IsGREASE(uint16(curveID)) {
 			groupId := CurveID(config.GREASE())
@@ -220,14 +220,13 @@ CipherSuiteLoop:
 		}
 		hello.supportedCurves = append(hello.supportedCurves, curveID)
 
-		if maxVersion < VersionTLS13 || keyShareKeys != nil {
+		if maxVersion < VersionTLS13 || len(keyShareKeys) > 0 {
 			continue
 		}
 
-		keyShareKeys = &keySharePrivateKeys{curveID: curveID}
 		switch curveID {
 		case X25519MLKEM768:
-			keyShareKeys.ecdhe, err = generateECDHEKey(config.rand(), X25519)
+			ecdhe, err := generateECDHEKey(config.rand(), X25519)
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -235,23 +234,31 @@ CipherSuiteLoop:
 			if _, err := io.ReadFull(config.rand(), seed); err != nil {
 				return nil, nil, nil, err
 			}
-			keyShareKeys.mlkem, err = mlkem.NewDecapsulationKey768(seed)
+			mlkem, err := mlkem.NewDecapsulationKey768(seed)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			mlkemEncapsulationKey := keyShareKeys.mlkem.EncapsulationKey().Bytes()
-			x25519EphemeralKey := keyShareKeys.ecdhe.PublicKey().Bytes()
-			hello.keyShares = []keyShare{
-				{group: X25519MLKEM768, data: append(mlkemEncapsulationKey, x25519EphemeralKey...)},
-			}
+			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
+			x25519EphemeralKey := ecdhe.PublicKey().Bytes()
+
+			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: X25519MLKEM768, ecdhe: ecdhe, mlkem: mlkem})
+			hello.keyShares = append(hello.keyShares, keyShare{group: X25519MLKEM768, data: append(mlkemEncapsulationKey, x25519EphemeralKey...)})
 			// If both X25519MLKEM768 and X25519 are supported, we send both key
 			// shares (as a fallback) and we reuse the same X25519 ephemeral
 			// key, as allowed by draft-ietf-tls-hybrid-design-09, Section 3.2.
 			if slices.Contains(supportedCurves, X25519) {
-				hello.keyShares = append(hello.keyShares, keyShare{group: X25519, data: x25519EphemeralKey})
+				if config.IndependentlyHybridKeyShare {
+					ecdhe, err = generateECDHEKey(config.rand(), X25519)
+					if err != nil {
+						return nil, nil, nil, err
+					}
+				}
+
+				keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: X25519, ecdhe: ecdhe})
+				hello.keyShares = append(hello.keyShares, keyShare{group: X25519, data: ecdhe.PublicKey().Bytes()})
 			}
 		case X25519Kyber768Draft00: // Draft of X25519MLKEM768
-			keyShareKeys.ecdhe, err = generateECDHEKey(config.rand(), X25519)
+			ecdhe, err := generateECDHEKey(config.rand(), X25519)
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -259,31 +266,39 @@ CipherSuiteLoop:
 			if _, err := io.ReadFull(config.rand(), seed); err != nil {
 				return nil, nil, nil, err
 			}
-			keyShareKeys.mlkem, err = mlkem.NewDecapsulationKey768(seed)
+			mlkem, err := mlkem.NewDecapsulationKey768(seed)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			mlkemEncapsulationKey := keyShareKeys.mlkem.EncapsulationKey().Bytes()
-			x25519EphemeralKey := keyShareKeys.ecdhe.PublicKey().Bytes()
+			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
+			x25519EphemeralKey := ecdhe.PublicKey().Bytes()
 
-			hello.keyShares = append(hello.keyShares,
-				keyShare{group: X25519Kyber768Draft00, data: append(x25519EphemeralKey, mlkemEncapsulationKey...)},
-			)
+			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: X25519Kyber768Draft00, ecdhe: ecdhe, mlkem: mlkem})
+			hello.keyShares = append(hello.keyShares, keyShare{group: X25519Kyber768Draft00, data: append(x25519EphemeralKey, mlkemEncapsulationKey...)})
 			// If both X25519Kyber768Draft00 and X25519 are supported, we send both key
 			// shares (as a fallback) and we reuse the same X25519 ephemeral
 			// key, as allowed by draft-ietf-tls-hybrid-design-09, Section 3.2.
 			if slices.Contains(supportedCurves, X25519) {
-				hello.keyShares = append(hello.keyShares, keyShare{group: X25519, data: x25519EphemeralKey})
+				if config.IndependentlyHybridKeyShare {
+					ecdhe, err = generateECDHEKey(config.rand(), X25519)
+					if err != nil {
+						return nil, nil, nil, err
+					}
+				}
+
+				keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: X25519, ecdhe: ecdhe})
+				hello.keyShares = append(hello.keyShares, keyShare{group: X25519, data: ecdhe.PublicKey().Bytes()})
 			}
 		default:
 			if _, ok := curveForCurveID(curveID); !ok {
 				return nil, nil, nil, errors.New("tls: CurvePreferences includes unsupported curve")
 			}
-			keyShareKeys.ecdhe, err = generateECDHEKey(config.rand(), curveID)
+			ecdhe, err := generateECDHEKey(config.rand(), curveID)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: keyShareKeys.ecdhe.PublicKey().Bytes()})
+			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, ecdhe: ecdhe})
+			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: ecdhe.PublicKey().Bytes()})
 		}
 	}
 
