@@ -79,7 +79,6 @@ var defaultCipherSuitesTLS13NoAES = []uint16{
 var defaultInnerExtensions = []Extension{
 	&ServerNameIndicationExtension{},
 	&SCTExtension{},
-	&SupportedVersionsExtension{}, // allowed outer use before TLS v1.3
 	&EarlyDataExtension{},
 	&QUICTransportParametersExtension{},
 	&EncryptedClientHelloExtension{},
@@ -92,7 +91,6 @@ var defaultInnerExtensions = []Extension{
 var defaultOuterExtensions = []Extension{
 	&ServerNameIndicationExtension{},
 	&SCTExtension{},
-	&SupportedVersionsExtension{},
 	&EarlyDataExtension{},
 	&QUICTransportParametersExtension{},
 	&EncryptedClientHelloExtension{},
@@ -102,7 +100,7 @@ var defaultOuterExtensions = []Extension{
 	&SignatureAlgorithmsExtension{},
 	&SignatureAlgorithmsCertExtension{},
 	&ALPNExtension{},
-	// &SupportedVersionsExtension{},
+	&SupportedVersionsExtension{},
 	&CookieExtension{},
 	&KeyShareExtension{},
 	&PSKModesExtension{},
@@ -117,7 +115,7 @@ var defaultCompressedExtensions = []Extension{
 	&SignatureAlgorithmsExtension{},
 	&SignatureAlgorithmsCertExtension{},
 	&ALPNExtension{},
-	// &SupportedVersionsExtension{}, // allowed outer use before TLS v1.3
+	&SupportedVersionsExtension{},
 	&CookieExtension{},
 	&KeyShareExtension{},
 	&PSKModesExtension{},

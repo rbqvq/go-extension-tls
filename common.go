@@ -1312,9 +1312,18 @@ func (c *Config) supportedVersions(isClient bool) []uint16 {
 		}
 	}
 
+	echInner := isClient && c != nil && c.EncryptedClientHelloConfigList != nil
+	if echInner {
+		echConf := c.echConfig()
+		echInner = !echConf.Disabled && !hasExtension[*SupportedVersionsExtension](echConf.innerExtensions())
+	}
+
 	versions := make([]uint16, 0, len(supportedVersions))
 	for _, v := range supportedVersions {
 		if (c == nil || c.MinVersion == 0) && v < VersionTLS12 && isClient {
+			continue
+		}
+		if echInner && v < VersionTLS13 {
 			continue
 		}
 		if c != nil && c.MinVersion != 0 && v < c.MinVersion {

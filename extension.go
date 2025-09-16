@@ -4,7 +4,11 @@
 
 package tls
 
-import "golang.org/x/crypto/cryptobyte"
+import (
+	"slices"
+
+	"golang.org/x/crypto/cryptobyte"
+)
 
 // TLS Extension
 type Extension interface {
@@ -26,6 +30,13 @@ type Extension interface {
 	// Clone returns a shallow clone of extension. It is safe to clone an
 	// extension that is being used concurrently by a TLS client or server.
 	Clone() Extension
+}
+
+func hasExtension[T Extension](extensions []Extension) bool {
+	return slices.ContainsFunc(extensions, func(extension Extension) bool {
+		_, ok := extension.(T)
+		return ok
+	})
 }
 
 var _ Extension = &implementedExtension{}

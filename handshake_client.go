@@ -330,7 +330,11 @@ CipherSuiteLoop:
 			return nil, nil, nil, err
 		}
 	} else {
-		if c.config.MaxVersion != 0 && c.config.MaxVersion <= VersionTLS12 {
+		innerExtensions := echConf.innerExtensions()
+		if minVersion <= VersionTLS12 && !hasExtension[*SupportedVersionsExtension](innerExtensions) {
+			return nil, nil, nil, errors.New("tls: MinVersion must be >= VersionTLS13 or InnerExtension must be have *SupportedVersionsExtension if EncryptedClientHelloConfigList is populated")
+		}
+		if maxVersion <= VersionTLS12 {
 			return nil, nil, nil, errors.New("tls: MaxVersion must be >= VersionTLS13 if EncryptedClientHelloConfigList is populated")
 		}
 		echConfigs, err := parseECHConfigList(c.config.EncryptedClientHelloConfigList)
@@ -371,7 +375,7 @@ CipherSuiteLoop:
 		if err := c.makeClientHelloExtensions(hello, echConf.outerExtensions()); err != nil {
 			return nil, nil, nil, err
 		}
-		if err := c.makeClientHelloExtensions(ech.innerHello, echConf.innerExtensions()); err != nil {
+		if err := c.makeClientHelloExtensions(ech.innerHello, innerExtensions); err != nil {
 			return nil, nil, nil, err
 		}
 	}
