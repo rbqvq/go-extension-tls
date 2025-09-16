@@ -1706,7 +1706,7 @@ func (c *Config) updateClientHelloPadding(m *clientHelloMsg, helloRetryRequest b
 }
 
 func (c *Config) shuffleExtensions(m *clientHelloMsg) {
-	if !c.ShuffleExtensions {
+	if c == nil || !c.ShuffleExtensions {
 		return
 	}
 

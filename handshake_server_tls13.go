@@ -17,6 +17,7 @@ import (
 	"hash"
 	"io"
 	"slices"
+	"sort"
 	"sync"
 	"time"
 
@@ -188,40 +189,44 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	hs.hello.cipherSuite = hs.suite.id
 	hs.transcript = hs.suite.hash.New()
 
-	// Pick the ECDHE group in server preference order, but give priority to
-	// groups with a key share, to avoid a HelloRetryRequest round-trip.
-	var selectedGroup CurveID
-	var clientKeyShare *keyShare
+	// First, if a post-quantum key exchange is available, use one. See
+	// draft-ietf-tls-key-share-prediction-01, Section 4 for why this must be
+	// first.
+	//
+	// Second, if the client sent a key share for a group we support, use that,
+	// to avoid a HelloRetryRequest round-trip.
+	//
+	// Finally, pick in our fixed preference order.
 	preferredGroups := c.config.curvePreferences(c.vers)
-	for _, preferredGroup := range preferredGroups {
-		if IsGREASE(uint16(preferredGroup)) {
-			continue
-		}
-
-		ki := slices.IndexFunc(hs.clientHello.keyShares, func(ks keyShare) bool {
-			return !IsGREASE(uint16(ks.group)) && ks.group == preferredGroup
-		})
-		if ki != -1 {
-			clientKeyShare = &hs.clientHello.keyShares[ki]
-			selectedGroup = clientKeyShare.group
-			if !slices.Contains(hs.clientHello.supportedCurves, selectedGroup) {
-				c.sendAlert(alertIllegalParameter)
-				return errors.New("tls: client sent key share for group it does not support")
+	preferredGroups = slices.DeleteFunc(preferredGroups, func(group CurveID) bool {
+		return IsGREASE(uint16(group)) || !slices.Contains(hs.clientHello.supportedCurves, group)
+	})
+	if len(preferredGroups) == 0 {
+		c.sendAlert(alertHandshakeFailure)
+		return errors.New("tls: no key exchanges supported by both client and server")
+	}
+	hasKeyShare := func(group CurveID) bool {
+		for _, ks := range hs.clientHello.keyShares {
+			if ks.group == group {
+				return true
 			}
+		}
+		return false
+	}
+	sort.SliceStable(preferredGroups, func(i, j int) bool {
+		return hasKeyShare(preferredGroups[i]) && !hasKeyShare(preferredGroups[j])
+	})
+	sort.SliceStable(preferredGroups, func(i, j int) bool {
+		return isPQKeyExchange(preferredGroups[i]) && !isPQKeyExchange(preferredGroups[j])
+	})
+	selectedGroup := preferredGroups[0]
+
+	var clientKeyShare *keyShare
+	for _, ks := range hs.clientHello.keyShares {
+		if ks.group == selectedGroup {
+			clientKeyShare = &ks
 			break
 		}
-	}
-	if selectedGroup == 0 {
-		for _, preferredGroup := range preferredGroups {
-			if slices.Contains(hs.clientHello.supportedCurves, preferredGroup) {
-				selectedGroup = preferredGroup
-				break
-			}
-		}
-	}
-	if selectedGroup == 0 {
-		c.sendAlert(alertHandshakeFailure)
-		return errors.New("tls: no ECDHE curve supported by both client and server")
 	}
 	if clientKeyShare == nil {
 		ks, err := hs.doHelloRetryRequest(selectedGroup)

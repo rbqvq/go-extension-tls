@@ -162,14 +162,14 @@ CipherSuiteLoop:
 		suite13 := mutualCipherSuiteTLS13(configCipherSuites, suiteId)
 		switch {
 		case suite != nil:
+			if minVersion > VersionTLS12 {
+				continue
+			}
+
 			// Don't advertise TLS 1.2-only cipher suites unless
 			// we're attempting TLS 1.2.
 			if maxVersion < VersionTLS12 && suite.flags&suiteTLS12 != 0 {
 				continue CipherSuiteLoop
-			}
-
-			if minVersion > VersionTLS12 {
-				continue
 			}
 		case suite13 != nil:
 			if maxVersion < VersionTLS13 {
