@@ -5,6 +5,7 @@
 package tls
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"slices"
@@ -106,6 +107,10 @@ type clientHelloMsg struct {
 	echOuterExts   []uint16
 	compressedList []Extension
 	extensionList  []Extension
+}
+
+func (m *clientHelloMsg) echInner() bool {
+	return bytes.Equal(m.encryptedClientHello, []byte{1})
 }
 
 func (m *clientHelloMsg) echOuterExtensions(compressed []Extension) []uint16 {
@@ -527,15 +532,7 @@ func (m *clientHelloMsg) marshal() ([]byte, error) {
 	return m.marshalMsg(false)
 }
 
-func (m *clientHelloMsg) automaticPadding(minSize uint16) {
-	if minSize == 0 {
-		m.extensionList = slices.DeleteFunc(m.extensionList, func(extension Extension) bool {
-			_, ok := extension.(*PaddingExtension)
-			return ok
-		})
-		return
-	}
-
+func (m *clientHelloMsg) getUnpaddedLength() int {
 	var length int
 	length += 1
 	length += 3
@@ -731,18 +728,16 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 		}
 	}
 
-	paddingLength := int(minSize) - length
-	if paddingLength <= 0 {
+	return length
+}
+
+func (m *clientHelloMsg) updatePaddingExtension(length uint16, ok bool) {
+	if !ok {
 		m.extensionList = slices.DeleteFunc(m.extensionList, func(extension Extension) bool {
 			_, ok := extension.(*PaddingExtension)
 			return ok
 		})
 		return
-	}
-
-	paddingLength -= 4
-	if paddingLength <= 0 {
-		paddingLength = 1
 	}
 
 	var seenPadding bool
@@ -753,7 +748,7 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 				m.extensionList[i] = nil
 			} else {
 				seenPadding = true
-				extension.Length = uint16(paddingLength)
+				extension.Length = length
 			}
 		}
 	}

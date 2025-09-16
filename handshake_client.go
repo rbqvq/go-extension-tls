@@ -403,7 +403,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 			hello = ech.innerHello
 		}
 
-		hello.automaticPadding(c.config.MinClientHelloSize)
+		c.config.updateClientHelloPadding(hello, false)
 	} else {
 		defer func() {
 			// If we got a handshake failure when resuming a session, throw away
@@ -659,7 +659,7 @@ func (c *Conn) loadSession(outer *clientHelloMsg, ech *echClientContext) (
 		}
 
 		hello.sessionTicket = session.ticket
-		hello.automaticPadding(c.config.MinClientHelloSize)
+		c.config.updateClientHelloPadding(hello, false)
 		return
 	}
 
@@ -723,8 +723,10 @@ func (c *Conn) loadSession(outer *clientHelloMsg, ech *echClientContext) (
 	earlySecret = cipherSuite.extract(session.secret, nil)
 	binderKey = cipherSuite.deriveSecret(earlySecret, resumptionBinderLabel, nil)
 	transcript := cipherSuite.hash.New()
+
 	setupInnerClientHelloCompress(c.config.echConfig(), outer, hello)
-	hello.automaticPadding(c.config.MinClientHelloSize)
+	c.config.updateClientHelloPadding(hello, false)
+
 	if err := computeAndUpdatePSK(hello, binderKey, transcript, cipherSuite.finishedHash); err != nil {
 		return nil, nil, nil, err
 	}

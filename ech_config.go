@@ -5,7 +5,6 @@
 package tls
 
 import (
-	"bytes"
 	"reflect"
 	"slices"
 
@@ -67,8 +66,7 @@ func (config *ECHConfig) compressedExtensions() []Extension {
 }
 
 func setupInnerClientHelloCompress(config *ECHConfig, outer, inner *clientHelloMsg) {
-	echInner := bytes.Equal(inner.encryptedClientHello, []byte{1})
-	if !echInner {
+	if !inner.echInner() {
 		return
 	}
 
@@ -103,11 +101,11 @@ func setupInnerClientHelloCompress(config *ECHConfig, outer, inner *clientHelloM
 			}
 
 			for i, extension := range compressed {
-				if extension == nil {
-					continue
-				}
-
-				if _, ok := extension.(*ECHOuterExtension); ok {
+				switch extension.(type) {
+				case nil,
+					*EncryptedClientHelloExtension,
+					*ECHOuterExtension,
+					*PaddingExtension:
 					continue
 				}
 

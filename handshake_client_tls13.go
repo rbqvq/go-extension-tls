@@ -483,7 +483,8 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 			}
 
 			setupInnerClientHelloCompress(echConf, hs.hello, hello)
-			hello.automaticPadding(c.config.MinClientHelloSize)
+			c.config.updateClientHelloPadding(hello, true)
+
 			if err := computeAndUpdatePSK(hello, hs.binderKey, transcript, hs.suite.finishedHash); err != nil {
 				return err
 			}
@@ -492,11 +493,11 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 			hello.pskIdentities = nil
 			hello.pskBinders = nil
 			setupInnerClientHelloCompress(echConf, hs.hello, hello)
-			hello.automaticPadding(c.config.MinClientHelloSize)
+			c.config.updateClientHelloPadding(hello, true)
 		}
 	} else {
 		setupInnerClientHelloCompress(echConf, hs.hello, hello)
-		hello.automaticPadding(c.config.MinClientHelloSize)
+		c.config.updateClientHelloPadding(hello, true)
 	}
 
 	if isInnerHello {

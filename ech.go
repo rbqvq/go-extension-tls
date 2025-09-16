@@ -468,7 +468,7 @@ func (c *Config) computeAndUpdateOuterECHExtension(outer, inner *clientHelloMsg,
 	if err != nil {
 		return err
 	}
-	outer.automaticPadding(c.MinClientHelloSize)
+	c.updateClientHelloPadding(outer, !useKey)
 	serializedOuter, err := outer.marshal()
 	if err != nil {
 		return err

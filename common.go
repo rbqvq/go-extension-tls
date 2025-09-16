@@ -866,11 +866,14 @@ type Config struct {
 	// See https://tools.ietf.org/html/rfc8446#section-2.3.
 	MaxEarlyData uint32
 
-	// If MinClientHelloSize is not zero, whe client will use the padding
-	// extension to pad the packet to the minimum size.
+	// If ClientHelloPadding is not nil, the it will update the padding
+	// extension length in the ClientHello message.
+	//
+	// If ok is true, the return value is the padding extension length to add.
+	// If ok is false, padding extension will be removed.
 	//
 	// It only works on the client.
-	MinClientHelloSize uint16
+	ClientHelloPadding func(pq PaddingRequest) (paddingLength uint16, ok bool)
 
 	// If ShuffleExtensions is true, whe client will shuffle
 	// extensions to avoid fingerprinting.
@@ -1100,7 +1103,7 @@ func (c *Config) Clone() *Config {
 		Renegotiation:                       c.Renegotiation,
 		AllowEarlyData:                      c.AllowEarlyData,
 		MaxEarlyData:                        c.MaxEarlyData,
-		MinClientHelloSize:                  c.MinClientHelloSize,
+		ClientHelloPadding:                  c.ClientHelloPadding,
 		ShuffleExtensions:                   c.ShuffleExtensions,
 		Extensions:                          c.Extensions,
 		KeyLogWriter:                        c.KeyLogWriter,
@@ -1686,6 +1689,20 @@ func (c *Config) maxEarlyData() uint32 {
 	}
 
 	return c.MaxEarlyData
+}
+
+func (c *Config) updateClientHelloPadding(m *clientHelloMsg, helloRetryRequest bool) {
+	if c == nil || c.ClientHelloPadding == nil {
+		return
+	}
+
+	length, ok := c.ClientHelloPadding(PaddingRequest{
+		UnpaddedLength:    m.getUnpaddedLength(),
+		HelloInner:        m.echInner(),
+		HelloRetryRequest: helloRetryRequest,
+		QUIC:              len(m.sessionId) == 0,
+	})
+	m.updatePaddingExtension(length, ok)
 }
 
 func (c *Config) shuffleExtensions(m *clientHelloMsg) {
