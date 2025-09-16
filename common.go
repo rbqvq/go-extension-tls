@@ -814,9 +814,9 @@ type Config struct {
 
 	// CurvePreferences contains a set of supported key exchange mechanisms.
 	// The name refers to elliptic curves for legacy reasons, see [CurveID].
-	// The order of the list is ignored, and key exchange mechanisms are chosen
-	// from this list using an internal preference order. If empty, the default
-	// will be used.
+	// For server: The order of the list is ignored, and key exchange mechanisms
+	// are chosen from this list using an internal preference order.
+	// If empty, the default will be used.
 	CurvePreferences []CurveID
 
 	// CertCompressionDisabled disables TLS certificate compressions.
