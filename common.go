@@ -1397,7 +1397,7 @@ func (c *Config) keySharePreferences(version uint16) []CurveID {
 					keySharePreferences = append(keySharePreferences, X25519)
 				}
 			default:
-				if IsGREASE(uint16(curveID)) {
+				if IsGREASE(curveID) {
 					continue
 				}
 			}

@@ -209,7 +209,7 @@ CipherSuiteLoop:
 
 	grease_groups_ids := make([]CurveID, 0)
 	for _, curveID := range config.curvePreferences(maxVersion) {
-		if IsGREASE(uint16(curveID)) {
+		if IsGREASE(curveID) {
 			curveID = CurveID(config.GREASE())
 			grease_groups_ids = append(grease_groups_ids, curveID)
 		}
@@ -258,7 +258,7 @@ CipherSuiteLoop:
 			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: X25519Kyber768Draft00, ecdhe: ecdhe, mlkem: mlkem})
 			hello.keyShares = append(hello.keyShares, keyShare{group: X25519Kyber768Draft00, data: append(x25519EphemeralKey, mlkemEncapsulationKey...)})
 		default:
-			if IsGREASE(uint16(curveID)) {
+			if IsGREASE(curveID) {
 				if len(grease_groups_ids) <= 0 {
 					continue
 				}

@@ -199,7 +199,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	// Finally, pick in our fixed preference order.
 	preferredGroups := c.config.curvePreferences(c.vers)
 	preferredGroups = slices.DeleteFunc(preferredGroups, func(group CurveID) bool {
-		return IsGREASE(uint16(group)) || !slices.Contains(hs.clientHello.supportedCurves, group)
+		return IsGREASE(group) || !slices.Contains(hs.clientHello.supportedCurves, group)
 	})
 	if len(preferredGroups) == 0 {
 		c.sendAlert(alertHandshakeFailure)

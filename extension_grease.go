@@ -69,7 +69,7 @@ func (c *Config) GREASE() uint16 {
 	return ret
 }
 
-func IsGREASE(v uint16) bool {
+func IsGREASE[T ~uint16](v T) bool {
 	// GREASE (Generate Random Extensions And Sustain Extensibility) is a mechanism used by
 	// browsers like Chrome to ensure TLS implementations correctly ignore unknown values.
 	// GREASE values follow a specific pattern: 0x?A?A, where ? can be any hex digit.
