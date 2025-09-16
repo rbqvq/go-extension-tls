@@ -120,6 +120,33 @@ func (c *cipherSuiteTLS13) exportKeyingMaterial(masterSecret []byte, transcript 
 	}
 }
 
+type ecdheKeyStorage struct {
+	keys map[CurveID]*ecdh.PrivateKey
+}
+
+func (ks *ecdheKeyStorage) GetOrGenerate(c *Config, curveID CurveID) (*ecdh.PrivateKey, error) {
+	if c.IndependentlyHybridKeyShare {
+		return generateECDHEKey(c.rand(), curveID)
+	}
+
+	if ks.keys == nil {
+		ks.keys = make(map[CurveID]*ecdh.PrivateKey)
+	} else {
+		ecdhe, ok := ks.keys[curveID]
+		if ok {
+			return ecdhe, nil
+		}
+	}
+
+	ecdhe, err := generateECDHEKey(c.rand(), curveID)
+	if err != nil {
+		return nil, err
+	}
+
+	ks.keys[curveID] = ecdhe
+	return ecdhe, nil
+}
+
 type keySharePrivateKeys struct {
 	curveID CurveID
 	ecdhe   *ecdh.PrivateKey

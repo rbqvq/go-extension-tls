@@ -828,6 +828,12 @@ type Config struct {
 	// It only works on client.
 	IndependentlyHybridKeyShare bool
 
+	// KeySharePreferences specifies which key exchange public key in the ClientHello.
+	// Key exchange mechanisms not listed in CurvePreferences will be ignored.
+	//
+	// It only works on client.
+	KeySharePreferences []CurveID
+
 	// CertCompressionDisabled disables TLS certificate compressions.
 	// When true, the certificate message will not be compressed.
 	//
@@ -1106,6 +1112,7 @@ func (c *Config) Clone() *Config {
 		SupportedVersions:                   c.SupportedVersions,
 		CurvePreferences:                    c.CurvePreferences,
 		IndependentlyHybridKeyShare:         c.IndependentlyHybridKeyShare,
+		KeySharePreferences:                 c.KeySharePreferences,
 		CertCompressionDisabled:             c.CertCompressionDisabled,
 		CertCompressionPreferences:          c.CertCompressionPreferences,
 		SignatureAlgorithmsPreferences:      c.SignatureAlgorithmsPreferences,
@@ -1303,7 +1310,7 @@ const roleServer = false
 // supportedVersions returns the list of supported TLS versions, sorted from
 // highest to lowest (and hence also in preference order).
 func (c *Config) supportedVersions(isClient bool) []uint16 {
-	if c.SupportedVersions != nil {
+	if c != nil && c.SupportedVersions != nil {
 		versions := slices.Clone(c.SupportedVersions)
 		for i, v := range versions {
 			if IsGREASE(v) {
@@ -1371,6 +1378,37 @@ func (c *Config) curvePreferences(version uint16) []CurveID {
 		curvePreferences = slices.DeleteFunc(curvePreferences, isTLS13OnlyKeyExchange)
 	}
 	return curvePreferences
+}
+
+func (c *Config) keySharePreferences(version uint16) []CurveID {
+	if version < VersionTLS13 {
+		return nil
+	}
+
+	supportedCurves := c.curvePreferences(version)
+
+	if c == nil || len(c.KeySharePreferences) == 0 {
+		keySharePreferences := make([]CurveID, 0, 2)
+		for _, curveID := range supportedCurves {
+			keySharePreferences = append(keySharePreferences, curveID)
+			switch curveID {
+			case X25519MLKEM768, X25519Kyber768Draft00:
+				if slices.Contains(supportedCurves, X25519) {
+					keySharePreferences = append(keySharePreferences, X25519)
+				}
+			default:
+				if IsGREASE(uint16(curveID)) {
+					continue
+				}
+			}
+			break
+		}
+		return keySharePreferences
+	}
+
+	return slices.DeleteFunc(slices.Clone(c.KeySharePreferences), func(keyShare CurveID) bool {
+		return !slices.Contains(supportedCurves, keyShare)
+	})
 }
 
 func (c *Config) supportsCurve(version uint16, curve CurveID) bool {
