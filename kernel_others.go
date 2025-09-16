@@ -6,8 +6,6 @@
 
 package tls
 
-const kernelOverhead = 0
-
 func (c *Conn) setup() error {
 	return nil
 }
