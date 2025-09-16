@@ -10,41 +10,19 @@ type Extension interface {
 	NegotiatedVersion(vers uint16)
 	// Return true if this extension needs to be negotiated.
 	// It will call the Marshal function to generate the message.
-	Negotiate(messageType uint8, encryptedClientHello bool) bool
+	Negotiate(messageType uint8, echInner bool) bool
 
-	Len(messageType uint8, encryptedClientHello bool) int
-	Marshal(messageType uint8, encryptedClientHello bool, b *cryptobyte.Builder)
-	Unmarshal(messageType uint8, encryptedClientHello bool, b cryptobyte.String) bool
+	Len(messageType uint8, echInner bool) int
+	Marshal(messageType uint8, echInner bool, b *cryptobyte.Builder)
+	// This may be called multiple times when the client receives a ServerHello.
+	// both when the message is received and when the ECH is confirmed to have been accepted by the server.
+	// Please also consider the HelloRetryRequest.
+	Unmarshal(messageType uint8, echAccepted bool, b cryptobyte.String, es *ExtensionState) (bool, error)
 
 	// Clone returns a shallow clone of extension. It is safe to clone an
 	// extension that is being used concurrently by a TLS client or server.
 	Clone() Extension
 }
-
-var (
-	defaultExtensions = []Extension{
-		&ServerNameIndicationExtension{},
-		&SupportedPointsExtension{},
-		&SessionTicketExtension{},
-		&RenegotiationInfoExtension{},
-		&ExtendedMasterSecretExtension{},
-		&SCTExtension{},
-		&EarlyDataExtension{},
-		&QUICTransportParametersExtension{},
-		&EncryptedClientHelloExtension{},
-		&StatusRequestExtension{},
-		&SupportedGroupsExtension{},
-		&SignatureAlgorithmsExtension{},
-		&SignatureAlgorithmsCertExtension{},
-		&ALPNExtension{},
-		&SupportedVersionsExtension{},
-		&CookieExtension{},
-		&KeyShareExtension{},
-		&PSKModesExtension{},
-		&ECHOuterExtension{},
-		&PreSharedKeyExtension{},
-	}
-)
 
 var _ Extension = &implementedExtension{}
 
@@ -56,19 +34,19 @@ func (*implementedExtension) ExtensionId() uint16 {
 
 func (*implementedExtension) NegotiatedVersion(vers uint16) {}
 
-func (*implementedExtension) Negotiate(messageType uint8, encryptedClientHello bool) bool {
+func (*implementedExtension) Negotiate(messageType uint8, echInner bool) bool {
 	return false
 }
 
-func (*implementedExtension) Marshal(messageType uint8, encryptedClientHello bool, b *cryptobyte.Builder) {
+func (*implementedExtension) Marshal(messageType uint8, echInner bool, b *cryptobyte.Builder) {
 }
 
-func (*implementedExtension) Len(messageType uint8, encryptedClientHello bool) int {
+func (*implementedExtension) Len(messageType uint8, echInner bool) int {
 	return 0
 }
 
-func (*implementedExtension) Unmarshal(messageType uint8, encryptedClientHello bool, b cryptobyte.String) bool {
-	return true
+func (*implementedExtension) Unmarshal(messageType uint8, echAccepted bool, b cryptobyte.String, es *ExtensionState) (bool, error) {
+	return true, nil
 }
 
 func (*implementedExtension) Clone() Extension {
@@ -317,17 +295,17 @@ func (*PaddingExtension) ExtensionId() uint16 {
 
 func (*PaddingExtension) NegotiatedVersion(vers uint16) {}
 
-func (*PaddingExtension) Negotiate(messageType uint8, encryptedClientHello bool) bool {
+func (*PaddingExtension) Negotiate(messageType uint8, echInner bool) bool {
 	return messageType == typeClientHello
 }
 
-func (extension *PaddingExtension) Marshal(messageType uint8, encryptedClientHello bool, b *cryptobyte.Builder) {
+func (extension *PaddingExtension) Marshal(messageType uint8, echInner bool, b *cryptobyte.Builder) {
 	if messageType == typeClientHello {
 		b.AddBytes(make([]byte, extension.Length))
 	}
 }
 
-func (extension *PaddingExtension) Len(messageType uint8, encryptedClientHello bool) int {
+func (extension *PaddingExtension) Len(messageType uint8, echInner bool) int {
 	if messageType == typeClientHello {
 		return int(extension.Length)
 	}
@@ -335,10 +313,10 @@ func (extension *PaddingExtension) Len(messageType uint8, encryptedClientHello b
 	return 0
 }
 
-func (extension *PaddingExtension) Unmarshal(messageType uint8, encryptedClientHello bool, b cryptobyte.String) bool {
+func (extension *PaddingExtension) Unmarshal(messageType uint8, echAccepted bool, b cryptobyte.String, _ *ExtensionState) (bool, error) {
 	length := len(b)
 	extension.Length = uint16(length)
-	return b.Skip(length)
+	return b.Skip(length), nil
 }
 
 func (extension *PaddingExtension) Clone() Extension {
@@ -358,21 +336,22 @@ func (extension *UnimplementedExtension) ExtensionId() uint16 {
 
 func (*UnimplementedExtension) NegotiatedVersion(vers uint16) {}
 
-func (*UnimplementedExtension) Negotiate(messageType uint8, encryptedClientHello bool) bool {
+func (*UnimplementedExtension) Negotiate(messageType uint8, echInner bool) bool {
 	return false
 }
 
-func (extension *UnimplementedExtension) Marshal(messageType uint8, encryptedClientHello bool, b *cryptobyte.Builder) {
+func (extension *UnimplementedExtension) Marshal(messageType uint8, echInner bool, b *cryptobyte.Builder) {
 	b.AddBytes(extension.Data)
 }
 
-func (extension *UnimplementedExtension) Len(messageType uint8, encryptedClientHello bool) int {
+func (extension *UnimplementedExtension) Len(messageType uint8, echInner bool) int {
 	return len(extension.Data)
 }
 
-func (extension *UnimplementedExtension) Unmarshal(messageType uint8, encryptedClientHello bool, b cryptobyte.String) bool {
-	return b.CopyBytes(extension.Data)
+func (extension *UnimplementedExtension) Unmarshal(messageType uint8, echAccepted bool, b cryptobyte.String, _ *ExtensionState) (bool, error) {
+	return b.CopyBytes(extension.Data), nil
 }
+
 func (extension *UnimplementedExtension) Clone() Extension {
 	return &UnimplementedExtension{Id: extension.Id, Data: extension.Data}
 }

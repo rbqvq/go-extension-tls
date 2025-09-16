@@ -25,9 +25,8 @@ type ECHCipher struct {
 
 // ECHDummyConfig represents an ECH dummy configuration.
 type ECHDummyConfig struct {
-	ConfigIds      []uint8
-	CipherSuites   []ECHCipher
-	HelloInnerLens []uint16 // Pre-encryption. If 0, will pick 128 (+16=144)
+	ConfigIds    []uint8
+	CipherSuites []ECHCipher
 }
 
 func (config *ECHDummyConfig) configId() uint8 {
@@ -46,20 +45,12 @@ func (config *ECHDummyConfig) cipherSuite() ECHCipher {
 	return config.CipherSuites[rand.Crypto.IntN(len(config.CipherSuites))]
 }
 
-func (config *ECHDummyConfig) helloInnerLen() uint16 {
-	if len(config.HelloInnerLens) <= 0 {
-		return 128
-	}
-
-	return config.HelloInnerLens[rand.Crypto.IntN(len(config.HelloInnerLens))]
-}
-
-func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, echConfig *ECHDummyConfig) error {
-	if echConfig == nil {
+func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, echConfig *ECHConfig) error {
+	if echConfig.Dummy == nil {
 		return nil
 	}
 
-	suite := echConfig.cipherSuite()
+	suite := echConfig.Dummy.cipherSuite()
 
 	var dummyPublicKey []byte
 	switch suite.KEM {
@@ -72,7 +63,7 @@ func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, e
 	var length uint16
 	switch suite.AEAD {
 	case hpke.AEAD_AES_128_GCM, hpke.AEAD_AES_256_GCM, hpke.AEAD_ChaCha20Poly1305:
-		length = echConfig.helloInnerLen() + 16
+		length = echConfig.innerLen() + 16
 	default:
 		return fmt.Errorf("tls: dummy ech: invalid aead %#x", suite.AEAD)
 	}
@@ -92,7 +83,7 @@ func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, e
 		return err
 	}
 
-	outer.encryptedClientHello, err = generateOuterECHExt(echConfig.configId(), suite.KDF, suite.AEAD, encapKey, payload)
+	outer.encryptedClientHello, err = generateOuterECHExt(echConfig.Dummy.configId(), suite.KDF, suite.AEAD, encapKey, payload)
 	if err != nil {
 		return err
 	}

@@ -20,16 +20,16 @@ func (extension *GREASEExtension) ExtensionId() uint16 {
 
 func (*GREASEExtension) NegotiatedVersion(vers uint16) {}
 
-func (*GREASEExtension) Negotiate(messageType uint8, encryptedClientHello bool) bool {
-	return !encryptedClientHello && messageType == typeClientHello
+func (*GREASEExtension) Negotiate(messageType uint8, echInner bool) bool {
+	return !echInner && messageType == typeClientHello
 }
-func (extension *GREASEExtension) Marshal(messageType uint8, encryptedClientHello bool, b *cryptobyte.Builder) {
+func (extension *GREASEExtension) Marshal(messageType uint8, echInner bool, b *cryptobyte.Builder) {
 	if messageType == typeClientHello {
 		b.AddBytes(extension.Data)
 	}
 }
 
-func (extension *GREASEExtension) Len(messageType uint8, encryptedClientHello bool) int {
+func (extension *GREASEExtension) Len(messageType uint8, echInner bool) int {
 	if messageType == typeClientHello {
 		return len(extension.Data)
 	}
@@ -37,8 +37,8 @@ func (extension *GREASEExtension) Len(messageType uint8, encryptedClientHello bo
 	return 0
 }
 
-func (extension *GREASEExtension) Unmarshal(messageType uint8, encryptedClientHello bool, b cryptobyte.String) bool {
-	return b.CopyBytes(extension.Data)
+func (extension *GREASEExtension) Unmarshal(messageType uint8, echAccepted bool, b cryptobyte.String, _ *ExtensionState) (bool, error) {
+	return b.CopyBytes(extension.Data), nil
 }
 
 func (extension *GREASEExtension) Clone() Extension {

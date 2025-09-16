@@ -98,6 +98,8 @@ type Conn struct {
 	clientProtocolSetting []byte
 	// serverProtocolSetting is the negotiated ALPS protocol.
 	serverProtocolSetting []byte
+	// extension state is the state storage of custom extensions.
+	extensionState *ExtensionState
 
 	// input/output
 	in, out   halfConn
@@ -1822,6 +1824,7 @@ func (c *Conn) connectionStateLocked() ConnectionState {
 	state.NegotiatedProtocol = c.clientProtocol
 	state.ClientProtocolSetting = c.clientProtocolSetting
 	state.ServerProtocolSetting = c.serverProtocolSetting
+	state.ExtensionState = c.extensionState
 	state.DidResume = c.didResume
 	state.testingOnlyDidHRR = c.didHRR
 	state.testingOnlyPeerSignatureAlgorithm = c.peerSigAlg

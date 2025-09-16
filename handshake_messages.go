@@ -103,30 +103,54 @@ type clientHelloMsg struct {
 	// extensions are only populated on the server-side of a handshake
 	extensions []uint16
 
-	extensionList []Extension
+	echOuterExts   []uint16
+	compressedList []Extension
+	extensionList  []Extension
 }
 
-func (m *clientHelloMsg) echOuterExtensions() []uint16 {
+func (m *clientHelloMsg) echOuterExtensions(compressed []Extension) []uint16 {
 	// Note that any extension that can be compressed during ECH must be
 	// contiguous. If any additional extensions are to be compressed they must
 	// be added to the following block, so that they can be properly
 	// decompressed on the other side.
 	var echOuterExts []uint16
 
-	for _, extension := range m.extensionList {
+	for _, extension := range compressed {
 		switch extension.(type) {
 		case nil:
-		case *ServerNameIndicationExtension,
-			*SupportedPointsExtension,
-			*RenegotiationInfoExtension,
-			*ExtendedMasterSecretExtension,
-			*SCTExtension,
-			*EarlyDataExtension,
-			*SessionTicketExtension,
-			*QUICTransportParametersExtension,
-			*EncryptedClientHelloExtension,
-			*ECHOuterExtension,
-			*PreSharedKeyExtension:
+		case *ServerNameIndicationExtension:
+			if len(m.serverName) > 0 {
+				echOuterExts = append(echOuterExts, extensionServerName)
+			}
+		case *SupportedPointsExtension:
+			if len(m.supportedPoints) > 0 {
+				echOuterExts = append(echOuterExts, extensionSupportedPoints)
+			}
+		case *SessionTicketExtension:
+			if m.ticketSupported {
+				echOuterExts = append(echOuterExts, extensionSessionTicket)
+			}
+		case *RenegotiationInfoExtension:
+			if m.secureRenegotiationSupported {
+				echOuterExts = append(echOuterExts, extensionRenegotiationInfo)
+			}
+		case *ExtendedMasterSecretExtension:
+			if m.extendedMasterSecret {
+				echOuterExts = append(echOuterExts, extensionExtendedMasterSecret)
+			}
+		case *SCTExtension:
+			if m.scts {
+				echOuterExts = append(echOuterExts, extensionSCT)
+			}
+		case *EarlyDataExtension:
+			if m.earlyData {
+				echOuterExts = append(echOuterExts, extensionEarlyData)
+			}
+		case *QUICTransportParametersExtension:
+			if m.quicTransportParameters != nil {
+				echOuterExts = append(echOuterExts, extensionQUICTransportParameters)
+			}
+		case *EncryptedClientHelloExtension:
 		case *StatusRequestExtension:
 			if m.ocspStapling {
 				echOuterExts = append(echOuterExts, extensionStatusRequest)
@@ -175,8 +199,13 @@ func (m *clientHelloMsg) echOuterExtensions() []uint16 {
 			if len(m.pskModes) > 0 {
 				echOuterExts = append(echOuterExts, extensionPSKModes)
 			}
+		case *ECHOuterExtension:
+		case *PreSharedKeyExtension:
+			if len(m.pskIdentities) > 0 {
+				echOuterExts = append(echOuterExts, extensionPreSharedKey)
+			}
 		default:
-			if !extension.Negotiate(typeClientHello, true) && extension.Negotiate(typeClientHello, false) {
+			if extension.Negotiate(typeClientHello, false) {
 				echOuterExts = append(echOuterExts, extension.ExtensionId())
 			}
 		}
@@ -188,8 +217,15 @@ func (m *clientHelloMsg) echOuterExtensions() []uint16 {
 func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 	var exts cryptobyte.Builder
 	for _, extension := range m.extensionList {
+		if extension == nil {
+			continue
+		}
+
+		if echInner && slices.Contains(m.echOuterExts, extension.ExtensionId()) {
+			continue
+		}
+
 		switch extension.(type) {
-		case nil:
 		case *ServerNameIndicationExtension:
 			if len(m.serverName) > 0 {
 				// RFC 6066, Section 3
@@ -204,7 +240,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *SupportedPointsExtension:
-			if len(m.supportedPoints) > 0 && !echInner {
+			if len(m.supportedPoints) > 0 {
 				// RFC 4492, Section 5.1.2
 				exts.AddUint16(extensionSupportedPoints)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -214,7 +250,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *SessionTicketExtension:
-			if m.ticketSupported && !echInner {
+			if m.ticketSupported {
 				// RFC 5077, Section 3.2
 				exts.AddUint16(extensionSessionTicket)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -222,7 +258,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *RenegotiationInfoExtension:
-			if m.secureRenegotiationSupported && !echInner {
+			if m.secureRenegotiationSupported {
 				// RFC 5746, Section 3.2
 				exts.AddUint16(extensionRenegotiationInfo)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -232,7 +268,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *ExtendedMasterSecretExtension:
-			if m.extendedMasterSecret && !echInner {
+			if m.extendedMasterSecret {
 				// RFC 7627
 				exts.AddUint16(extensionExtendedMasterSecret)
 				exts.AddUint16(0) // empty extension_data
@@ -265,7 +301,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *StatusRequestExtension:
-			if m.ocspStapling && !echInner {
+			if m.ocspStapling {
 				// RFC 4366, Section 3.6
 				exts.AddUint16(extensionStatusRequest)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -275,7 +311,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *SupportedGroupsExtension:
-			if len(m.supportedCurves) > 0 && !echInner {
+			if len(m.supportedCurves) > 0 {
 				// RFC 4492, sections 5.1.1 and RFC 8446, Section 4.2.7
 				exts.AddUint16(extensionSupportedCurves)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -287,7 +323,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *SignatureAlgorithmsExtension:
-			if len(m.supportedSignatureAlgorithms) > 0 && !echInner {
+			if len(m.supportedSignatureAlgorithms) > 0 {
 				// RFC 5246, Section 7.4.1.4.1
 				exts.AddUint16(extensionSignatureAlgorithms)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -299,7 +335,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *SignatureAlgorithmsCertExtension:
-			if len(m.supportedSignatureAlgorithmsCert) > 0 && !echInner {
+			if len(m.supportedSignatureAlgorithmsCert) > 0 {
 				// RFC 8446, Section 4.2.3
 				exts.AddUint16(extensionSignatureAlgorithmsCert)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -311,7 +347,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *ALPNExtension:
-			if len(m.alpnProtocols) > 0 && !echInner {
+			if len(m.alpnProtocols) > 0 {
 				// RFC 7301, Section 3.1
 				exts.AddUint16(extensionALPN)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -325,7 +361,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *LegacyALPSExtension:
-			if len(m.alpsProtocols) > 0 && !echInner {
+			if len(m.alpsProtocols) > 0 {
 				exts.AddUint16(extensionLegacyALPS)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 					exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -338,7 +374,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *ALPSExtension:
-			if len(m.alpsProtocols) > 0 && !echInner {
+			if len(m.alpsProtocols) > 0 {
 				exts.AddUint16(extensionALPS)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 					exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -351,7 +387,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *SupportedVersionsExtension:
-			if len(m.supportedVersions) > 0 && !echInner {
+			if len(m.supportedVersions) > 0 {
 				// RFC 8446, Section 4.2.1
 				exts.AddUint16(extensionSupportedVersions)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -363,7 +399,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *CompressedCertificateExtension:
-			if len(m.supportedCertCompressionAlgorithms) > 0 && !echInner {
+			if len(m.supportedCertCompressionAlgorithms) > 0 {
 				exts.AddUint16(extensionCompressCertificate)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 					exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -374,7 +410,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *CookieExtension:
-			if len(m.cookie) > 0 && !echInner {
+			if len(m.cookie) > 0 {
 				// RFC 8446, Section 4.2.2
 				exts.AddUint16(extensionCookie)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -384,7 +420,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *KeyShareExtension:
-			if len(m.keyShares) > 0 && !echInner {
+			if len(m.keyShares) > 0 {
 				// RFC 8446, Section 4.2.8
 				exts.AddUint16(extensionKeyShare)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -399,7 +435,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *PSKModesExtension:
-			if len(m.pskModes) > 0 && !echInner {
+			if len(m.pskModes) > 0 {
 				// RFC 8446, Section 4.2.9
 				exts.AddUint16(extensionPSKModes)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
@@ -410,12 +446,11 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 			}
 		case *ECHOuterExtension:
 			if echInner {
-				echOuterExts := m.echOuterExtensions()
-				if len(echOuterExts) > 0 {
+				if len(m.compressedList) > 0 {
 					exts.AddUint16(extensionECHOuterExtensions)
 					exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 						exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
-							for _, e := range echOuterExts {
+							for _, e := range m.echOuterExts {
 								exts.AddUint16(e)
 							}
 						})
@@ -729,14 +764,15 @@ func (m *clientHelloMsg) automaticPadding(minSize uint16) {
 }
 
 // Shuffle extensions to avoid fingerprinting -- introduced in Chrome 106
-func (m *clientHelloMsg) automaticShuffle() {
+func (m *clientHelloMsg) shuffleExtensions() {
 	// shuffleCheck checks:
+	// - if the m.extensions[i] is a ECHOuter extension, then it should not be shuffled
 	// - if the m.extensions[i] is a GREASE extension, then it should not be shuffled
 	// - if the m.extensions[i] is a padding/pre_shared_key extension, then it should be the
 	//  last extension in the list and should not be shuffled
 	var shuffleCheck = func(i int) bool {
 		switch m.extensionList[i].(type) {
-		case *GREASEExtension, *PaddingExtension, *PreSharedKeyExtension:
+		case *ECHOuterExtension, *GREASEExtension, *PaddingExtension, *PreSharedKeyExtension:
 			return false
 		default:
 			return true
@@ -1113,7 +1149,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			m.extensionList = append(m.extensionList, &ECHOuterExtension{})
 		case extensionPadding:
 			ext := &PaddingExtension{}
-			if !ext.Unmarshal(typeClientHello, false, extData) {
+			if ok, _ := ext.Unmarshal(typeClientHello, false, extData, nil); !ok {
 				return false
 			}
 			m.extensionList = append(m.extensionList, ext)
@@ -1128,7 +1164,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				ext = &UnimplementedExtension{Id: extension}
 			}
 
-			if !ext.Unmarshal(typeClientHello, false, extData) {
+			if ok, _ := ext.Unmarshal(typeClientHello, false, extData, nil); !ok {
 				return false
 			}
 
@@ -1503,7 +1539,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 				ext = &UnimplementedExtension{Id: extension}
 			}
 
-			if !ext.Unmarshal(typeServerHello, false, extData) {
+			if ok, _ := ext.Unmarshal(typeServerHello, false, extData, nil); !ok {
 				return false
 			}
 
@@ -1687,7 +1723,7 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 				ext = &UnimplementedExtension{Id: extension}
 			}
 
-			if !ext.Unmarshal(typeEncryptedExtensions, false, extData) {
+			if ok, _ := ext.Unmarshal(typeEncryptedExtensions, false, extData, nil); !ok {
 				return false
 			}
 

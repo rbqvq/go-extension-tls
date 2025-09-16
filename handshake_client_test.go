@@ -2900,7 +2900,7 @@ func TestECHTLS12Server(t *testing.T) {
 	clientConfig, serverConfig := testConfig.Clone(), testConfig.Clone()
 
 	serverConfig.MaxVersion = VersionTLS12
-	clientConfig.MinVersion = 0
+	clientConfig.MinVersion = VersionTLS13
 
 	clientConfig.EncryptedClientHelloConfigList, _ = hex.DecodeString("0041fe0d003d0100200020204bed0a11fc0dde595a9b78d966b0011128eb83f65d3c91c1cc5ac786cd246f000400010001ff0e6578616d706c652e676f6c616e670000")
 

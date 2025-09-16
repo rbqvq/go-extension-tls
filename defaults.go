@@ -75,3 +75,76 @@ var defaultCipherSuitesTLS13NoAES = []uint16{
 	TLS_SM4_GCM_SM3,
 	TLS_SM4_CCM_SM3,
 }
+
+var defaultInnerExtensions = []Extension{
+	&ServerNameIndicationExtension{},
+	&SCTExtension{},
+	&SupportedVersionsExtension{}, // allowed outer use before TLS v1.3
+	&EarlyDataExtension{},
+	&QUICTransportParametersExtension{},
+	&EncryptedClientHelloExtension{},
+
+	&ECHOuterExtension{},
+
+	&PreSharedKeyExtension{},
+}
+
+var defaultOuterExtensions = []Extension{
+	&ServerNameIndicationExtension{},
+	&SCTExtension{},
+	&SupportedVersionsExtension{},
+	&EarlyDataExtension{},
+	&QUICTransportParametersExtension{},
+	&EncryptedClientHelloExtension{},
+
+	&StatusRequestExtension{},
+	&SupportedGroupsExtension{},
+	&SignatureAlgorithmsExtension{},
+	&SignatureAlgorithmsCertExtension{},
+	&ALPNExtension{},
+	// &SupportedVersionsExtension{},
+	&CookieExtension{},
+	&KeyShareExtension{},
+	&PSKModesExtension{},
+	&PaddingExtension{},
+
+	&PreSharedKeyExtension{},
+}
+
+var defaultCompressedExtensions = []Extension{
+	&StatusRequestExtension{},
+	&SupportedGroupsExtension{},
+	&SignatureAlgorithmsExtension{},
+	&SignatureAlgorithmsCertExtension{},
+	&ALPNExtension{},
+	// &SupportedVersionsExtension{}, // allowed outer use before TLS v1.3
+	&CookieExtension{},
+	&KeyShareExtension{},
+	&PSKModesExtension{},
+}
+
+var defaultExtensions = []Extension{
+	&ServerNameIndicationExtension{},
+	&SupportedPointsExtension{},
+	&SessionTicketExtension{},
+	&RenegotiationInfoExtension{},
+	&ExtendedMasterSecretExtension{},
+	&SCTExtension{},
+	&EarlyDataExtension{},
+	&QUICTransportParametersExtension{},
+	&EncryptedClientHelloExtension{},
+
+	&StatusRequestExtension{},
+	&SupportedGroupsExtension{},
+	&SignatureAlgorithmsExtension{},
+	&SignatureAlgorithmsCertExtension{},
+	&ALPNExtension{},
+	&SupportedVersionsExtension{},
+	&CookieExtension{},
+	&KeyShareExtension{},
+	&PSKModesExtension{},
+
+	&PreSharedKeyExtension{},
+}
+
+var defaultEncryptedClientHelloConfig = &ECHConfig{}

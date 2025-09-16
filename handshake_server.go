@@ -222,17 +222,28 @@ func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, *echServer
 		case nil:
 		case *UnimplementedExtension:
 			for _, ext := range c.config.extensions() {
-				if ext.ExtensionId() == extension.Id {
-					ext = ext.Clone()
-
-					ext.NegotiatedVersion(c.vers)
-					if !ext.Unmarshal(typeClientHello, false, extension.Data) {
-						return nil, nil, c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
-					}
-
-					clientHello.extensionList[i] = ext
-					break
+				if ext == nil {
+					continue
 				}
+
+				if ext.ExtensionId() != extension.Id {
+					continue
+				}
+
+				ext = ext.Clone()
+				ext.NegotiatedVersion(c.vers)
+
+				ok, err := ext.Unmarshal(typeClientHello, ech != nil, extension.Data, c.extensionState)
+				if !ok {
+					return nil, nil, c.sendAlert(alertDecodeError)
+				}
+				if err != nil {
+					c.sendAlert(alertIllegalParameter)
+					return nil, nil, err
+				}
+
+				clientHello.extensionList[i] = ext
+				break
 			}
 		}
 	}

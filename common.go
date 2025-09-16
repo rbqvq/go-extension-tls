@@ -278,6 +278,9 @@ type ConnectionState struct {
 	// ServerProtocolSetting is the application protocol negotiated with ALPS.
 	ServerProtocolSetting []byte
 
+	// ExtensionState is the state storage of custom extensions.
+	ExtensionState *ExtensionState
+
 	// ServerName is the value of the Server Name Indication extension sent by
 	// the client. It's available both on the server and on the client side.
 	ServerName string
@@ -904,9 +907,9 @@ type Config struct {
 	// See https://www.kernel.org/doc/html/v6.15/networking/tls.html
 	KernelRXExpectNoPad bool
 
-	// EncryptedClientHelloDummyConfig are the parameters used by the client when it
-	// offers the dummy ECH extension.
-	EncryptedClientHelloDummyConfig *ECHDummyConfig
+	// EncryptedClientHelloConfig  is the parameter used by the client.
+	// Control ECH related details.
+	EncryptedClientHelloConfig *ECHConfig
 
 	// EncryptedClientHelloConfigList is a serialized ECHConfigList. If
 	// provided, clients will attempt to connect to servers using Encrypted
@@ -1104,7 +1107,7 @@ func (c *Config) Clone() *Config {
 		KernelTX:                            c.KernelTX,
 		KernelRX:                            c.KernelRX,
 		KernelRXExpectNoPad:                 c.KernelRXExpectNoPad,
-		EncryptedClientHelloDummyConfig:     c.EncryptedClientHelloDummyConfig,
+		EncryptedClientHelloConfig:          c.EncryptedClientHelloConfig,
 		EncryptedClientHelloConfigList:      c.EncryptedClientHelloConfigList,
 		EncryptedClientHelloRejectionVerify: c.EncryptedClientHelloRejectionVerify,
 		EncryptedClientHelloKeys:            c.EncryptedClientHelloKeys,
@@ -1289,8 +1292,8 @@ const roleServer = false
 func (c *Config) supportedVersions(isClient bool) []uint16 {
 	if c.SupportedVersions != nil {
 		versions := slices.Clone(c.SupportedVersions)
-		for i,v :=range versions {
-			if IsGREASE(v){
+		for i, v := range versions {
+			if IsGREASE(v) {
 				versions[i] = c.GREASE()
 			}
 		}
@@ -1299,9 +1302,6 @@ func (c *Config) supportedVersions(isClient bool) []uint16 {
 	versions := make([]uint16, 0, len(supportedVersions))
 	for _, v := range supportedVersions {
 		if (c == nil || c.MinVersion == 0) && v < VersionTLS12 && isClient {
-			continue
-		}
-		if isClient && c.EncryptedClientHelloConfigList != nil && v < VersionTLS13 {
 			continue
 		}
 		if c != nil && c.MinVersion != 0 && v < c.MinVersion {
@@ -1366,9 +1366,10 @@ func (c *Config) certCompressionPreferences() []CertCompressionAlgorithm {
 		return nil
 	}
 
-	if len(c.CertCompressionPreferences) == 0 {
+	if len(c.CertCompressionPreferences) <= 0 {
 		return defaultCertCompressionPreferences
 	}
+
 	return c.CertCompressionPreferences
 }
 
@@ -1389,12 +1390,7 @@ func (c *Config) signatureAlgorithmsCertPreferences() []SignatureScheme {
 }
 
 func (c *Config) supportsCertCompression(algorithm CertCompressionAlgorithm) bool {
-	for _, cc := range c.certCompressionPreferences() {
-		if cc == algorithm {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.certCompressionPreferences(), algorithm)
 }
 
 // mutualVersion returns the protocol version to use given the advertised
@@ -1692,12 +1688,28 @@ func (c *Config) maxEarlyData() uint32 {
 	return c.MaxEarlyData
 }
 
+func (c *Config) shuffleExtensions(m *clientHelloMsg) {
+	if !c.ShuffleExtensions {
+		return
+	}
+
+	m.shuffleExtensions()
+}
+
 func (c *Config) extensions() []Extension {
 	if c == nil || c.Extensions == nil {
 		return defaultExtensions
 	}
 
 	return c.Extensions
+}
+
+func (c *Config) echConfig() *ECHConfig {
+	if c == nil || c.EncryptedClientHelloConfig == nil {
+		return defaultEncryptedClientHelloConfig
+	}
+
+	return c.EncryptedClientHelloConfig
 }
 
 const (

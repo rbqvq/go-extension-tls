@@ -42,8 +42,8 @@ import (
 // reference connection will always change.
 
 var (
-	update       = flag.Bool("update", false, "update golden files on failure")
-	keyFile      = flag.String("keylog", "", "destination file for KeyLogWriter")
+	update  = flag.Bool("update", false, "update golden files on failure")
+	keyFile = flag.String("keylog", "", "destination file for KeyLogWriter")
 )
 
 func runTestAndUpdateIfNeeded(t *testing.T, name string, run func(t *testing.T, update bool), wait bool) {
@@ -429,15 +429,14 @@ func runMain(m *testing.M) int {
 	}
 
 	testConfig = &Config{
-		Time:                    func() time.Time { return time.Unix(0, 0) },
-		Rand:                    zeroSource{},
-		Certificates:            make([]Certificate, 2),
-		InsecureSkipVerify:      true,
-		CipherSuites:            allCipherSuites(),
-		CurvePreferences:        []CurveID{X25519, CurveP256, CurveP384, CurveP521},
-		MinVersion:              VersionTLS10,
-		MaxVersion:              VersionTLS13,
-		CertCompressionDisabled: true,
+		Time:               func() time.Time { return time.Unix(0, 0) },
+		Rand:               zeroSource{},
+		Certificates:       make([]Certificate, 2),
+		InsecureSkipVerify: true,
+		CipherSuites:       allCipherSuites(),
+		CurvePreferences:   []CurveID{X25519, CurveP256, CurveP384, CurveP521},
+		MinVersion:         VersionTLS10,
+		MaxVersion:         VersionTLS13,
 	}
 	testConfig.Certificates[0].Certificate = [][]byte{testRSACertificate}
 	testConfig.Certificates[0].PrivateKey = testRSAPrivateKey

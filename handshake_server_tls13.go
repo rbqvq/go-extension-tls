@@ -777,6 +777,32 @@ func (hs *serverHandshakeStateTLS13) doHelloRetryRequest(selectedGroup CurveID) 
 		}
 	}
 
+	for _, extension := range clientHello.extensionList {
+		switch extension := extension.(type) {
+		case nil:
+		case *UnimplementedExtension:
+			for _, ext := range hs.extensions {
+				if ext == nil {
+					continue
+				}
+
+				if ext.ExtensionId() != extension.Id {
+					continue
+				}
+
+				ok, err := ext.Unmarshal(typeClientHello, hs.echContext != nil, extension.Data, c.extensionState)
+				if !ok {
+					return nil, c.sendAlert(alertDecodeError)
+				}
+				if err != nil {
+					c.sendAlert(alertIllegalParameter)
+					return nil, err
+				}
+				break
+			}
+		}
+	}
+
 	if len(clientHello.keyShares) != 1 {
 		c.sendAlert(alertIllegalParameter)
 		return nil, errors.New("tls: client didn't send one key share in second ClientHello")
@@ -1291,6 +1317,28 @@ func (hs *serverHandshakeStateTLS13) readClientParameters() error {
 	if !ok {
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(encryptedExtensions, msg)
+	}
+
+	for _, extension := range encryptedExtensions.extensions {
+		switch extension := extension.(type) {
+		case nil:
+		case *UnimplementedExtension:
+			for _, ext := range hs.extensions {
+				if ext.ExtensionId() != extension.Id {
+					continue
+				}
+
+				ok, err := ext.Unmarshal(typeEncryptedExtensions, hs.echContext != nil, extension.Data, c.extensionState)
+				if !ok {
+					return c.sendAlert(alertDecodeError)
+				}
+				if err != nil {
+					c.sendAlert(alertIllegalParameter)
+					return err
+				}
+				break
+			}
+		}
 	}
 
 	if !encryptedExtensions.alps {

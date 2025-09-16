@@ -217,20 +217,36 @@ func pickECHCipherSuite(suites []echCipher) (echCipher, error) {
 	return echCipher{}, errors.New("tls: no supported symmetric ciphersuites for ECH")
 }
 
-func encodeInnerClientHello(inner *clientHelloMsg, maxNameLength int) ([]byte, error) {
+func (c *Config) encodeInnerClientHello(inner *clientHelloMsg, maxNameLength int) ([]byte, error) {
 	h, err := inner.marshalMsg(true)
 	if err != nil {
 		return nil, err
 	}
 	h = h[4:] // strip four byte prefix
 
+	echConf := c.echConfig()
+	unpaddingLen := len(h)
+
 	var paddingLen int
-	if inner.serverName != "" {
-		paddingLen = max(0, maxNameLength-len(inner.serverName))
+	if len(echConf.InnerLens) > 0 {
+		for _, length := range echConf.InnerLens {
+			paddingLen = int(length) - unpaddingLen
+			if paddingLen > 0 {
+				break
+			}
+		}
 	} else {
-		paddingLen = maxNameLength + 9
+		if inner.serverName != "" {
+			paddingLen = max(0, maxNameLength-len(inner.serverName))
+		} else {
+			paddingLen = maxNameLength + 9
+		}
+		paddingLen = 31 - ((unpaddingLen + paddingLen - 1) % 32)
 	}
-	paddingLen = 31 - ((len(h) + paddingLen - 1) % 32)
+
+	if paddingLen <= 0 {
+		return h, nil
+	}
 
 	return append(h, make([]byte, paddingLen)...), nil
 }
@@ -435,12 +451,12 @@ func generateOuterECHExt(id uint8, kdfID, aeadID uint16, encodedKey []byte, payl
 	return b.Bytes()
 }
 
-func computeAndUpdateOuterECHExtension(outer, inner *clientHelloMsg, ech *echClientContext, useKey bool) error {
+func (c *Config) computeAndUpdateOuterECHExtension(outer, inner *clientHelloMsg, ech *echClientContext, useKey bool) error {
 	var encapKey []byte
 	if useKey {
 		encapKey = ech.encapsulatedKey
 	}
-	encodedInner, err := encodeInnerClientHello(inner, int(ech.config.MaxNameLength))
+	encodedInner, err := c.encodeInnerClientHello(inner, int(ech.config.MaxNameLength))
 	if err != nil {
 		return err
 	}
@@ -452,6 +468,7 @@ func computeAndUpdateOuterECHExtension(outer, inner *clientHelloMsg, ech *echCli
 	if err != nil {
 		return err
 	}
+	outer.automaticPadding(c.MinClientHelloSize)
 	serializedOuter, err := outer.marshal()
 	if err != nil {
 		return err

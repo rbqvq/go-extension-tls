@@ -119,6 +119,35 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 				c.sendAlert(alertUnsupportedExtension)
 				return errors.New("tls: unexpected server_name extension in server hello")
 			}
+
+			hs.extensions = hs.echContext.innerHello.extensionList
+			for _, extension := range hs.serverHello.extensions {
+				switch extension := extension.(type) {
+				case nil:
+				case *UnimplementedExtension:
+					for _, ext := range hs.extensions {
+						if ext == nil {
+							continue
+						}
+
+						if ext.ExtensionId() != extension.ExtensionId() {
+							continue
+						}
+
+						ext.NegotiatedVersion(c.vers)
+
+						ok, err := ext.Unmarshal(typeServerHello, true, extension.Data, c.extensionState)
+						if !ok {
+							return c.sendAlert(alertDecodeError)
+						}
+						if err != nil {
+							c.sendAlert(alertIllegalParameter)
+							return err
+						}
+						break
+					}
+				}
+			}
 		} else {
 			hs.echContext.echRejected = true
 		}
@@ -292,6 +321,35 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 				c.serverName = c.config.ServerName
 				isInnerHello = true
 				c.echAccepted = true
+
+				hs.extensions = hs.echContext.innerHello.extensionList
+				for _, extension := range hs.serverHello.extensions {
+					switch extension := extension.(type) {
+					case nil:
+					case *UnimplementedExtension:
+						for _, ext := range hs.extensions {
+							if ext == nil {
+								continue
+							}
+
+							if ext.ExtensionId() != extension.ExtensionId() {
+								continue
+							}
+
+							ext.NegotiatedVersion(c.vers)
+
+							ok, err := ext.Unmarshal(typeServerHello, true, extension.Data, c.extensionState)
+							if !ok {
+								return c.sendAlert(alertDecodeError)
+							}
+							if err != nil {
+								c.sendAlert(alertIllegalParameter)
+								return err
+							}
+							break
+						}
+					}
+				}
 			}
 		}
 
@@ -393,6 +451,20 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 		}
 	}
 
+	if hello.earlyData {
+		hello.earlyData = false
+
+		if c.quic == nil {
+			c.earlyNotify.L.Lock()
+			c.earlyDataEOF = true
+			c.earlyNotify.L.Unlock()
+		} else {
+			c.quicRejectedEarlyData()
+		}
+		c.out.cipher = nil
+	}
+
+	echConf := c.config.echConfig()
 	if len(hello.pskIdentities) > 0 {
 		pskSuite := cipherSuiteTLS13ByID(hs.session.cipherSuite)
 		if pskSuite == nil {
@@ -410,6 +482,8 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 				return err
 			}
 
+			setupInnerClientHelloCompress(echConf, hs.hello, hello)
+			hello.automaticPadding(c.config.MinClientHelloSize)
 			if err := computeAndUpdatePSK(hello, hs.binderKey, transcript, hs.suite.finishedHash); err != nil {
 				return err
 			}
@@ -417,41 +491,30 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 			// Server selected a cipher suite incompatible with the PSK.
 			hello.pskIdentities = nil
 			hello.pskBinders = nil
+			setupInnerClientHelloCompress(echConf, hs.hello, hello)
+			hello.automaticPadding(c.config.MinClientHelloSize)
 		}
-	}
-
-	if hs.hello.earlyData {
-		hs.hello.earlyData = false
-
-		if c.quic == nil {
-			c.earlyNotify.L.Lock()
-			c.earlyDataEOF = true
-			c.earlyNotify.L.Unlock()
-		} else {
-			c.quicRejectedEarlyData()
-		}
-		c.out.cipher = nil
+	} else {
+		setupInnerClientHelloCompress(echConf, hs.hello, hello)
+		hello.automaticPadding(c.config.MinClientHelloSize)
 	}
 
 	if isInnerHello {
 		// Any extensions which have changed in hello, but are mirrored in the
 		// outer hello and compressed, need to be copied to the outer hello, so
-		// they can be properly decompressed by the server. For now, the only
-		// extension which may have changed is keyShares.
-		hs.hello.keyShares = hello.keyShares
+		// they can be properly decompressed by the server.
+		hs.hello.pskBinders = hello.pskBinders
 		hs.echContext.innerHello = hello
 		if err := transcriptMsg(hs.echContext.innerHello, hs.echContext.innerTranscript); err != nil {
 			return err
 		}
 
-		if err := computeAndUpdateOuterECHExtension(hs.hello, hs.echContext.innerHello, hs.echContext, false); err != nil {
+		if err := c.config.computeAndUpdateOuterECHExtension(hs.hello, hs.echContext.innerHello, hs.echContext, false); err != nil {
 			return err
 		}
 	} else {
 		hs.hello = hello
 	}
-
-	hs.hello.automaticPadding(c.config.MinClientHelloSize)
 
 	if _, err := hs.c.writeHandshakeRecord(hs.hello, hs.transcript); err != nil {
 		return err
@@ -469,6 +532,35 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 		return unexpectedMessageError(serverHello, msg)
 	}
 	hs.serverHello = serverHello
+
+	extensions := hs.hello.extensionList
+	for _, extension := range serverHello.extensions {
+		switch extension := extension.(type) {
+		case nil:
+		case *UnimplementedExtension:
+			for _, ext := range extensions {
+				if ext == nil {
+					continue
+				}
+
+				if ext.ExtensionId() != extension.ExtensionId() {
+					continue
+				}
+
+				ext.NegotiatedVersion(c.vers)
+
+				ok, err := ext.Unmarshal(typeServerHello, false, extension.Data, c.extensionState)
+				if !ok {
+					return c.sendAlert(alertDecodeError)
+				}
+				if err != nil {
+					c.sendAlert(alertIllegalParameter)
+					return err
+				}
+				break
+			}
+		}
+	}
 
 	if err := hs.checkServerHelloOrHRR(); err != nil {
 		return err
@@ -648,6 +740,32 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 	if !ok {
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(encryptedExtensions, msg)
+	}
+
+	for _, extension := range encryptedExtensions.extensions {
+		switch extension := extension.(type) {
+		case nil:
+		case *UnimplementedExtension:
+			for _, ext := range hs.extensions {
+				if ext == nil {
+					continue
+				}
+
+				if ext.ExtensionId() != extension.ExtensionId() {
+					continue
+				}
+
+				ok, err := ext.Unmarshal(typeEncryptedExtensions, c.echAccepted, extension.Data, c.extensionState)
+				if !ok {
+					return c.sendAlert(alertDecodeError)
+				}
+				if err != nil {
+					c.sendAlert(alertIllegalParameter)
+					return err
+				}
+				break
+			}
+		}
 	}
 
 	if err := checkALPN(hs.hello.alpnProtocols, encryptedExtensions.alpnProtocol, c.quic != nil); err != nil {
@@ -884,6 +1002,13 @@ func (hs *clientHandshakeStateTLS13) sendClientParameters() error {
 	c := hs.c
 
 	if hs.earlyData || !hs.alpsReq {
+		return nil
+	}
+
+	if hs.echContext != nil && hs.echContext.echRejected {
+		if _, err := hs.c.writeHandshakeRecord(&encryptedExtensionsMsg{}, hs.transcript); err != nil {
+			return err
+		}
 		return nil
 	}
 

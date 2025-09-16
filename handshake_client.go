@@ -41,6 +41,44 @@ type clientHandshakeState struct {
 	extensions   []Extension
 }
 
+func (c *Conn) makeClientHelloExtensions(hello *clientHelloMsg, extensions []Extension) error {
+	config := c.config
+	hello.extensionList = make([]Extension, 0, len(extensions))
+
+	grease_extensions_ids := make([]uint16, 0)
+	for _, extension := range extensions {
+		if extension == nil {
+			continue
+		}
+
+		extension = extension.Clone()
+		switch extension := extension.(type) {
+		case *GREASEExtension:
+			switch len(grease_extensions_ids) {
+			case 0:
+				extension.Id = config.GREASE()
+			case 1:
+				extension.Id = config.GREASE()
+				if extension.Id == grease_extensions_ids[0] {
+					extension.Id ^= 0x1010
+				}
+
+				extension.Data = []byte{0}
+			default:
+				return errors.New("at most 2 grease extensions are supported")
+			}
+			grease_extensions_ids = append(grease_extensions_ids, extension.Id)
+
+			hello.extensionList = append(hello.extensionList, extension)
+		default:
+			hello.extensionList = append(hello.extensionList, extension)
+		}
+	}
+
+	config.shuffleExtensions(hello)
+	return nil
+}
+
 func (c *Conn) makeClientHello() (*clientHelloMsg, *keySharePrivateKeys, *echClientContext, error) {
 	config := c.config
 	if len(config.ServerName) == 0 && !config.InsecureSkipVerify {
@@ -250,36 +288,6 @@ CipherSuiteLoop:
 		}
 	}
 
-	grease_extensions_ids := make([]uint16, 0)
-	for _, extension := range c.config.extensions() {
-		if extension == nil {
-			continue
-		}
-
-		extension = extension.Clone()
-		switch extension := extension.(type) {
-		case *GREASEExtension:
-			switch len(grease_extensions_ids) {
-			case 0:
-				extension.Id = config.GREASE()
-			case 1:
-				extension.Id = config.GREASE()
-				if extension.Id == grease_extensions_ids[0] {
-					extension.Id ^= 0x1010
-				}
-
-				extension.Data = []byte{0}
-			default:
-				return nil, nil, nil, errors.New("at most 2 grease extensions are supported")
-			}
-			grease_extensions_ids = append(grease_extensions_ids, extension.Id)
-
-			hello.extensionList = append(hello.extensionList, extension)
-		default:
-			hello.extensionList = append(hello.extensionList, extension)
-		}
-	}
-
 	if c.quic != nil {
 		p, err := c.quicGetTransportParameters()
 		if err != nil {
@@ -291,15 +299,23 @@ CipherSuiteLoop:
 		hello.quicTransportParameters = p
 	}
 
+	echConf := config.echConfig()
+	if echConf.Disabled {
+		if err := c.makeClientHelloExtensions(hello, config.extensions()); err != nil {
+			return nil, nil, nil, err
+		}
+		return hello, keyShareKeys, nil, nil
+	}
+
 	var ech *echClientContext
-	if c.config.EncryptedClientHelloConfigList == nil {
-		if err := generateAndUpdateOuterECHExtension(c.config.rand(), hello, c.config.EncryptedClientHelloDummyConfig); err != nil {
+	if config.EncryptedClientHelloConfigList == nil {
+		if err := generateAndUpdateOuterECHExtension(c.config.rand(), hello, echConf); err != nil {
+			return nil, nil, nil, err
+		}
+		if err := c.makeClientHelloExtensions(hello, config.extensions()); err != nil {
 			return nil, nil, nil, err
 		}
 	} else {
-		if c.config.MinVersion != 0 && c.config.MinVersion < VersionTLS13 {
-			return nil, nil, nil, errors.New("tls: MinVersion must be >= VersionTLS13 if EncryptedClientHelloConfigList is populated")
-		}
 		if c.config.MaxVersion != 0 && c.config.MaxVersion <= VersionTLS12 {
 			return nil, nil, nil, errors.New("tls: MaxVersion must be >= VersionTLS13 if EncryptedClientHelloConfigList is populated")
 		}
@@ -311,15 +327,18 @@ CipherSuiteLoop:
 		if echConfig == nil {
 			return nil, nil, nil, errors.New("tls: EncryptedClientHelloConfigList contains no valid configs")
 		}
-		ech = &echClientContext{config: echConfig}
-		hello.encryptedClientHello = []byte{1} // indicate inner hello
+		ech = &echClientContext{config: echConfig, innerHello: hello.clone()}
+		ech.innerHello.encryptedClientHello = []byte{1} // indicate inner hello
 		// We need to explicitly set these 1.2 fields to nil, as we do not
 		// marshal them when encoding the inner hello, otherwise transcripts
 		// will later mismatch.
-		hello.supportedPoints = nil
-		hello.ticketSupported = false
-		hello.secureRenegotiationSupported = false
-		hello.extendedMasterSecret = false
+		ech.innerHello.supportedPoints = nil
+		ech.innerHello.ticketSupported = false
+		ech.innerHello.secureRenegotiationSupported = false
+		ech.innerHello.extendedMasterSecret = false
+
+		ech.innerHello.cipherSuites = slices.DeleteFunc(ech.innerHello.cipherSuites, func(suite uint16) bool { return !IsGREASE(suite) && cipherSuiteTLS13ByID(suite) == nil })
+		ech.innerHello.supportedVersions = slices.DeleteFunc(ech.innerHello.supportedVersions, func(v uint16) bool { return !IsGREASE(v) && v < VersionTLS13 })
 
 		echPK, err := hpke.ParseHPKEPublicKey(ech.config.KemID, ech.config.PublicKey)
 		if err != nil {
@@ -333,6 +352,12 @@ CipherSuiteLoop:
 		info := append([]byte("tls ech\x00"), ech.config.raw...)
 		ech.encapsulatedKey, ech.hpkeContext, err = hpke.SetupSender(ech.config.KemID, suite.KDFID, suite.AEADID, echPK, info)
 		if err != nil {
+			return nil, nil, nil, err
+		}
+		if err := c.makeClientHelloExtensions(hello, echConf.outerExtensions()); err != nil {
+			return nil, nil, nil, err
+		}
+		if err := c.makeClientHelloExtensions(ech.innerHello, echConf.innerExtensions()); err != nil {
 			return nil, nil, nil, err
 		}
 	}
@@ -367,11 +392,19 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		return err
 	}
 
-	session, earlySecret, binderKey, err := c.loadSession(hello)
+	session, earlySecret, binderKey, err := c.loadSession(hello, ech)
 	if err != nil {
 		return err
 	}
-	if session != nil {
+	if session == nil {
+		hello := hello
+		if ech != nil {
+			setupInnerClientHelloCompress(c.config.echConfig(), hello, ech.innerHello)
+			hello = ech.innerHello
+		}
+
+		hello.automaticPadding(c.config.MinClientHelloSize)
+	} else {
 		defer func() {
 			// If we got a handshake failure when resuming a session, throw away
 			// the session ticket. See RFC 5077, Section 3.2.
@@ -388,9 +421,10 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 	}
 
 	if ech != nil {
-		// Split hello into inner and outer
-		ech.innerHello = hello.clone()
-
+		// Any extensions which have changed in hello, but are mirrored in the
+		// outer hello and compressed, need to be copied to the outer hello, so
+		// they can be properly decompressed by the server.
+		hello.pskBinders = ech.innerHello.pskBinders
 		// Overwrite the server name in the outer hello with the public facing
 		// name.
 		hello.serverName = string(ech.config.PublicName)
@@ -405,17 +439,12 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		// work around _possibly_ broken middleboxes, but there is little-to-no
 		// evidence that this is actually a problem.
 
-		if err := computeAndUpdateOuterECHExtension(hello, ech.innerHello, ech, true); err != nil {
+		if err := c.config.computeAndUpdateOuterECHExtension(hello, ech.innerHello, ech, true); err != nil {
 			return err
 		}
 	}
 
 	c.serverName = hello.serverName
-
-	hello.automaticPadding(c.config.MinClientHelloSize)
-	if c.config.ShuffleExtensions {
-		hello.automaticShuffle()
-	}
 
 	if _, err := c.writeHandshakeRecord(hello, nil); err != nil {
 		return err
@@ -448,14 +477,21 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 						continue
 					}
 
-					if ext.ExtensionId() == extension.ExtensionId() {
-						ext.NegotiatedVersion(c.vers)
-
-						if !ext.Unmarshal(typeServerHello, false, extension.Data) {
-							return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
-						}
-						break
+					if ext.ExtensionId() != extension.ExtensionId() {
+						continue
 					}
+
+					ext.NegotiatedVersion(c.vers)
+
+					ok, err := ext.Unmarshal(typeServerHello, false, extension.Data, c.extensionState)
+					if !ok {
+						return c.sendAlert(alertDecodeError)
+					}
+					if err != nil {
+						c.sendAlert(alertIllegalParameter)
+						return err
+					}
+					break
 				}
 			}
 		}
@@ -548,17 +584,18 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 	return handshakeFn()
 }
 
-func (c *Conn) loadSession(hello *clientHelloMsg) (
+func (c *Conn) loadSession(outer *clientHelloMsg, ech *echClientContext) (
 	session *SessionState, earlySecret, binderKey []byte, err error) {
 	if c.config.SessionTicketsDisabled || c.config.ClientSessionCache == nil {
 		return nil, nil, nil, nil
 	}
 
-	echInner := bytes.Equal(hello.encryptedClientHello, []byte{1})
+	hello := outer
+	hello.ticketSupported = true
 
-	// ticketSupported is a TLS 1.2 extension (as TLS 1.3 replaced tickets with PSK
-	// identities) and ECH requires and forces TLS 1.3.
-	hello.ticketSupported = true && !echInner
+	if ech != nil {
+		hello = ech.innerHello
+	}
 
 	if c.config.maxSupportedVersion(c.isClient) >= VersionTLS13 {
 		// Require DHE on resumption as it guarantees forward secrecy against
@@ -622,6 +659,7 @@ func (c *Conn) loadSession(hello *clientHelloMsg) (
 		}
 
 		hello.sessionTicket = session.ticket
+		hello.automaticPadding(c.config.MinClientHelloSize)
 		return
 	}
 
@@ -685,9 +723,8 @@ func (c *Conn) loadSession(hello *clientHelloMsg) (
 	earlySecret = cipherSuite.extract(session.secret, nil)
 	binderKey = cipherSuite.deriveSecret(earlySecret, resumptionBinderLabel, nil)
 	transcript := cipherSuite.hash.New()
-
+	setupInnerClientHelloCompress(c.config.echConfig(), outer, hello)
 	hello.automaticPadding(c.config.MinClientHelloSize)
-
 	if err := computeAndUpdatePSK(hello, binderKey, transcript, cipherSuite.finishedHash); err != nil {
 		return nil, nil, nil, err
 	}

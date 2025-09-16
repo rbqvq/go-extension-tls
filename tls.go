@@ -45,8 +45,9 @@ import (
 // at least one certificate or else set GetCertificate.
 func Server(conn net.Conn, config *Config) *Conn {
 	c := &Conn{
-		conn:   conn,
-		config: config,
+		conn:           conn,
+		config:         config,
+		extensionState: new(ExtensionState),
 	}
 	c.handshakeFn = c.serverHandshake
 	return c
@@ -58,9 +59,10 @@ func Server(conn net.Conn, config *Config) *Conn {
 // InsecureSkipVerify in the config.
 func Client(conn net.Conn, config *Config) *Conn {
 	c := &Conn{
-		conn:     conn,
-		config:   config,
-		isClient: true,
+		conn:           conn,
+		config:         config,
+		extensionState: new(ExtensionState),
+		isClient:       true,
 	}
 	c.handshakeFn = c.clientHandshake
 	return c

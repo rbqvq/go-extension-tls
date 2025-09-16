@@ -899,9 +899,11 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf([]CurveID{CurveP256}))
 		case "Renegotiation":
 			f.Set(reflect.ValueOf(RenegotiateOnceAsClient))
-		case "EncryptedClientHelloDummyConfig":
-			f.Set(reflect.ValueOf(&ECHDummyConfig{
-				ConfigIds: []uint8{1},
+		case "EncryptedClientHelloConfig":
+			f.Set(reflect.ValueOf(&ECHConfig{
+				Dummy: &ECHDummyConfig{
+					ConfigIds: []uint8{1},
+				},
 			}))
 		case "EncryptedClientHelloConfigList":
 			f.Set(reflect.ValueOf([]byte{'x'}))
