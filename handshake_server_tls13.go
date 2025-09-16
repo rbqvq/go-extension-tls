@@ -22,7 +22,6 @@ import (
 
 	ehash "gitlab.com/go-extension/hash"
 	"gitlab.com/go-extension/hpke"
-	"gitlab.com/go-extension/mlkem768"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -245,7 +244,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 		ecdhData = ecdhData[mlkem.EncapsulationKeySize768:]
 	case X25519Kyber768Draft00:
 		ecdhGroup = X25519
-		if len(ecdhData) != mlkem768.EncapsulationKeySize+x25519PublicKeySize {
+		if len(ecdhData) != mlkem.EncapsulationKeySize768+x25519PublicKeySize {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: invalid X25519Kyber768Draft00 client key share")
 		}
@@ -291,12 +290,14 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 		// ephemeral X25519 share."
 		hs.hello.serverShare.data = append(ciphertext, hs.hello.serverShare.data...)
 	case X25519Kyber768Draft00:
-		ciphertext, kyberShared, err := kyberEncapsulate(clientKeyShare.data[x25519PublicKeySize:])
+		k, err := mlkem.NewEncapsulationKey768(clientKeyShare.data[x25519PublicKeySize:])
 		if err != nil {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: invalid X25519Kyber768Draft00 client key share")
 		}
-		hs.sharedKey = append(hs.sharedKey, kyberShared...)
+		mlkemSharedSecret, ciphertext := k.Encapsulate()
+		kyberSharedSecret := kyberSharedSecret(mlkemSharedSecret, ciphertext)
+		hs.sharedKey = append(hs.sharedKey, kyberSharedSecret...)
 		hs.hello.serverShare.data = append(hs.hello.serverShare.data, ciphertext...)
 	}
 

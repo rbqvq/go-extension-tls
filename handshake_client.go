@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"gitlab.com/go-extension/hpke"
-	"gitlab.com/go-extension/mlkem768"
 )
 
 type clientHandshakeState struct {
@@ -256,19 +255,19 @@ CipherSuiteLoop:
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			seed := make([]byte, mlkem768.SeedSize)
+			seed := make([]byte, mlkem.SeedSize)
 			if _, err := io.ReadFull(config.rand(), seed); err != nil {
 				return nil, nil, nil, err
 			}
-			keyShareKeys.kyber, err = mlkem768.NewKeyFromSeed(seed)
+			keyShareKeys.mlkem, err = mlkem.NewDecapsulationKey768(seed)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			kyberEncapsulationKey := keyShareKeys.kyber.EncapsulationKey()
+			mlkemEncapsulationKey := keyShareKeys.mlkem.EncapsulationKey().Bytes()
 			x25519EphemeralKey := keyShareKeys.ecdhe.PublicKey().Bytes()
 
 			hello.keyShares = append(hello.keyShares,
-				keyShare{group: X25519Kyber768Draft00, data: append(x25519EphemeralKey, kyberEncapsulationKey...)},
+				keyShare{group: X25519Kyber768Draft00, data: append(x25519EphemeralKey, mlkemEncapsulationKey...)},
 			)
 			// If both X25519Kyber768Draft00 and X25519 are supported, we send both key
 			// shares (as a fallback) and we reuse the same X25519 ephemeral

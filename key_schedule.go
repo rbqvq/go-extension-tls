@@ -13,7 +13,6 @@ import (
 	"hash"
 	"io"
 
-	"gitlab.com/go-extension/mlkem768"
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/sha3"
@@ -124,35 +123,16 @@ func (c *cipherSuiteTLS13) exportKeyingMaterial(masterSecret []byte, transcript 
 type keySharePrivateKeys struct {
 	curveID CurveID
 	ecdhe   *ecdh.PrivateKey
-	kyber   *mlkem768.DecapsulationKey
 	mlkem   *mlkem.DecapsulationKey768
 }
 
-// kyberDecapsulate implements decapsulation according to Kyber Round 3.
-func kyberDecapsulate(dk *mlkem768.DecapsulationKey, c []byte) ([]byte, error) {
-	K, err := mlkem768.Decapsulate(dk, c)
-	if err != nil {
-		return nil, err
-	}
-	return kyberSharedSecret(K, c), nil
-}
-
-// kyberEncapsulate implements encapsulation according to Kyber Round 3.
-func kyberEncapsulate(ek []byte) (c, ss []byte, err error) {
-	c, ss, err = mlkem768.Encapsulate(ek)
-	if err != nil {
-		return nil, nil, err
-	}
-	return c, kyberSharedSecret(ss, c), nil
-}
-
-func kyberSharedSecret(K, c []byte) []byte {
+func kyberSharedSecret(mlkemSharedSecret, ciphertext []byte) []byte {
 	// Package mlkem768 implements ML-KEM, which compared to Kyber removed a
 	// final hashing step. Compute SHAKE-256(K || SHA3-256(c), 32) to match Kyber.
 	// See https://words.filippo.io/mlkem768/#bonus-track-using-a-ml-kem-implementation-as-kyber-v3.
 	h := sha3.NewShake256()
-	h.Write(K)
-	ch := sha3.Sum256(c)
+	h.Write(mlkemSharedSecret)
+	ch := sha3.Sum256(ciphertext)
 	h.Write(ch[:])
 	out := make([]byte, 32)
 	h.Read(out)

@@ -8,6 +8,8 @@ github.com/blang/semver/v4 v4.0.0 h1:1PFHFE6yCCTv8C1TeyNNarDzntLi7wMI5i/pzqYIsAM
 github.com/blang/semver/v4 v4.0.0/go.mod h1:IbckMUScFkM3pff0VJDNKRiT6TG/YpiHIM2yvyW5YoQ=
 github.com/emmansun/gmsm v0.32.0 h1:MWgIRM/EKR4heOr7nXA5ylpfWfObgQkhb8qCamkQAd0=
 github.com/emmansun/gmsm v0.32.0/go.mod h1:NtH8X3s0ywBIICiOHD6Jj6P4brHHN6qUOI/nSK/x1jQ=
+github.com/emmansun/gmsm v0.33.0 h1:Nca/7XGRBIRHgpIdZGcDYVMjhy+nD+b8JNCuJ0KUaro=
+github.com/emmansun/gmsm v0.33.0/go.mod h1:NtH8X3s0ywBIICiOHD6Jj6P4brHHN6qUOI/nSK/x1jQ=
 github.com/klauspost/compress v1.18.0 h1:c/Cqfb0r+Yi+JtIEq73FWXVkRonBlf0CRNYc8Zttxdo=
 github.com/klauspost/compress v1.18.0/go.mod h1:2Pp+KzxcywXVXMr50+X0Q/Lsb43OQHYWRCY2AiWywWQ=
 github.com/pedroalbanese/camellia v0.0.0-20220911183557-30cc05c20118 h1:GJQwwzoQDXGcYO35ViGcG/A994BGB35/7dNoVW4Je8s=
@@ -24,8 +26,6 @@ gitlab.com/go-extension/hash v0.0.0-20250912170447-263d1d8375e4 h1:SMsGMMkGS9WBY
 gitlab.com/go-extension/hash v0.0.0-20250912170447-263d1d8375e4/go.mod h1:fgbJOB/r2jzfdhIdj6N0Hz6hahFqzSdU5TH1Hpoqq7c=
 gitlab.com/go-extension/hpke v0.0.0-20250903154322-ae11394c5e06 h1:Oq3ZLQwNdKzo9Td2reMCa/U5j4r48eKOjhJ+H8+Z5g8=
 gitlab.com/go-extension/hpke v0.0.0-20250903154322-ae11394c5e06/go.mod h1:em5FZ5PLgyAGGNIqhsJrl7Dgyg0uAI4SJvR3nzIHhQM=
-gitlab.com/go-extension/mlkem768 v0.0.0-20240814071630-937354a2177e h1:D/TnZkP81CR2Md9YJR3X059iLhOU8a493pebdLtQ99Q=
-gitlab.com/go-extension/mlkem768 v0.0.0-20240814071630-937354a2177e/go.mod h1:SQhmb9r/Fb0M4mb//AlrwD0yrDHre+nF0QzZD6OZV4k=
 gitlab.com/go-extension/rand v0.0.0-20240303103951-707937a049b5 h1:xQA0rfVPqW3G6dnb4qtgBdxr9XLu9vzDfdqKfLqGFXA=
 gitlab.com/go-extension/rand v0.0.0-20240303103951-707937a049b5/go.mod h1:nRmjyZOSF6N/6yuRl7ui9wKb1DjMX9ELGzOwELwWVSU=
 gitlab.com/go-extension/utils v0.0.0-20250718194058-bae8b5a74647 h1:ONxUw5em+2cmSmkzWhMIV37BY4DWe5dt72tYHL1C9G0=

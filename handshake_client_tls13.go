@@ -18,7 +18,6 @@ import (
 	"slices"
 	"time"
 
-	"gitlab.com/go-extension/mlkem768"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -421,21 +420,21 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 				c.sendAlert(alertInternalError)
 				return err
 			}
-			seed := make([]byte, mlkem768.SeedSize)
+			seed := make([]byte, mlkem.SeedSize)
 			if _, err := io.ReadFull(hs.c.config.rand(), seed); err != nil {
 				c.sendAlert(alertInternalError)
 				return err
 			}
-			kyber, err := mlkem768.NewKeyFromSeed(seed)
+			mlkem, err := mlkem.NewDecapsulationKey768(seed)
 			if err != nil {
 				c.sendAlert(alertInternalError)
 				return err
 			}
-			kyberEncapsulationKey := kyber.EncapsulationKey()
+			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
 			x25519EphemeralKey := key.PublicKey().Bytes()
 
-			hs.keyShareKeys = &keySharePrivateKeys{curveID: curveID, ecdhe: key, kyber: kyber}
-			hello.keyShares = []keyShare{{group: curveID, data: append(x25519EphemeralKey, kyberEncapsulationKey...)}}
+			hs.keyShareKeys = &keySharePrivateKeys{curveID: curveID, ecdhe: key, mlkem: mlkem}
+			hello.keyShares = []keyShare{{group: curveID, data: append(x25519EphemeralKey, mlkemEncapsulationKey...)}}
 		default:
 			if _, ok := curveForCurveID(curveID); !ok {
 				c.sendAlert(alertInternalError)
@@ -642,7 +641,7 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 		}
 		ecdhePeerData = hs.serverHello.serverShare.data[mlkem.CiphertextSize768:]
 	case X25519Kyber768Draft00:
-		if len(ecdhePeerData) != x25519PublicKeySize+mlkem768.CiphertextSize {
+		if len(ecdhePeerData) != x25519PublicKeySize+mlkem.CiphertextSize768 {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: invalid server X25519Kyber768Draft00 key share")
 		}
@@ -672,15 +671,16 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 		}
 		sharedKey = append(mlkemShared, sharedKey...)
 	case X25519Kyber768Draft00:
-		if hs.keyShareKeys.kyber == nil {
+		if hs.keyShareKeys.mlkem == nil {
 			return c.sendAlert(alertInternalError)
 		}
 		ciphertext := hs.serverHello.serverShare.data[x25519PublicKeySize:]
-		kyberShared, err := kyberDecapsulate(hs.keyShareKeys.kyber, ciphertext)
+		mlkemShared, err := hs.keyShareKeys.mlkem.Decapsulate(ciphertext)
 		if err != nil {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: invalid X25519Kyber768Draft00 server key share")
 		}
+		kyberShared := kyberSharedSecret(mlkemShared, ciphertext)
 		sharedKey = append(sharedKey, kyberShared...)
 	}
 	c.curveID = hs.serverHello.serverShare.group
