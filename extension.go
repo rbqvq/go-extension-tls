@@ -148,6 +148,16 @@ func (*RenegotiationInfoExtension) Clone() Extension {
 	return &RenegotiationInfoExtension{}
 }
 
+type EncryptThenMacExtension struct{ implementedExtension }
+
+func (*EncryptThenMacExtension) ExtensionId() uint16 {
+	return extensionEncryptThenMAC
+}
+
+func (*EncryptThenMacExtension) Clone() Extension {
+	return &EncryptThenMacExtension{}
+}
+
 type ExtendedMasterSecretExtension struct{ implementedExtension }
 
 func (*ExtendedMasterSecretExtension) ExtensionId() uint16 {

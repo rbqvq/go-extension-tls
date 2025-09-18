@@ -88,6 +88,7 @@ type clientHelloMsg struct {
 	supportedSignatureAlgorithmsCert   []SignatureScheme
 	secureRenegotiationSupported       bool
 	secureRenegotiation                []byte
+	encryptThenMAC                     bool
 	extendedMasterSecret               bool
 	alpnProtocols                      []string
 	alpsProtocols                      []string
@@ -138,6 +139,10 @@ func (m *clientHelloMsg) echOuterExtensions(compressed []Extension) []uint16 {
 		case *RenegotiationInfoExtension:
 			if m.secureRenegotiationSupported {
 				echOuterExts = append(echOuterExts, extensionRenegotiationInfo)
+			}
+		case *EncryptThenMacExtension:
+			if m.encryptThenMAC {
+				echOuterExts = append(echOuterExts, extensionEncryptThenMAC)
 			}
 		case *ExtendedMasterSecretExtension:
 			if m.extendedMasterSecret {
@@ -271,6 +276,12 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 						exts.AddBytes(m.secureRenegotiation)
 					})
 				})
+			}
+		case *EncryptThenMacExtension:
+			if m.encryptThenMAC {
+				// RFC 7366
+				exts.AddUint16(extensionEncryptThenMAC)
+				exts.AddUint16(0) // empty extension_data
 			}
 		case *ExtendedMasterSecretExtension:
 			if m.extendedMasterSecret {
@@ -611,6 +622,11 @@ func (m *clientHelloMsg) getUnpaddedLength() int {
 					// RFC 5746, Section 3.2
 					extLength += 1
 					extLength += len(m.secureRenegotiation)
+				}
+			case *EncryptThenMacExtension:
+				if m.encryptThenMAC {
+					// RFC 7366
+					extLength += 4
 				}
 			case *ExtendedMasterSecretExtension:
 				if m.extendedMasterSecret {
@@ -990,6 +1006,10 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			}
 			m.secureRenegotiationSupported = true
 			m.extensionList = append(m.extensionList, &RenegotiationInfoExtension{})
+		case extensionEncryptThenMAC:
+			// RFC 7366
+			m.encryptThenMAC = true
+			m.extensionList = append(m.extensionList, &EncryptThenMacExtension{})
 		case extensionExtendedMasterSecret:
 			// RFC 7627
 			m.extendedMasterSecret = true
@@ -1198,6 +1218,7 @@ func (m *clientHelloMsg) clone() *clientHelloMsg {
 		supportedSignatureAlgorithmsCert:   slices.Clone(m.supportedSignatureAlgorithmsCert),
 		secureRenegotiationSupported:       m.secureRenegotiationSupported,
 		secureRenegotiation:                slices.Clone(m.secureRenegotiation),
+		encryptThenMAC:                     m.encryptThenMAC,
 		extendedMasterSecret:               m.extendedMasterSecret,
 		alpnProtocols:                      slices.Clone(m.alpnProtocols),
 		alpsProtocols:                      slices.Clone(m.alpsProtocols),
@@ -1227,6 +1248,7 @@ type serverHelloMsg struct {
 	ticketSupported              bool
 	secureRenegotiationSupported bool
 	secureRenegotiation          []byte
+	encryptThenMAC               bool
 	extendedMasterSecret         bool
 	alpnProtocol                 string
 	scts                         [][]byte
@@ -1269,6 +1291,11 @@ func (m *serverHelloMsg) marshal() ([]byte, error) {
 						exts.AddBytes(m.secureRenegotiation)
 					})
 				})
+			}
+		case *EncryptThenMacExtension:
+			if m.encryptThenMAC {
+				exts.AddUint16(extensionEncryptThenMAC)
+				exts.AddUint16(0) // empty extension_data
 			}
 		case *ExtendedMasterSecretExtension:
 			if m.extendedMasterSecret {
@@ -1445,6 +1472,10 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 			}
 			m.secureRenegotiationSupported = true
 			m.extensions = append(m.extensions, &RenegotiationInfoExtension{})
+		case extensionEncryptThenMAC:
+			// RFC 7366
+			m.encryptThenMAC = true
+			m.extensions = append(m.extensions, &EncryptThenMacExtension{})
 		case extensionExtendedMasterSecret:
 			m.extendedMasterSecret = true
 			m.extensions = append(m.extensions, &ExtendedMasterSecretExtension{})

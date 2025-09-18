@@ -201,12 +201,14 @@ type halfConn struct {
 
 	err     error  // first permanent error
 	version uint16 // protocol version
+	etm     bool   // encrypt-then-mac
 	cipher  any    // cipher algorithm
 	hash    hash.Hash
 	seq     [8]byte // 64-bit sequence number
 
 	scratchBuf [13]byte // to avoid allocs; interface method args escape
 
+	nextETM    bool      // next encrypt-then-mac
 	nextCipher any       // next encryption state
 	nextHash   hash.Hash // next MAC algorithm
 
@@ -242,8 +244,9 @@ func (hc *halfConn) setErrorLocked(err error) error {
 
 // prepareCipherSpec sets the encryption and MAC states
 // that a subsequent changeCipherSpec will use.
-func (hc *halfConn) prepareCipherSpec(version uint16, cipher any, hash hash.Hash, key, iv, mac []byte) {
+func (hc *halfConn) prepareCipherSpec(version uint16, cipher any, hash hash.Hash, key, iv, mac []byte, encryptThenMAC bool) {
 	hc.version = version
+	hc.nextETM = encryptThenMAC
 	hc.nextCipher = cipher
 	hc.nextHash = hash
 	hc.nextKey = key
@@ -257,11 +260,13 @@ func (hc *halfConn) changeCipherSpec() error {
 	if hc.nextCipher == nil || hc.version == VersionTLS13 {
 		return alertInternalError
 	}
+	hc.etm = hc.nextETM
 	hc.cipher = hc.nextCipher
 	hc.hash = hc.nextHash
 	hc.key = hc.nextKey
 	hc.iv = hc.nextIV
 	hc.mac = hc.nextMac
+	hc.nextETM = false
 	hc.nextCipher = nil
 	hc.nextHash = nil
 	hc.nextKey = nil
@@ -439,8 +444,9 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 			if explicitNonceLen > 0 {
 				c.SetIV(payload[:explicitNonceLen])
 				payload = payload[explicitNonceLen:]
-			} else {
-				copy(hc.iv, payload[len(payload)-blockSize:])
+				// We don't update iv because kernel not supported TLS 1.0 CBC RX
+				// } else {
+				// 	copy(hc.iv, payload[len(payload)-blockSize:])
 			}
 			c.CryptBlocks(payload, payload)
 			// In a limited attempt to protect against CBC padding oracles like
@@ -507,6 +513,83 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 
 	hc.incSeq()
 	return plaintext, typ, nil
+}
+
+func (hc *halfConn) decryptETM(record []byte) ([]byte, recordType, error) {
+	c, ok := hc.cipher.(cbcMode)
+	if !ok {
+		return hc.decrypt(record)
+	}
+
+	if hc.hash == nil {
+		return nil, 0, errors.New("tls: invalid hash in cbc encrypt-then-mac mode")
+	}
+
+	var plaintext []byte
+	typ := recordType(record[0])
+	payload := record[recordHeaderLen:]
+	explicitNonceLen := hc.explicitNonceLen()
+
+	macSize := hc.hash.Size()
+	if len(payload) < macSize {
+		return nil, 0, alertBadRecordMAC
+	}
+
+	n := len(payload) - macSize
+	record[3] = byte(n >> 8)
+	record[4] = byte(n)
+	remoteMAC := payload[n:]
+	localMAC := tls10MAC(hc.hash, hc.scratchBuf[:0], hc.seq[:], record[:recordHeaderLen], payload[:n], nil)
+
+	payload = payload[:n]
+
+	blockSize := c.BlockSize()
+	minPayload := explicitNonceLen + blockSize
+	if n%blockSize != 0 || n < minPayload {
+		return nil, 0, alertBadRecordMAC
+	}
+
+	if explicitNonceLen > 0 {
+		c.SetIV(payload[:explicitNonceLen])
+		payload = payload[explicitNonceLen:]
+		// We don't update iv because kernel not supported RFC7366 Encrypt-then-MAC
+		// } else {
+		// 	copy(hc.iv, payload[len(payload)-blockSize:])
+	}
+
+	c.CryptBlocks(payload, payload)
+	
+	paddingLen, paddingGood := extractPadding(payload)
+
+	n = len(payload) - paddingLen
+	n = subtle.ConstantTimeSelect(int(uint32(n)>>31), 0, n) // if n < 0 { n = 0 }
+	record[3] = byte(n >> 8)
+	record[4] = byte(n)
+
+	// This is equivalent to checking the MACs and paddingGood
+	// separately, but in constant-time to prevent distinguishing
+	// padding failures from MAC failures. Depending on what value
+	// of paddingLen was returned on bad padding, distinguishing
+	// bad MAC from bad padding can lead to an attack.
+	//
+	// See also the logic at the end of extractPadding.
+	macAndPaddingGood := subtle.ConstantTimeCompare(localMAC, remoteMAC) & int(paddingGood)
+	if macAndPaddingGood != 1 {
+		return nil, 0, alertBadRecordMAC
+	}
+
+	plaintext = payload[:n]
+
+	hc.incSeq()
+	return plaintext, typ, nil
+}
+
+func (c *Conn) decrypt(record []byte) ([]byte, recordType, error) {
+	if c.in.etm {
+		return c.in.decryptETM(record)
+	}
+
+	return c.in.decrypt(record)
 }
 
 // sliceForAppend extends the input slice by n bytes. head is the full extended
@@ -611,6 +694,67 @@ func (hc *halfConn) encrypt(record, payload []byte, rand io.Reader) ([]byte, err
 	hc.incSeq()
 
 	return record, nil
+}
+
+func (hc *halfConn) encryptETM(record, payload []byte, rand io.Reader) ([]byte, error) {
+	c, ok := hc.cipher.(cbcMode)
+	if !ok {
+		return hc.encrypt(record, payload, rand)
+	}
+
+	if hc.hash == nil {
+		return nil, errors.New("tls: invalid hash in cbc encrypt-then-mac mode")
+	}
+
+	var explicitNonce []byte
+	if explicitNonceLen := hc.explicitNonceLen(); explicitNonceLen > 0 {
+		record, explicitNonce = sliceForAppend(record, explicitNonceLen)
+		if _, err := io.ReadFull(rand, explicitNonce); err != nil {
+			return nil, err
+		}
+	}
+
+	var dst []byte
+	macSize := hc.hash.Size()
+	blockSize := c.BlockSize()
+	plaintextLen := len(payload)
+	paddingLen := blockSize - plaintextLen%blockSize
+	record, dst = sliceForAppend(record, plaintextLen+paddingLen)
+	copy(dst, payload)
+	for i := plaintextLen; i < len(dst); i++ {
+		dst[i] = byte(paddingLen - 1)
+	}
+	if len(explicitNonce) > 0 {
+		c.SetIV(explicitNonce)
+	}
+	c.CryptBlocks(dst, dst)
+	// We don't update iv because kernel not supported RFC7366 Encrypt-then-MAC
+	// if len(explicitNonce) == 0 {
+	// 	copy(hc.iv, dst[encryptedLen-blockSize:encryptedLen])
+	// }
+
+	// Update length to include nonce and any block padding needed.
+	n := len(record) - recordHeaderLen
+	record[3] = byte(n >> 8)
+	record[4] = byte(n)
+
+	record, mac := sliceForAppend(record, macSize)
+	tls10MAC(hc.hash, mac[:0], hc.seq[:], record[:recordHeaderLen], record[recordHeaderLen:recordHeaderLen+n], nil)
+
+	n += macSize
+	record[3] = byte(n >> 8)
+	record[4] = byte(n)
+
+	hc.incSeq()
+	return record, nil
+}
+
+func (c *Conn) encrypt(record, payload []byte) ([]byte, error) {
+	if c.out.etm {
+		return c.out.encryptETM(record, payload, c.config.rand())
+	}
+
+	return c.out.encrypt(record, payload, c.config.rand())
 }
 
 // RecordHeaderError is returned when a TLS record header is invalid.
@@ -869,7 +1013,7 @@ func (c *Conn) readRawRecord(handshakeState uint32) (typ recordType, data []byte
 
 	// Process message.
 	record := c.rawInput.Next(recordHeaderLen + n)
-	data, typ, err = c.in.decrypt(record)
+	data, typ, err = c.decrypt(record)
 	if err != nil {
 		if handshakeState == handshake0RTT {
 			// Skip when server rejected 0RTT
@@ -1113,7 +1257,7 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		outBuf[4] = byte(m)
 
 		var err error
-		outBuf, err = c.out.encrypt(outBuf, data[:m], c.config.rand())
+		outBuf, err = c.encrypt(outBuf, data[:m])
 		if err != nil {
 			return n, err
 		}

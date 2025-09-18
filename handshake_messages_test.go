@@ -224,6 +224,10 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 		m.extensionList = append(m.extensionList, &RenegotiationInfoExtension{})
 	}
 	if rand.Intn(10) > 5 {
+		m.encryptThenMAC = true
+		m.extensionList = append(m.extensionList, &EncryptThenMacExtension{})
+	}
+	if rand.Intn(10) > 5 {
 		m.extendedMasterSecret = true
 		m.extensionList = append(m.extensionList, &ExtendedMasterSecretExtension{})
 	}
@@ -320,6 +324,10 @@ func (*serverHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 		m.secureRenegotiationSupported = true
 		m.secureRenegotiation = randomBytes(rand.Intn(50)+1, rand)
 		m.extensions = append(m.extensions, &RenegotiationInfoExtension{})
+	}
+	if rand.Intn(10) > 5 {
+		m.encryptThenMAC = true
+		m.extensions = append(m.extensions, &EncryptThenMacExtension{})
 	}
 	if rand.Intn(10) > 5 {
 		m.extendedMasterSecret = true

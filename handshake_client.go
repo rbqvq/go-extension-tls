@@ -110,6 +110,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, []*keySharePrivateKeys, *echC
 		vers:                               maxVersion,
 		compressionMethods:                 []uint8{compressionNone},
 		random:                             make([]byte, 32),
+		encryptThenMAC:                     config.EncryptThenMAC,
 		extendedMasterSecret:               true,
 		ocspStapling:                       true,
 		scts:                               true,
@@ -332,6 +333,7 @@ CipherSuiteLoop:
 		ech.innerHello.supportedPoints = nil
 		ech.innerHello.ticketSupported = false
 		ech.innerHello.secureRenegotiationSupported = false
+		ech.innerHello.encryptThenMAC = false
 		ech.innerHello.extendedMasterSecret = false
 
 		ech.innerHello.cipherSuites = slices.DeleteFunc(ech.innerHello.cipherSuites, func(suite uint16) bool { return !IsGREASE(suite) && cipherSuiteTLS13ByID(suite) == nil })
@@ -1081,8 +1083,8 @@ func (hs *clientHandshakeState) establishKeys() error {
 		serverCipher = hs.suite.aead(serverKey, serverIV)
 	}
 
-	c.in.prepareCipherSpec(c.vers, serverCipher, serverHash, serverKey, serverIV, serverMAC)
-	c.out.prepareCipherSpec(c.vers, clientCipher, clientHash, clientKey, clientIV, clientMAC)
+	c.in.prepareCipherSpec(c.vers, serverCipher, serverHash, serverKey, serverIV, serverMAC, hs.serverHello.encryptThenMAC)
+	c.out.prepareCipherSpec(c.vers, clientCipher, clientHash, clientKey, clientIV, clientMAC, hs.serverHello.encryptThenMAC)
 	return nil
 }
 
@@ -1143,6 +1145,16 @@ func (hs *clientHandshakeState) processServerHello() (bool, error) {
 	c.clientProtocol = hs.serverHello.alpnProtocol
 
 	c.scts = hs.serverHello.scts
+
+	if !hs.hello.encryptThenMAC && hs.serverHello.encryptThenMAC {
+		c.sendAlert(alertIllegalParameter)
+		return false, errors.New("tls: server sent unexpected encrypt-then-mac")
+	}
+
+	if c.handshakes > 0 && c.in.etm && !hs.serverHello.encryptThenMAC {
+		c.sendAlert(alertHandshakeFailure)
+		return false, errors.New("tls: server want to disable encrypt-then-mac in renegotiation")
+	}
 
 	if !hs.serverResumedSession() {
 		return false, nil

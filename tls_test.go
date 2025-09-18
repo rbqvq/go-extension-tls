@@ -891,7 +891,7 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf([]uint16{VersionTLS12}))
 		case "SessionTicketKey":
 			f.Set(reflect.ValueOf([32]byte{}))
-		case "PreferCipherSuites":
+		case "EncryptThenMAC", "PreferCipherSuites":
 			f.Set(reflect.ValueOf(true))
 		case "CipherSuites":
 			f.Set(reflect.ValueOf([]uint16{1, 2}))

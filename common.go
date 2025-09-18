@@ -113,6 +113,7 @@ const (
 	extensionALPN                    uint16 = 16
 	extensionSCT                     uint16 = 18
 	extensionPadding                 uint16 = 21
+	extensionEncryptThenMAC          uint16 = 22
 	extensionExtendedMasterSecret    uint16 = 23
 	extensionCompressCertificate     uint16 = 27 // compress_certificate in TLS 1.3
 	extensionSessionTicket           uint16 = 35
@@ -723,6 +724,13 @@ type Config struct {
 	// testing or in combination with VerifyConnection or VerifyPeerCertificate.
 	InsecureSkipVerify bool
 
+	// EncryptThenMAC controls whether encryption should be performed before MAC calculation for non-AEAD cipher suites.
+	// Default is to calculate MAC before encryption.
+	//
+	// This feature requires negotiation and does not support Kernel TLS offloading.
+	// See https://datatracker.ietf.org/doc/html/rfc7366.
+	EncryptThenMAC bool
+
 	// PreferCipherSuites control whether cipher suites would follow the hardware's preference.
 	//
 	// If true, it will directly use CipherSuites without following hardware preference.
@@ -1099,6 +1107,7 @@ func (c *Config) Clone() *Config {
 		ClientAuth:                          c.ClientAuth,
 		ClientCAs:                           c.ClientCAs,
 		InsecureSkipVerify:                  c.InsecureSkipVerify,
+		EncryptThenMAC:                      c.EncryptThenMAC,
 		PreferCipherSuites:                  c.PreferCipherSuites,
 		CipherSuites:                        c.CipherSuites,
 		PreferServerCipherSuites:            c.PreferServerCipherSuites,

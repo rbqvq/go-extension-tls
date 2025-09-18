@@ -9,6 +9,7 @@ This repository is an extension of the golang standard library [crypto/go](https
 - CEMALLIA cipher
 - SM4 cipher
 - Kernel TLS
+- Encrypt-then-MAC (RFC7366)
 - TLS 1.3 0RTT (Early Data)
 - Compressed certificate
 - Application-Layer Protocol Settings (ALPS)

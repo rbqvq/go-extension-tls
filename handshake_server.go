@@ -298,6 +298,7 @@ func (hs *serverHandshakeState) processClientHello() error {
 	hs.hello.extendedMasterSecret = hs.clientHello.extendedMasterSecret
 	hs.hello.secureRenegotiationSupported = hs.clientHello.secureRenegotiationSupported
 	hs.hello.compressionMethod = compressionNone
+	hs.hello.encryptThenMAC = hs.clientHello.encryptThenMAC && c.config.EncryptThenMAC
 	if len(hs.clientHello.serverName) > 0 {
 		c.serverName = hs.clientHello.serverName
 	}
@@ -858,8 +859,8 @@ func (hs *serverHandshakeState) establishKeys() error {
 		serverCipher = hs.suite.aead(serverKey, serverIV)
 	}
 
-	c.in.prepareCipherSpec(c.vers, clientCipher, clientHash, clientKey, clientIV, clientMAC)
-	c.out.prepareCipherSpec(c.vers, serverCipher, serverHash, serverKey, serverIV, serverMAC)
+	c.in.prepareCipherSpec(c.vers, clientCipher, clientHash, clientKey, clientIV, clientMAC, hs.hello.encryptThenMAC)
+	c.out.prepareCipherSpec(c.vers, serverCipher, serverHash, serverKey, serverIV, serverMAC, hs.hello.encryptThenMAC)
 
 	return nil
 }

@@ -104,6 +104,10 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
+		if hc.etm {
+			return nil
+		}
+
 		if isRX && (hc.version == VersionTLS10 || !kernel.TLS_Version11_12_CBC_RX) {
 			return nil
 		}
@@ -118,6 +122,10 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
+		if hc.etm {
+			return nil
+		}
+
 		if isRX && !kernel.TLS_Version11_12_CBC_RX {
 			return nil
 		}
@@ -129,6 +137,10 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 		crypto.setAuthKey(hc.mac)
 	case TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384:
 		if !kernel.TLS_CBC {
+			return nil
+		}
+
+		if hc.etm {
 			return nil
 		}
 
