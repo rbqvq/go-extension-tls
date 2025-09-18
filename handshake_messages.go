@@ -1233,6 +1233,8 @@ func (m *clientHelloMsg) clone() *clientHelloMsg {
 		quicTransportParameters:            slices.Clone(m.quicTransportParameters),
 		encryptedClientHello:               slices.Clone(m.encryptedClientHello),
 		extensions:                         slices.Clone(m.extensions),
+		echOuterExts:                       slices.Clone(m.echOuterExts),
+		compressedList:                     slices.Clone(m.compressedList),
 		extensionList:                      slices.Clone(m.extensionList),
 	}
 }
