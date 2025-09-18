@@ -88,6 +88,10 @@ var defaultInnerExtensions = []Extension{
 	&PreSharedKeyExtension{},
 }
 
+func DefaultInnerExtensions() []Extension {
+	return defaultInnerExtensions
+}
+
 var defaultOuterExtensions = []Extension{
 	&ServerNameIndicationExtension{},
 	&SCTExtension{},
@@ -109,6 +113,10 @@ var defaultOuterExtensions = []Extension{
 	&PreSharedKeyExtension{},
 }
 
+func DefaultOuterExtensions() []Extension {
+	return defaultOuterExtensions
+}
+
 var defaultCompressedExtensions = []Extension{
 	&StatusRequestExtension{},
 	&SupportedGroupsExtension{},
@@ -119,6 +127,10 @@ var defaultCompressedExtensions = []Extension{
 	&CookieExtension{},
 	&KeyShareExtension{},
 	&PSKModesExtension{},
+}
+
+func DefaultCompressedExtensions() []Extension {
+	return defaultCompressedExtensions
 }
 
 var defaultExtensions = []Extension{
@@ -143,6 +155,10 @@ var defaultExtensions = []Extension{
 	&PSKModesExtension{},
 
 	&PreSharedKeyExtension{},
+}
+
+func DefaultExtensions() []Extension {
+	return defaultExtensions
 }
 
 var defaultEncryptedClientHelloConfig = &ECHConfig{}
