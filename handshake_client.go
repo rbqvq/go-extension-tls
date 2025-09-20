@@ -536,6 +536,11 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 	}
 
 	if hello.earlyData {
+		hello := hello
+		if ech != nil {
+			hello = ech.innerHello
+		}
+
 		if c.quic == nil {
 			c.vers = VersionTLS13
 			c.in.version = VersionTLS13
@@ -694,7 +699,7 @@ func (c *Conn) loadSession(outer *clientHelloMsg, ech *echClientContext) (
 		// For 0-RTT, the cipher suite has to match exactly, and we need to be
 		// offering the same ALPN.
 		if mutualCipherSuiteTLS13(hello.cipherSuites, session.cipherSuite) != nil {
-			if len(hello.alpnProtocols) == 0 && session.alpnProtocol == "" {
+			if session.alpnProtocol == "" {
 				hello.earlyData = true
 			} else {
 				if slices.Contains(hello.alpnProtocols, session.alpnProtocol) {

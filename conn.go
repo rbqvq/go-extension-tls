@@ -558,7 +558,7 @@ func (hc *halfConn) decryptETM(record []byte) ([]byte, recordType, error) {
 	}
 
 	c.CryptBlocks(payload, payload)
-	
+
 	paddingLen, paddingGood := extractPadding(payload)
 
 	n = len(payload) - paddingLen
@@ -911,9 +911,11 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 
 		if handshakeState == handshake0RTT {
 			if c.earlyDataSize.Add(uint32(len(data))) > c.maxEarlyData {
-				defer c.earlyNotify.Broadcast()
+				c.sendAlert(alertUnexpectedMessage)
+
 				c.handshakeErr = errors.New("tls: too large early data received")
-				return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+				defer c.earlyNotify.Broadcast() // try notify readClientEarlyData
+				return c.in.setErrorLocked(c.handshakeErr)
 			}
 		}
 		// Note that data is owned by c.rawInput, following the Next call above,
@@ -1452,49 +1454,32 @@ func (c *Conn) Write(b []byte) (int, error) {
 	case handshakeRunning:
 		return 0, alertInternalError
 	case handshake0RTT:
-		if c.isClient {
-			for {
-				c.earlyNotify.L.Lock()
-				if c.handshakeState.Load() == handshakeCompleted {
-					c.earlyNotify.L.Unlock()
-					break
-				}
+		if !c.isClient {
+			break
+		}
 
-				if c.handshakeErr != nil {
-					c.earlyNotify.L.Unlock()
-					return 0, c.handshakeErr
-				}
-
-				if !c.earlyDataEOF && c.earlyDataSize.Load() < c.maxEarlyData {
-					c.earlyData.Write(b)
-
-					if n := int(c.earlyDataSize.Add(uint32(len(b)))) - int(c.maxEarlyData); n > 0 {
-						earlyDataSize = len(b)
-						b = b[:n]
-					}
-					c.earlyNotify.L.Unlock()
-					break
-				}
-
-				c.earlyNotify.Wait()
-				c.earlyNotify.L.Unlock()
+		c.earlyNotify.L.Lock()
+		defer c.earlyNotify.L.Unlock()
+		for {
+			if c.handshakeState.Load() == handshakeCompleted {
+				break
 			}
-		} else {
-			for {
-				c.earlyNotify.L.Lock()
-				if c.handshakeState.Load() == handshakeCompleted {
-					c.earlyNotify.L.Unlock()
-					break
-				}
 
-				if c.handshakeErr != nil {
-					c.earlyNotify.L.Unlock()
-					return 0, c.handshakeErr
-				}
-
-				c.earlyNotify.Wait()
-				c.earlyNotify.L.Unlock()
+			if c.handshakeErr != nil {
+				return 0, c.handshakeErr
 			}
+
+			if !c.earlyDataEOF && c.earlyDataSize.Load() < c.maxEarlyData {
+				c.earlyData.Write(b)
+
+				if n := int(c.earlyDataSize.Add(uint32(len(b)))) - int(c.maxEarlyData); n > 0 {
+					earlyDataSize = len(b)
+					b = b[:n]
+				}
+				break
+			}
+
+			c.earlyNotify.Wait() // wait handshake finished
 		}
 	case handshakeCompleted:
 	default:
@@ -1701,22 +1686,22 @@ func (c *Conn) Read(b []byte) (int, error) {
 	case handshakeRunning:
 		return 0, alertInternalError
 	case handshake0RTT:
-		if c.isClient {
-			for {
-				c.earlyNotify.L.Lock()
-				if c.handshakeState.Load() == handshakeCompleted {
-					c.earlyNotify.L.Unlock()
-					break
-				}
+		if !c.isClient {
+			break
+		}
 
-				if c.handshakeErr != nil {
-					c.earlyNotify.L.Unlock()
-					return 0, c.handshakeErr
-				}
-
-				c.earlyNotify.Wait()
-				c.earlyNotify.L.Unlock()
+		c.earlyNotify.L.Lock()
+		defer c.earlyNotify.L.Unlock()
+		for {
+			if c.handshakeState.Load() == handshakeCompleted {
+				break
 			}
+
+			if c.handshakeErr != nil {
+				return 0, c.handshakeErr
+			}
+
+			c.earlyNotify.Wait() // wait handshake finished
 		}
 	case handshakeCompleted:
 	default:

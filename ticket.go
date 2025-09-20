@@ -95,10 +95,13 @@ type SessionState struct {
 	alpnClientSetting []byte
 	alpnServerSetting []byte
 
-	// Client-side TLS 1.3-only fields.
-	useBy  uint64 // seconds since UNIX epoch
-	ageAdd uint32
 	ticket []byte
+
+	// TLS 1.3-only fields.
+	ageAdd uint32
+
+	// Client-side TLS 1.3-only fields.
+	useBy uint64 // seconds since UNIX epoch
 
 	// TLS 1.0–1.2 only fields.
 	curveID CurveID
@@ -167,9 +170,9 @@ func (s *SessionState) Bytes() ([]byte, error) {
 		b.AddBytes([]byte(s.alpnServerSetting))
 	})
 	if s.version >= VersionTLS13 {
+		b.AddUint32(s.ageAdd)
 		if s.isClient {
 			addUint64(&b, s.useBy)
-			b.AddUint32(s.ageAdd)
 		}
 	} else {
 		b.AddUint16(uint16(s.curveID))
@@ -278,8 +281,11 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 		return nil, errors.New("tls: invalid session encoding")
 	}
 	if ss.version >= VersionTLS13 {
+		if !s.ReadUint32(&ss.ageAdd) {
+			return nil, errors.New("tls: invalid session encoding")
+		}
 		if ss.isClient {
-			if !s.ReadUint64(&ss.useBy) || !s.ReadUint32(&ss.ageAdd) {
+			if !s.ReadUint64(&ss.useBy) {
 				return nil, errors.New("tls: invalid session encoding")
 			}
 		}

@@ -1139,7 +1139,7 @@ func (hs *clientHandshakeStateTLS13) sendClientFinished() error {
 		c.earlyDataEOF = true
 		c.earlyNotify.L.Unlock()
 
-		if _, err := hs.c.writeHandshakeRecord(&endOfEarlyDataMsg{}, nil); err != nil {
+		if _, err := hs.c.writeHandshakeRecord(&endOfEarlyDataMsg{}, hs.transcript); err != nil {
 			return err
 		}
 

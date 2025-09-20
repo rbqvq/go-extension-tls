@@ -79,6 +79,25 @@ func (hs *serverHandshakeStateTLS13) handshake() error {
 	if err := hs.checkForResumption(); err != nil {
 		return err
 	}
+	if err := hs.pickCertificate(); err != nil {
+		return err
+	}
+	c.buffering = true
+	if err := hs.sendServerParameters(); err != nil {
+		return err
+	}
+	if err := hs.sendServerCertificate(); err != nil {
+		return err
+	}
+	if err := hs.sendServerFinished(); err != nil {
+		return err
+	}
+	// Note that at this point we could start sending application data without
+	// waiting for the client's second flight, but the application might not
+	// expect the lack of replay protection of the ClientHello parameters.
+	if _, err := c.flush(); err != nil {
+		return err
+	}
 	if hs.earlyData && c.quic == nil {
 		go hs.doEarlyHandshake()
 	} else {
@@ -493,7 +512,7 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 		}
 
 		clientAge := time.Duration(identity.obfuscatedTicketAge-sessionState.ageAdd) * time.Millisecond
-		if clientAge-serverAge > maxSessionTicketSkewAllowance || clientAge-serverAge < -maxSessionTicketSkewAllowance {
+		if ageDiff := clientAge - serverAge; ageDiff > maxSessionTicketSkewAllowance || ageDiff < -maxSessionTicketSkewAllowance {
 			return nil
 		}
 
@@ -519,6 +538,11 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 		} else {
 			c.quicSetReadSecret(QUICEncryptionLevelEarly, hs.suite.id, earlyTrafficSecret)
 		}
+		err = c.config.writeKeyLog(keyLogLabelClientEarly, hs.clientHello.random, earlyTrafficSecret)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
 		return nil
 	}
 
@@ -528,25 +552,6 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 func (hs *serverHandshakeStateTLS13) doFullHandshake() error {
 	c := hs.c
 
-	if err := hs.pickCertificate(); err != nil {
-		return err
-	}
-	c.buffering = true
-	if err := hs.sendServerParameters(); err != nil {
-		return err
-	}
-	if err := hs.sendServerCertificate(); err != nil {
-		return err
-	}
-	if err := hs.sendServerFinished(); err != nil {
-		return err
-	}
-	// Note that at this point we could start sending application data without
-	// waiting for the client's second flight, but the application might not
-	// expect the lack of replay protection of the ClientHello parameters.
-	if _, err := c.flush(); err != nil {
-		return err
-	}
 	if err := hs.readClientParameters(); err != nil {
 		return err
 	}
@@ -568,19 +573,6 @@ func (hs *serverHandshakeStateTLS13) doEarlyHandshake() {
 	c := hs.c
 
 	err := func() error {
-		c.buffering = true
-		if err := hs.sendServerParameters(); err != nil {
-			return err
-		}
-		if err := hs.sendServerFinished(); err != nil {
-			return err
-		}
-		// Note that at this point we could start sending application data without
-		// waiting for the client's second flight, but the application might not
-		// expect the lack of replay protection of the ClientHello parameters.
-		if _, err := c.flush(); err != nil {
-			return err
-		}
 		if err := hs.readClientEarlyData(); err != nil {
 			return err
 		}
@@ -1183,6 +1175,13 @@ func (hs *serverHandshakeStateTLS13) shouldSendSessionTickets() bool {
 func (hs *serverHandshakeStateTLS13) sendSessionTickets() error {
 	c := hs.c
 
+	if hs.earlyData && c.quic == nil {
+		err := transcriptMsg(&endOfEarlyDataMsg{}, hs.transcript)
+		if err != nil {
+			return err
+		}
+	}
+
 	hs.clientFinished = hs.suite.finishedHash(hs.clientHandshakeSecret, hs.transcript)
 	finishedMsg := &finishedMsg{
 		verifyData: hs.clientFinished,
@@ -1216,6 +1215,14 @@ func (c *Conn) sendSessionTicket(maxEarlyData uint32, extra [][]byte) error {
 	state.secret = psk
 	state.MaxEarlyData = maxEarlyData
 	state.Extra = extra
+
+	// ticket_age_add is a random 32-bit value. See RFC 8446, section 4.6.1
+	ageAdd := make([]byte, 4)
+	if _, err := c.config.rand().Read(ageAdd); err != nil {
+		return err
+	}
+	state.ageAdd = binary.LittleEndian.Uint32(ageAdd)
+
 	if c.config.WrapSession != nil {
 		var err error
 		m.label, err = c.config.WrapSession(c.connectionStateLocked(), state)
@@ -1234,15 +1241,7 @@ func (c *Conn) sendSessionTicket(maxEarlyData uint32, extra [][]byte) error {
 		}
 	}
 	m.lifetime = uint32(maxSessionTicketLifetime / time.Second)
-
-	// ticket_age_add is a random 32-bit value. See RFC 8446, section 4.6.1
-	// The value is not stored anywhere; we never need to check the ticket age
-	// because 0-RTT is not supported.
-	ageAdd := make([]byte, 4)
-	if _, err := c.config.rand().Read(ageAdd); err != nil {
-		return err
-	}
-	m.ageAdd = binary.LittleEndian.Uint32(ageAdd)
+	m.ageAdd = state.ageAdd
 
 	// ticket_nonce, which must be unique per connection, is always left at
 	// zero because we only ever send one ticket per connection.
@@ -1268,12 +1267,12 @@ func (c *Conn) handleEndOfEarlyData() error {
 
 	c.earlyNotify.L.Lock()
 	c.earlyDataEOF = true
-	c.earlyNotify.Broadcast()
+	c.earlyNotify.Broadcast() // notify readClientEarlyData
 	c.earlyNotify.L.Unlock()
 
 	c.earlyNotify.L.Lock()
 	c.earlyNotify.Wait()
-	c.earlyNotify.L.Unlock()
+	c.earlyNotify.L.Unlock() // wait handshake finished
 	return c.handshakeErr
 }
 
@@ -1283,7 +1282,7 @@ func (hs *serverHandshakeStateTLS13) readClientEarlyData() error {
 	c.earlyNotify.L.Lock()
 	defer c.earlyNotify.L.Unlock()
 
-	if !hs.earlyData || c.earlyDataEOF {
+	if !hs.earlyData {
 		return nil
 	}
 
