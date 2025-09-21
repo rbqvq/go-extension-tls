@@ -1444,7 +1444,7 @@ func (c *Config) certCompressionPreferences() []CertCompressionAlgorithm {
 
 func (c *Config) signatureAlgorithmsPreferences(minVers uint16) []SignatureScheme {
 	if len(c.SignatureAlgorithmsPreferences) > 0 {
-		return c.SignatureAlgorithmsPreferences
+		return slices.Clone(c.SignatureAlgorithmsPreferences)
 	}
 
 	return supportedSignatureAlgorithms(minVers)
@@ -1452,7 +1452,7 @@ func (c *Config) signatureAlgorithmsPreferences(minVers uint16) []SignatureSchem
 
 func (c *Config) signatureAlgorithmsCertPreferences() []SignatureScheme {
 	if len(c.SignatureAlgorithmsPreferences) > 0 {
-		return c.SignatureAlgorithmsPreferences
+		return slices.Clone(c.SignatureAlgorithmsPreferences)
 	}
 
 	return supportedSignatureAlgorithmsCert()

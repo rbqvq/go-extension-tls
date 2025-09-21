@@ -53,6 +53,7 @@ type serverHandshakeStateTLS13 struct {
 	usingALPS                bool
 	earlyData                bool
 	suite                    *cipherSuiteTLS13
+	certReq                  *certificateRequestMsgTLS13
 	certCompressionAlgorithm CertCompressionAlgorithm
 	cert                     *Certificate
 	sigAlg                   SignatureScheme
@@ -1038,12 +1039,18 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 		certReq := new(certificateRequestMsgTLS13)
 		certReq.ocspStapling = true
 		certReq.scts = true
-		certReq.supportedSignatureAlgorithms = c.config.signatureAlgorithmsPreferences(c.vers)
-		certReq.supportedSignatureAlgorithmsCert = c.config.signatureAlgorithmsCertPreferences()
+
+		supportedSignatureAlgorithms := slices.DeleteFunc(c.config.signatureAlgorithmsPreferences(c.vers), func(s SignatureScheme) bool { return isDisabledSignatureAlgorithm(VersionTLS13, s, false) })
+		certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms
+
+		supportedSignatureAlgorithmsCert := slices.DeleteFunc(c.config.signatureAlgorithmsCertPreferences(), func(s SignatureScheme) bool { return isDisabledSignatureAlgorithm(0, s, true) })
+		certReq.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithmsCert
+		
 		if c.config.ClientCAs != nil {
 			certReq.certificateAuthorities = c.config.ClientCAs.Subjects()
 		}
 
+		hs.certReq = certReq
 		if _, err := hs.c.writeHandshakeRecord(certReq, hs.transcript); err != nil {
 			return err
 		}
@@ -1424,9 +1431,7 @@ func (hs *serverHandshakeStateTLS13) readClientCertificate() error {
 		}
 
 		// See RFC 8446, Section 4.4.3.
-		// We don't use certReq.supportedSignatureAlgorithms because it would
-		// require keeping the certificateRequestMsgTLS13 around in the hs.
-		if !isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, supportedSignatureAlgorithms(c.vers)) ||
+		if !isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, hs.certReq.supportedSignatureAlgorithms) ||
 			!isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, signatureSchemesForPublicKey(c.vers, c.peerCertificates[0].PublicKey)) {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: client certificate used with invalid signature algorithm")
