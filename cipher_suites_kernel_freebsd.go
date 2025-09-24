@@ -11,17 +11,17 @@ import (
 type kernelCryptoCipherAlgorithm int32
 
 const (
-	CRYPTO_AES_CBC           kernelCryptoCipherAlgorithm = 11 /* 128 bit blocksize -- the same as above */
-	CRYPTO_AES_NIST_GCM_16   kernelCryptoCipherAlgorithm = 25 /* 16 byte ICV */
-	CRYPTO_CHACHA20_POLY1305 kernelCryptoCipherAlgorithm = 41 /* combined AEAD cipher per RFC 8439 */
+	_CRYPTO_AES_CBC           kernelCryptoCipherAlgorithm = 11 /* 128 bit blocksize -- the same as above */
+	_CRYPTO_AES_NIST_GCM_16   kernelCryptoCipherAlgorithm = 25 /* 16 byte ICV */
+	_CRYPTO_CHACHA20_POLY1305 kernelCryptoCipherAlgorithm = 41 /* combined AEAD cipher per RFC 8439 */
 )
 
 type kernelCryptoAuthAlgorithm int32
 
 const (
-	CRYPTO_SHA1_HMAC     kernelCryptoAuthAlgorithm = 7
-	CRYPTO_SHA2_256_HMAC kernelCryptoAuthAlgorithm = 18
-	CRYPTO_SHA2_384_HMAC kernelCryptoAuthAlgorithm = 19
+	_CRYPTO_SHA1_HMAC     kernelCryptoAuthAlgorithm = 7
+	_CRYPTO_SHA2_256_HMAC kernelCryptoAuthAlgorithm = 18
+	_CRYPTO_SHA2_384_HMAC kernelCryptoAuthAlgorithm = 19
 )
 
 type kernelCrypto interface {
@@ -83,7 +83,7 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
-		crypto.cipher_algorithm = CRYPTO_AES_NIST_GCM_16
+		crypto.cipher_algorithm = _CRYPTO_AES_NIST_GCM_16
 		crypto.setCipherKey(hc.key)
 		crypto.setIV(hc.iv)
 	case TLS_CHACHA20_POLY1305_SHA256, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256:
@@ -95,7 +95,7 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
-		crypto.cipher_algorithm = CRYPTO_CHACHA20_POLY1305
+		crypto.cipher_algorithm = _CRYPTO_CHACHA20_POLY1305
 		crypto.setCipherKey(hc.key)
 		crypto.setIV(hc.iv)
 	case TLS_RSA_WITH_AES_128_CBC_SHA, TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA, TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
@@ -112,8 +112,8 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
-		crypto.cipher_algorithm = CRYPTO_AES_CBC
-		crypto.auth_algorithm = CRYPTO_SHA1_HMAC
+		crypto.cipher_algorithm = _CRYPTO_AES_CBC
+		crypto.auth_algorithm = _CRYPTO_SHA1_HMAC
 		crypto.setCipherKey(hc.key)
 		crypto.setIV(hc.iv)
 		crypto.setAuthKey(hc.mac)
@@ -130,8 +130,8 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
-		crypto.cipher_algorithm = CRYPTO_AES_CBC
-		crypto.auth_algorithm = CRYPTO_SHA2_256_HMAC
+		crypto.cipher_algorithm = _CRYPTO_AES_CBC
+		crypto.auth_algorithm = _CRYPTO_SHA2_256_HMAC
 		crypto.setCipherKey(hc.key)
 		crypto.setIV(hc.iv)
 		crypto.setAuthKey(hc.mac)
@@ -148,8 +148,8 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
-		crypto.cipher_algorithm = CRYPTO_AES_CBC
-		crypto.auth_algorithm = CRYPTO_SHA2_384_HMAC
+		crypto.cipher_algorithm = _CRYPTO_AES_CBC
+		crypto.auth_algorithm = _CRYPTO_SHA2_384_HMAC
 		crypto.setCipherKey(hc.key)
 		crypto.setIV(hc.iv)
 		crypto.setAuthKey(hc.mac)
