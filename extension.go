@@ -138,6 +138,16 @@ func (*SignatureAlgorithmsCertExtension) Clone() Extension {
 	return &SignatureAlgorithmsCertExtension{}
 }
 
+type DelegatedCredentialsExtension struct{ implementedExtension }
+
+func (*DelegatedCredentialsExtension) ExtensionId() uint16 {
+	return extensionDelegatedCredentials
+}
+
+func (*DelegatedCredentialsExtension) Clone() Extension {
+	return &DelegatedCredentialsExtension{}
+}
+
 type RenegotiationInfoExtension struct{ implementedExtension }
 
 func (*RenegotiationInfoExtension) ExtensionId() uint16 {

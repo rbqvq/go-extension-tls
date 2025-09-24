@@ -13,6 +13,7 @@ import (
 	"crypto/rsa"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"hash"
 	"slices"
 	"time"
@@ -905,6 +906,55 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 	return nil
 }
 
+func (hs *clientHandshakeStateTLS13) verifyServerDelegatedCredential(delegatedCredential *DelegatedCredential) error {
+	c := hs.c
+
+	cert := c.peerCertificates[0]
+	if !isValidForDelegation(cert) {
+		c.sendAlert(alertIllegalParameter)
+		return errors.New("tls: server certificate not authorized for delegation")
+	}
+
+	now := c.config.time()
+	notAfter := cert.NotBefore.Add(delegatedCredential.Credential.ValidTime)
+	if notAfter.After(cert.NotAfter) {
+		c.sendAlert(alertIllegalParameter)
+		return fmt.Errorf("tls: invalid server delegated credential, credential time %s is after %s", notAfter.Format(time.RFC3339), cert.NotAfter.Format(time.RFC3339))
+	}
+	if now.After(notAfter) {
+		c.sendAlert(alertIllegalParameter)
+		return fmt.Errorf("tls: server delegated credential is expired, current time %s is after %s", now.Format(time.RFC3339), notAfter.Format(time.RFC3339))
+	}
+
+	lifetime := notAfter.Sub(now)
+	if lifetime > maxDelegatetdCredentialLifetime {
+		c.sendAlert(alertIllegalParameter)
+		return fmt.Errorf("tls: invalid server delegated credential lifetime, current time %s is more than 7-day before %s", now.Format(time.RFC3339), notAfter.Format(time.RFC3339))
+	}
+
+	sigType, sigHash, err := typeAndHashFromSignatureScheme(delegatedCredential.Algorithm)
+	if err != nil {
+		return c.sendAlert(alertInternalError)
+	}
+	if sigType == signaturePKCS1v15 || sigHash == crypto.SHA1 {
+		return c.sendAlert(alertInternalError)
+	}
+	credential, err := delegatedCredential.marshalWithoutSignature()
+	if err != nil {
+		c.sendAlert(alertInternalError)
+		return err
+	}
+	signed := signedCredential(sigHash, serverCredentialSignatureContext, cert.Raw, credential)
+	if err := verifyHandshakeSignature(sigType, cert.PublicKey,
+		sigHash, signed, delegatedCredential.Signature); err != nil {
+		c.sendAlert(alertDecryptError)
+		return errors.New("tls: invalid delegated credential signature by the server certificate: " + err.Error())
+	}
+
+	c.verifiedDC = delegatedCredential
+	return nil
+}
+
 func (hs *clientHandshakeStateTLS13) readServerCertificate() error {
 	c := hs.c
 
@@ -970,6 +1020,41 @@ func (hs *clientHandshakeStateTLS13) readServerCertificate() error {
 		return err
 	}
 
+	publicKey := c.peerCertificates[0].PublicKey
+	supportedSignatureAlgorithms := slices.DeleteFunc(slices.Clone(hs.hello.supportedSignatureAlgorithms), func(s SignatureScheme) bool { return isDisabledSignatureAlgorithm(VersionTLS13, s, false) })
+	publicKeySignatureAlgorithms := signatureSchemesForPublicKey(c.vers, publicKey)
+	if len(certMsg.delegatedCredential) != 0 {
+		if len(hs.hello.supportedSignatureAlgorithmsDC) <= 0 {
+			c.sendAlert(alertUnexpectedMessage)
+			return errors.New("tls: server sent an unexpected delegated credential extension")
+		}
+
+		delegatedCredential, err := parseDelegatedCredential(certMsg.delegatedCredential)
+		if err != nil {
+			c.sendAlert(alertDecodeError)
+			return err
+		}
+
+		if !isSupportedSignatureAlgorithm(delegatedCredential.Algorithm, supportedSignatureAlgorithms) ||
+			!isSupportedSignatureAlgorithm(delegatedCredential.Algorithm, publicKeySignatureAlgorithms) {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: certificate used with invalid signature algorithm")
+		}
+
+		if !isSupportedSignatureAlgorithm(delegatedCredential.Credential.CertVerifyAlgorithm, signatureSchemesForPublicKeyDC(delegatedCredential.Credential.PublicKey)) {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: delegated credential used with invalid signature algorithm")
+		}
+
+		if err := hs.verifyServerDelegatedCredential(&delegatedCredential); err != nil {
+			return err
+		}
+
+		publicKey = c.verifiedDC.Credential.PublicKey
+		supportedSignatureAlgorithms = slices.DeleteFunc(slices.Clone(hs.hello.supportedSignatureAlgorithmsDC), func(s SignatureScheme) bool { return isDisabledSignatureAlgorithm(VersionTLS13, s, false) })
+		publicKeySignatureAlgorithms = []SignatureScheme{c.verifiedDC.Credential.CertVerifyAlgorithm}
+	}
+
 	// certificateVerifyMsg is included in the transcript, but not until
 	// after we verify the handshake signature, since the state before
 	// this message was sent is used.
@@ -985,11 +1070,10 @@ func (hs *clientHandshakeStateTLS13) readServerCertificate() error {
 	}
 
 	// See RFC 8446, Section 4.4.3.
-	supportedSignatureAlgorithms := slices.DeleteFunc(slices.Clone(hs.hello.supportedSignatureAlgorithms), func(s SignatureScheme) bool { return isDisabledSignatureAlgorithm(VersionTLS13, s, false) })
 	if !isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, supportedSignatureAlgorithms) ||
-		!isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, signatureSchemesForPublicKey(c.vers, c.peerCertificates[0].PublicKey)) {
+		!isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, publicKeySignatureAlgorithms) {
 		c.sendAlert(alertIllegalParameter)
-		return errors.New("tls: certificate used with invalid signature algorithm")
+		return errors.New("tls: certificate or delegated credential used with invalid signature algorithm")
 	}
 	sigType, sigHash, err := typeAndHashFromSignatureScheme(certVerify.signatureAlgorithm)
 	if err != nil {
@@ -999,7 +1083,7 @@ func (hs *clientHandshakeStateTLS13) readServerCertificate() error {
 		return c.sendAlert(alertInternalError)
 	}
 	signed := signedMessage(sigHash, serverSignatureContext, hs.transcript)
-	if err := verifyHandshakeSignature(sigType, c.peerCertificates[0].PublicKey,
+	if err := verifyHandshakeSignature(sigType, publicKey,
 		sigHash, signed, certVerify.signature); err != nil {
 		c.sendAlert(alertDecryptError)
 		return errors.New("tls: invalid signature by the server certificate: " + err.Error())
@@ -1104,6 +1188,31 @@ func (hs *clientHandshakeStateTLS13) sendClientParameters() error {
 	return nil
 }
 
+func (hs *clientHandshakeStateTLS13) pickDelegatedCredential(cert *Certificate) *DelegatedCredential {
+	if len(cert.Certificate) == 0 {
+		return nil
+	}
+
+	for _, delegatedCredential := range cert.DelegatedCredentials {
+		if !isSupportedSignatureAlgorithm(delegatedCredential.Algorithm, hs.certReq.supportedSignatureAlgorithms) {
+			continue
+		}
+
+		if !isSupportedSignatureAlgorithm(delegatedCredential.Credential.CertVerifyAlgorithm, hs.certReq.supportedSignatureAlgorithmsDC) {
+			continue
+		}
+
+		_, ok := delegatedCredential.PrivateKey.(crypto.Signer)
+		if !ok {
+			continue
+		}
+
+		return &delegatedCredential
+	}
+
+	return nil
+}
+
 func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 	c := hs.c
 
@@ -1119,13 +1228,24 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 	}
 
 	cert, err := c.getClientCertificate(&CertificateRequestInfo{
-		AcceptableCAs:    hs.certReq.certificateAuthorities,
-		SignatureSchemes: hs.certReq.supportedSignatureAlgorithms,
-		Version:          c.vers,
-		ctx:              hs.ctx,
+		AcceptableCAs:      hs.certReq.certificateAuthorities,
+		SignatureSchemes:   hs.certReq.supportedSignatureAlgorithms,
+		SignatureSchemesDC: hs.certReq.supportedSignatureAlgorithmsDC,
+		Version:            c.vers,
+		ctx:                hs.ctx,
 	})
 	if err != nil {
 		return err
+	}
+
+	var delegatedCredential []byte
+	dc := hs.pickDelegatedCredential(cert)
+	if dc != nil {
+		delegatedCredential, err = dc.marshal()
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
 	}
 
 	certMsg := new(certificateMsgTLS13)
@@ -1133,6 +1253,7 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 	certMsg.certificate = *cert
 	certMsg.scts = hs.certReq.scts && len(cert.SignedCertificateTimestamps) > 0
 	certMsg.ocspStapling = hs.certReq.ocspStapling && len(cert.OCSPStaple) > 0
+	certMsg.delegatedCredential = delegatedCredential
 
 	var msg handshakeMessage = certMsg
 	if hs.certCompressionAlgorithm != 0 {
@@ -1156,12 +1277,19 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 	certVerifyMsg := new(certificateVerifyMsg)
 	certVerifyMsg.hasSignatureAlgorithm = true
 
-	certVerifyMsg.signatureAlgorithm, err = selectSignatureScheme(c.vers, cert, hs.certReq.supportedSignatureAlgorithms)
-	if err != nil {
-		// getClientCertificate returned a certificate incompatible with the
-		// CertificateRequestInfo supported signature algorithms.
-		c.sendAlert(alertHandshakeFailure)
-		return err
+	var privateKey crypto.PrivateKey
+	if dc != nil {
+		certVerifyMsg.signatureAlgorithm = dc.Credential.CertVerifyAlgorithm
+		privateKey = dc.PrivateKey
+	} else {
+		certVerifyMsg.signatureAlgorithm, err = selectSignatureScheme(c.vers, cert, hs.certReq.supportedSignatureAlgorithms)
+		if err != nil {
+			// getClientCertificate returned a certificate incompatible with the
+			// CertificateRequestInfo supported signature algorithms.
+			c.sendAlert(alertHandshakeFailure)
+			return err
+		}
+		privateKey = cert.PrivateKey
 	}
 
 	sigType, sigHash, err := typeAndHashFromSignatureScheme(certVerifyMsg.signatureAlgorithm)
@@ -1174,7 +1302,7 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 	if sigType == signatureRSAPSS {
 		signOpts = &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: sigHash}
 	}
-	sig, err := cert.PrivateKey.(crypto.Signer).Sign(c.config.rand(), signed, signOpts)
+	sig, err := privateKey.(crypto.Signer).Sign(c.config.rand(), signed, signOpts)
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return errors.New("tls: failed to sign handshake: " + err.Error())

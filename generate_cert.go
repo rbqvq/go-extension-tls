@@ -17,6 +17,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/pem"
 	"flag"
 	"log"
@@ -32,10 +33,13 @@ var (
 	validFrom  = flag.String("start-date", "", "Creation date formatted as Jan 1 15:04:05 2011")
 	validFor   = flag.Duration("duration", 365*24*time.Hour, "Duration that certificate is valid for")
 	isCA       = flag.Bool("ca", false, "whether this cert should be its own Certificate Authority")
+	allowDC    = flag.Bool("allowDC", false, "whether this cert can be used with Delegated Credentials")
 	rsaBits    = flag.Int("rsa-bits", 2048, "Size of RSA key to generate. Ignored if --ecdsa-curve is set")
 	ecdsaCurve = flag.String("ecdsa-curve", "", "ECDSA curve to use to generate a key. Valid values are P224, P256 (recommended), P384, P521")
 	ed25519Key = flag.Bool("ed25519", false, "Generate an Ed25519 key")
 )
+
+var oidExtensionDelegatedCredential = []int{1, 3, 6, 1, 4, 1, 44363, 44}
 
 func publicKey(priv any) any {
 	switch k := priv.(type) {
@@ -132,8 +136,24 @@ func main() {
 	}
 
 	if *isCA {
+		if *allowDC {
+			log.Fatal("Failed to create certificate: ca is not allowed with the dc flag")
+		}
+
 		template.IsCA = true
 		template.KeyUsage |= x509.KeyUsageCertSign
+	}
+
+	if *allowDC {
+		var delegatedCredentialExtension pkix.Extension
+		delegatedCredentialExtension.Id = oidExtensionDelegatedCredential
+		delegatedCredentialExtension.Value, err = asn1.Marshal(asn1.NullRawValue)
+		if err != nil {
+			log.Fatalf("Failed to marshal DelegatedCredential extension: %v", err)
+		}
+
+		template.ExtraExtensions = append(template.ExtraExtensions, delegatedCredentialExtension)
+		template.KeyUsage |= x509.KeyUsageDigitalSignature
 	}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, publicKey(priv), priv)

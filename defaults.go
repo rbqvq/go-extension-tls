@@ -38,6 +38,18 @@ func defaultSupportedSignatureAlgorithms() []SignatureScheme {
 	}
 }
 
+// defaultSupportedSignatureAlgorithmsDC returns the signature and hash algorithms that
+// the code advertises as supported in a TLS 1.3 ClientHello and in a TLS 1.3
+// CertificateRequest. This excludes 'rsa_pss_rsae_' and 'rsa_pkc1s_' algorithms.
+func defaultSupportedSignatureAlgorithmsDC() []SignatureScheme {
+	return []SignatureScheme{
+		ECDSAWithP256AndSHA256,
+		Ed25519,
+		ECDSAWithP384AndSHA384,
+		ECDSAWithP521AndSHA512,
+	}
+}
+
 func supportedCipherSuites(aesGCMPreferred bool) []uint16 {
 	if aesGCMPreferred {
 		return slices.Clone(cipherSuitesPreferenceOrder)

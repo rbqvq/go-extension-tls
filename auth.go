@@ -64,6 +64,9 @@ func verifyHandshakeSignature(sigType uint8, pubkey crypto.PublicKey, hashFunc c
 const (
 	serverSignatureContext = "TLS 1.3, server CertificateVerify\x00"
 	clientSignatureContext = "TLS 1.3, client CertificateVerify\x00"
+
+	serverCredentialSignatureContext = "TLS, server delegated credentials\x00"
+	clientCredentialSignatureContext = "TLS, client delegated credentials\x00"
 )
 
 var signaturePadding = []byte{
@@ -91,6 +94,23 @@ func signedMessage(sigHash crypto.Hash, context string, transcript hash.Hash) []
 	h.Write(signaturePadding)
 	io.WriteString(h, context)
 	h.Write(transcript.Sum(nil))
+	return h.Sum(nil)
+}
+
+func signedCredential(sigHash crypto.Hash, context string, certificate, delegatedCredential []byte) []byte {
+	if sigHash == directSigning {
+		b := &bytes.Buffer{}
+		b.Write(signaturePadding)
+		io.WriteString(b, context)
+		b.Write(certificate)
+		b.Write(delegatedCredential)
+		return b.Bytes()
+	}
+	h := sigHash.New()
+	h.Write(signaturePadding)
+	io.WriteString(h, context)
+	h.Write(certificate)
+	h.Write(delegatedCredential)
 	return h.Sum(nil)
 }
 
@@ -195,6 +215,26 @@ func signatureSchemesForPublicKey(version uint16, pub crypto.PublicKey) []Signat
 			}
 		}
 		return sigAlgs
+	case ed25519.PublicKey:
+		return []SignatureScheme{Ed25519}
+	default:
+		return nil
+	}
+}
+
+func signatureSchemesForPublicKeyDC(pub crypto.PublicKey) []SignatureScheme {
+	switch pub := pub.(type) {
+	case *ecdsa.PublicKey:
+		switch pub.Curve {
+		case elliptic.P256():
+			return []SignatureScheme{ECDSAWithP256AndSHA256}
+		case elliptic.P384():
+			return []SignatureScheme{ECDSAWithP384AndSHA384}
+		case elliptic.P521():
+			return []SignatureScheme{ECDSAWithP521AndSHA512}
+		default:
+			return nil
+		}
 	case ed25519.PublicKey:
 		return []SignatureScheme{Ed25519}
 	default:

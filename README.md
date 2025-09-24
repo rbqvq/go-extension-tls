@@ -12,6 +12,7 @@ This repository is an extension of the golang standard library [crypto/go](https
 - Encrypt-then-MAC (RFC7366)
 - TLS 1.3 0RTT (Early Data)
 - TLS 1.3 FFDHE Key Exchange (RFC 7919)
+- TLS 1.3 Delegated Credential (RFC 9345)
 - Compressed certificate
 - Application-Layer Protocol Settings (ALPS)
 - GREASE
@@ -22,4 +23,5 @@ This repository is an extension of the golang standard library [crypto/go](https
 
 - [uTLS](https://github.com/refraction-networking/utls)
 - [Cloudflare tls-tris](https://github.com/cloudflare/tls-tris)
+- [Cloudflare Golang](https://github.com/cloudflare/go)
 - [goktls](https://github.com/secure-for-ai/goktls/)

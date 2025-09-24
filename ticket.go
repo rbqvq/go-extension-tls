@@ -91,6 +91,7 @@ type SessionState struct {
 	ocspResponse      []byte
 	scts              [][]byte
 	verifiedChains    [][]*x509.Certificate
+	verifiedDC        *DelegatedCredential
 	alpnProtocol      string
 	alpnClientSetting []byte
 	alpnServerSetting []byte
@@ -114,6 +115,15 @@ type SessionState struct {
 // The specific encoding should be considered opaque and may change incompatibly
 // between Go versions.
 func (s *SessionState) Bytes() ([]byte, error) {
+	var delegatedCredential []byte
+	var err error
+	if s.verifiedDC != nil {
+		delegatedCredential, err = s.verifiedDC.marshal()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	var b cryptobyte.Builder
 	b.AddUint16(s.version)
 	if s.isClient {
@@ -143,7 +153,7 @@ func (s *SessionState) Bytes() ([]byte, error) {
 		Certificate:                 certificatesToBytesSlice(s.peerCertificates),
 		OCSPStaple:                  s.ocspResponse,
 		SignedCertificateTimestamps: s.scts,
-	})
+	}, nil)
 	b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
 		for _, chain := range s.verifiedChains {
 			b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
@@ -159,6 +169,9 @@ func (s *SessionState) Bytes() ([]byte, error) {
 				}
 			})
 		}
+	})
+	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes(delegatedCredential)
 	})
 	b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
 		b.AddBytes([]byte(s.alpnProtocol))
@@ -204,7 +217,7 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 		!s.ReadUint8(&extMasterSecret) ||
 		!s.ReadUint32(&ss.MaxEarlyData) ||
 		len(ss.secret) == 0 ||
-		!unmarshalCertificate(&s, &cert) {
+		!unmarshalCertificate(&s, &cert, nil) {
 		return nil, errors.New("tls: invalid session encoding")
 	}
 	for !extra.Empty() {
@@ -269,6 +282,17 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 		}
 		ss.verifiedChains = append(ss.verifiedChains, chain)
 	}
+	var delegatedCredential cryptobyte.String
+	if !s.ReadUint16LengthPrefixed(&delegatedCredential) {
+		return nil, errors.New("tls: invalid session encoding")
+	}
+	if len(delegatedCredential) > 0 {
+		dc, err := parseDelegatedCredential(delegatedCredential)
+		if err != nil {
+			return nil, err
+		}
+		ss.verifiedDC = &dc
+	}
 	var alpn []byte
 	if !readUint8LengthPrefixed(&s, &alpn) {
 		return nil, errors.New("tls: invalid session encoding")
@@ -311,6 +335,7 @@ func (c *Conn) sessionState() *SessionState {
 		isClient:         c.isClient,
 		extMasterSecret:  c.extMasterSecret,
 		verifiedChains:   c.verifiedChains,
+		verifiedDC:       c.verifiedDC,
 		curveID:          c.curveID,
 	}
 }

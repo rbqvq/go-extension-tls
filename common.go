@@ -116,6 +116,7 @@ const (
 	extensionEncryptThenMAC          uint16 = 22
 	extensionExtendedMasterSecret    uint16 = 23
 	extensionCompressCertificate     uint16 = 27 // compress_certificate in TLS 1.3
+	extensionDelegatedCredentials    uint16 = 34
 	extensionSessionTicket           uint16 = 35
 	extensionPreSharedKey            uint16 = 41
 	extensionEarlyData               uint16 = 42
@@ -313,6 +314,11 @@ type ConnectionState struct {
 	// VerifiedChains and its contents should not be modified.
 	VerifiedChains [][]*x509.Certificate
 
+	// VerifiedDC indicates that the Delegated Credential sent by the peer (if advertised
+	// and correctly processed), which has been verified against the leaf certificate,
+	// has been used.
+	VerifiedDC bool
+
 	// SignedCertificateTimestamps is a list of SCTs provided by the peer
 	// through the TLS handshake for the leaf certificate, if any.
 	SignedCertificateTimestamps [][]byte
@@ -472,6 +478,13 @@ type ClientHelloInfo struct {
 	// Algorithms Extension is being used (see RFC 5246, Section 7.4.1.4.1).
 	SignatureSchemes []SignatureScheme
 
+	// SignatureSchemesDC lists the signature schemes that the client
+	// is willing to verify when using Delegated Credentials.
+	// This is and can be different from SignatureSchemes. SignatureSchemesDC
+	// is set only if the DelegatedCredentials Extension is being used.
+	// If Delegated Credentials are supported, this list should not be nil.
+	SignatureSchemesDC []SignatureScheme
+
 	// SupportedProtos lists the application protocols supported by the client.
 	// SupportedProtos is set only if the Application-Layer Protocol
 	// Negotiation Extension is being used (see RFC 7301, Section 3.1).
@@ -527,6 +540,13 @@ type CertificateRequestInfo struct {
 	// SignatureSchemes lists the signature schemes that the server is
 	// willing to verify.
 	SignatureSchemes []SignatureScheme
+
+	// SignatureSchemesDC lists the signature schemes that the server
+	// is willing to verify when using Delegated Credentials.
+	// This is and can be different from SignatureSchemes. SignatureSchemesDC
+	// is set only if the DelegatedCredentials Extension is being used.
+	// If Delegated Credentials are supported, this list should not be nil.
+	SignatureSchemesDC []SignatureScheme
 
 	// Version is the TLS version that was negotiated for this connection.
 	Version uint16
@@ -864,6 +884,18 @@ type Config struct {
 	// will be used.
 	SignatureAlgorithmsPreferences []SignatureScheme
 
+	// DelegatedCredential is true if the client or server is willing
+	// to negotiate the delegated credential extension.
+	// This can only be used with TLS 1.3.
+	//
+	// See https://datatracker.ietf.org/doc/html/rfc9345
+	DelegatedCredential bool
+
+	// DelegatedCredentialPreferences contains the signature algorithms that
+	// will be used in an handshake for delegated credential, in preference order.
+	// If empty, the default will be used.
+	DelegatedCredentialPreferences []SignatureScheme
+
 	// DynamicRecordSizingDisabled disables adaptive sizing of TLS records.
 	// When true, the largest possible TLS record size is always used. When
 	// false, the size of TLS records may be adjusted in an attempt to
@@ -1130,6 +1162,8 @@ func (c *Config) Clone() *Config {
 		CertCompressionDisabled:             c.CertCompressionDisabled,
 		CertCompressionPreferences:          c.CertCompressionPreferences,
 		SignatureAlgorithmsPreferences:      c.SignatureAlgorithmsPreferences,
+		DelegatedCredential:                 c.DelegatedCredential,
+		DelegatedCredentialPreferences:      c.DelegatedCredentialPreferences,
 		DynamicRecordSizingDisabled:         c.DynamicRecordSizingDisabled,
 		Renegotiation:                       c.Renegotiation,
 		AllowEarlyData:                      c.AllowEarlyData,
@@ -1461,6 +1495,18 @@ func (c *Config) signatureAlgorithmsCertPreferences() []SignatureScheme {
 	}
 
 	return supportedSignatureAlgorithmsCert()
+}
+
+func (c *Config) delegatedCredentialPreferences() []SignatureScheme {
+	if !c.DelegatedCredential {
+		return nil
+	}
+
+	if len(c.DelegatedCredentialPreferences) > 0 {
+		return slices.Clone(c.DelegatedCredentialPreferences)
+	}
+
+	return supportedSignatureAlgorithmsDC()
 }
 
 func (c *Config) supportsCertCompression(algorithm CertCompressionAlgorithm) bool {
@@ -1844,6 +1890,10 @@ type Certificate struct {
 	// SignedCertificateTimestamps contains an optional list of Signed
 	// Certificate Timestamps which will be served to clients that request it.
 	SignedCertificateTimestamps [][]byte
+	// DelegatedCredentials are a list of Delegated Credentials with their
+	// corresponding private keys, signed by the leaf certificate.
+	// If there are no delegated credentials, this field is nil.
+	DelegatedCredentials []DelegatedCredential
 	// Leaf is the parsed form of the leaf certificate, which may be initialized
 	// using x509.ParseCertificate to reduce per-handshake processing. If nil,
 	// the leaf certificate will be parsed as needed.
@@ -1855,6 +1905,9 @@ type Certificate struct {
 func (c *Certificate) leaf() (*x509.Certificate, error) {
 	if c.Leaf != nil {
 		return c.Leaf, nil
+	}
+	if len(c.Certificate) == 0 {
+		return nil, errors.New("tls: missing leaf certificate")
 	}
 	return x509.ParseCertificate(c.Certificate[0])
 }
@@ -1973,6 +2026,13 @@ func supportedSignatureAlgorithms(minVers uint16) []SignatureScheme {
 	return slices.DeleteFunc(sigAlgs, func(s SignatureScheme) bool {
 		return isDisabledSignatureAlgorithm(minVers, s, false)
 	})
+}
+
+// supportedSignatureAlgorithmsDC returns the supported signature algorithms for
+// the delegated credential, to advertise in ClientHello and
+// CertificateRequest messages.
+func supportedSignatureAlgorithmsDC() []SignatureScheme {
+	return defaultSupportedSignatureAlgorithmsDC()
 }
 
 func isDisabledSignatureAlgorithm(version uint16, s SignatureScheme, isCert bool) bool {

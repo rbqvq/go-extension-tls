@@ -86,6 +86,7 @@ type clientHelloMsg struct {
 	supportedCertCompressionAlgorithms []CertCompressionAlgorithm
 	supportedSignatureAlgorithms       []SignatureScheme
 	supportedSignatureAlgorithmsCert   []SignatureScheme
+	supportedSignatureAlgorithmsDC     []SignatureScheme
 	secureRenegotiationSupported       bool
 	secureRenegotiation                []byte
 	encryptThenMAC                     bool
@@ -176,6 +177,10 @@ func (m *clientHelloMsg) echOuterExtensions(compressed []Extension) []uint16 {
 		case *SignatureAlgorithmsCertExtension:
 			if len(m.supportedSignatureAlgorithmsCert) > 0 {
 				echOuterExts = append(echOuterExts, extensionSignatureAlgorithmsCert)
+			}
+		case *DelegatedCredentialsExtension:
+			if len(m.supportedSignatureAlgorithmsDC) > 0 {
+				echOuterExts = append(echOuterExts, extensionDelegatedCredentials)
 			}
 		case *ALPNExtension:
 			if len(m.alpnProtocols) > 0 {
@@ -357,6 +362,18 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 					exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 						for _, sigAlgo := range m.supportedSignatureAlgorithmsCert {
+							exts.AddUint16(uint16(sigAlgo))
+						}
+					})
+				})
+			}
+		case *DelegatedCredentialsExtension:
+			if len(m.supportedSignatureAlgorithmsDC) > 0 {
+				// RFC 9345, Section 4.1.1
+				exts.AddUint16(extensionDelegatedCredentials)
+				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+						for _, sigAlgo := range m.supportedSignatureAlgorithmsDC {
 							exts.AddUint16(uint16(sigAlgo))
 						}
 					})
@@ -613,6 +630,13 @@ func (m *clientHelloMsg) getUnpaddedLength() int {
 				if len(m.supportedSignatureAlgorithmsCert) > 0 {
 					extLength += 4
 					// RFC 8446, Section 4.2.3
+					extLength += 2
+					extLength += len(m.supportedSignatureAlgorithmsCert) * 2
+				}
+			case *DelegatedCredentialsExtension:
+				if len(m.supportedSignatureAlgorithmsDC) > 0 {
+					extLength += 4
+					// RFC 9345, Section 4.1.1
 					extLength += 2
 					extLength += len(m.supportedSignatureAlgorithmsCert) * 2
 				}
@@ -999,6 +1023,21 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 					m.supportedSignatureAlgorithmsCert, SignatureScheme(sigAndAlg))
 			}
 			m.extensionList = append(m.extensionList, &SignatureAlgorithmsCertExtension{})
+		case extensionDelegatedCredentials:
+			// RFC 9345, Section 4.1.1
+			var sigAndAlgs cryptobyte.String
+			if !extData.ReadUint16LengthPrefixed(&sigAndAlgs) || sigAndAlgs.Empty() {
+				return false
+			}
+			for !sigAndAlgs.Empty() {
+				var sigAndAlg uint16
+				if !sigAndAlgs.ReadUint16(&sigAndAlg) {
+					return false
+				}
+				m.supportedSignatureAlgorithmsDC = append(
+					m.supportedSignatureAlgorithmsDC, SignatureScheme(sigAndAlg))
+			}
+			m.extensionList = append(m.extensionList, &DelegatedCredentialsExtension{})
 		case extensionRenegotiationInfo:
 			// RFC 5746, Section 3.2
 			if !readUint8LengthPrefixed(&extData, &m.secureRenegotiation) {
@@ -1903,6 +1942,7 @@ type certificateRequestMsgTLS13 struct {
 	scts                             bool
 	supportedSignatureAlgorithms     []SignatureScheme
 	supportedSignatureAlgorithmsCert []SignatureScheme
+	supportedSignatureAlgorithmsDC   []SignatureScheme
 	certificateAuthorities           [][]byte
 }
 
@@ -1943,6 +1983,16 @@ func (m *certificateRequestMsgTLS13) marshal() ([]byte, error) {
 				b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 					b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 						for _, sigAlgo := range m.supportedSignatureAlgorithmsCert {
+							b.AddUint16(uint16(sigAlgo))
+						}
+					})
+				})
+			}
+			if len(m.supportedSignatureAlgorithmsDC) > 0 {
+				b.AddUint16(extensionDelegatedCredentials)
+				b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+					b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+						for _, sigAlgo := range m.supportedSignatureAlgorithmsDC {
 							b.AddUint16(uint16(sigAlgo))
 						}
 					})
@@ -2017,6 +2067,19 @@ func (m *certificateRequestMsgTLS13) unmarshal(data []byte) bool {
 				m.supportedSignatureAlgorithmsCert = append(
 					m.supportedSignatureAlgorithmsCert, SignatureScheme(sigAndAlg))
 			}
+		case extensionDelegatedCredentials:
+			var sigAndAlgs cryptobyte.String
+			if !extData.ReadUint16LengthPrefixed(&sigAndAlgs) || sigAndAlgs.Empty() {
+				return false
+			}
+			for !sigAndAlgs.Empty() {
+				var sigAndAlg uint16
+				if !sigAndAlgs.ReadUint16(&sigAndAlg) {
+					return false
+				}
+				m.supportedSignatureAlgorithmsDC = append(
+					m.supportedSignatureAlgorithmsDC, SignatureScheme(sigAndAlg))
+			}
 		case extensionCertificateAuthorities:
 			var auths cryptobyte.String
 			if !extData.ReadUint16LengthPrefixed(&auths) || auths.Empty() {
@@ -2084,9 +2147,10 @@ func (m *certificateMsg) unmarshal(data []byte) bool {
 }
 
 type certificateMsgTLS13 struct {
-	certificate  Certificate
-	ocspStapling bool
-	scts         bool
+	certificate         Certificate
+	ocspStapling        bool
+	scts                bool
+	delegatedCredential []byte
 }
 
 func (m *certificateMsgTLS13) marshal() ([]byte, error) {
@@ -2102,13 +2166,13 @@ func (m *certificateMsgTLS13) marshal() ([]byte, error) {
 		if !m.scts {
 			certificate.SignedCertificateTimestamps = nil
 		}
-		marshalCertificate(b, certificate)
+		marshalCertificate(b, certificate, m.delegatedCredential)
 	})
 
 	return b.Bytes()
 }
 
-func marshalCertificate(b *cryptobyte.Builder, certificate Certificate) {
+func marshalCertificate(b *cryptobyte.Builder, certificate Certificate, delegatedCredential []byte) {
 	b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
 		for i, cert := range certificate.Certificate {
 			b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
@@ -2116,7 +2180,8 @@ func marshalCertificate(b *cryptobyte.Builder, certificate Certificate) {
 			})
 			b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 				if i > 0 {
-					// This library only supports OCSP and SCT for leaf certificates.
+					// This library only supports OCSP, SCT and Delegated Credentials for leaf certificates.
+					// Delegated Credentials are only supported on the leaf/end-entity certificate.
 					return
 				}
 				if certificate.OCSPStaple != nil {
@@ -2140,6 +2205,12 @@ func marshalCertificate(b *cryptobyte.Builder, certificate Certificate) {
 						})
 					})
 				}
+				if delegatedCredential != nil {
+					b.AddUint16(extensionDelegatedCredentials)
+					b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+						b.AddBytes(delegatedCredential)
+					})
+				}
 			})
 		}
 	})
@@ -2152,7 +2223,7 @@ func (m *certificateMsgTLS13) unmarshal(data []byte) bool {
 	var context cryptobyte.String
 	if !s.Skip(4) || // message type and uint24 length field
 		!s.ReadUint8LengthPrefixed(&context) || !context.Empty() ||
-		!unmarshalCertificate(&s, &m.certificate) ||
+		!unmarshalCertificate(&s, &m.certificate, &m.delegatedCredential) ||
 		!s.Empty() {
 		return false
 	}
@@ -2163,7 +2234,7 @@ func (m *certificateMsgTLS13) unmarshal(data []byte) bool {
 	return true
 }
 
-func unmarshalCertificate(s *cryptobyte.String, certificate *Certificate) bool {
+func unmarshalCertificate(s *cryptobyte.String, certificate *Certificate, delegatedCredential *[]byte) bool {
 	var certList cryptobyte.String
 	if !s.ReadUint24LengthPrefixed(&certList) {
 		return false
@@ -2209,6 +2280,10 @@ func unmarshalCertificate(s *cryptobyte.String, certificate *Certificate) bool {
 					}
 					certificate.SignedCertificateTimestamps = append(
 						certificate.SignedCertificateTimestamps, sct)
+				}
+			case extensionDelegatedCredentials:
+				if extData.Empty() || !extData.ReadBytes(delegatedCredential, len(extData)) {
+					return false
 				}
 			default:
 				// Ignore unknown extensions.

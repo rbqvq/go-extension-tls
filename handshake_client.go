@@ -205,6 +205,10 @@ CipherSuiteLoop:
 	if maxVersion >= VersionTLS12 {
 		hello.supportedSignatureAlgorithms = config.signatureAlgorithmsPreferences(minVersion)
 		hello.supportedSignatureAlgorithmsCert = config.signatureAlgorithmsCertPreferences()
+
+		if maxVersion >= VersionTLS13 {
+			hello.supportedSignatureAlgorithmsDC = config.delegatedCredentialPreferences()
+		}
 	}
 
 	grease_groups_ids := make([]CurveID, 0)
@@ -641,6 +645,12 @@ func (c *Conn) loadSession(outer *clientHelloMsg, ech *echClientContext) (
 	// protect the application from a faulty ClientSessionCache implementation.
 	if c.config.time().After(session.peerCertificates[0].NotAfter) {
 		// Expired certificate, delete the entry.
+		c.config.ClientSessionCache.Put(cacheKey, nil)
+		return nil, nil, nil, nil
+	}
+	// Check that the cached server delegated credential is not expired
+	if session.verifiedDC != nil && c.config.time().After(session.peerCertificates[0].NotBefore.Add(session.verifiedDC.Credential.ValidTime)) {
+		// Expired delegated credential, delete the entry.
 		c.config.ClientSessionCache.Put(cacheKey, nil)
 		return nil, nil, nil, nil
 	}

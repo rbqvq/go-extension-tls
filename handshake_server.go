@@ -1044,17 +1044,18 @@ func clientHelloInfo(ctx context.Context, c *Conn, clientHello *clientHelloMsg) 
 	}
 
 	return &ClientHelloInfo{
-		CipherSuites:      clientHello.cipherSuites,
-		ServerName:        clientHello.serverName,
-		SupportedCurves:   clientHello.supportedCurves,
-		SupportedPoints:   clientHello.supportedPoints,
-		SignatureSchemes:  clientHello.supportedSignatureAlgorithms,
-		SupportedProtos:   clientHello.alpnProtocols,
-		SupportedVersions: supportedVersions,
-		Extensions:        clientHello.extensions,
-		ExtensionList:     clientHello.extensionList,
-		Conn:              c.conn,
-		config:            c.config,
-		ctx:               ctx,
+		CipherSuites:       clientHello.cipherSuites,
+		ServerName:         clientHello.serverName,
+		SupportedCurves:    clientHello.supportedCurves,
+		SupportedPoints:    clientHello.supportedPoints,
+		SignatureSchemes:   clientHello.supportedSignatureAlgorithms,
+		SignatureSchemesDC: clientHello.supportedSignatureAlgorithmsDC,
+		SupportedProtos:    clientHello.alpnProtocols,
+		SupportedVersions:  supportedVersions,
+		Extensions:         clientHello.extensions,
+		ExtensionList:      clientHello.extensionList,
+		Conn:               c.conn,
+		config:             c.config,
+		ctx:                ctx,
 	}
 }
