@@ -334,7 +334,8 @@ func (extension *UnimplementedExtension) Len(messageType uint8, echInner bool) i
 }
 
 func (extension *UnimplementedExtension) Unmarshal(messageType uint8, echAccepted bool, b cryptobyte.String, _ *ExtensionState) (bool, error) {
-	return b.CopyBytes(extension.Data), nil
+	extension.Data = b
+	return true, nil
 }
 
 func (extension *UnimplementedExtension) Clone() Extension {

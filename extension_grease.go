@@ -42,7 +42,8 @@ func (extension *GREASEExtension) Len(messageType uint8, echInner bool) int {
 }
 
 func (extension *GREASEExtension) Unmarshal(messageType uint8, echAccepted bool, b cryptobyte.String, _ *ExtensionState) (bool, error) {
-	return b.CopyBytes(extension.Data), nil
+	extension.Data = b
+	return true, nil
 }
 
 func (extension *GREASEExtension) Clone() Extension {
