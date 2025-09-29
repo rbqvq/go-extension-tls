@@ -394,10 +394,19 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 	typ := recordType(record[0])
 	payload := record[recordHeaderLen:]
 
-	// In TLS 1.3, change_cipher_spec messages are to be ignored without being
-	// decrypted. See RFC 8446, Appendix D.4.
-	if hc.version == VersionTLS13 && typ == recordTypeChangeCipherSpec {
-		return payload, typ, nil
+	if hc.version == VersionTLS13 {
+		switch typ {
+		case recordTypeAlert:
+			// If the client (e.g. OpenSSL) does not accept the KeyShare,
+			// they may send the Alert in plaintext.
+			if hc.level == QUICEncryptionLevelHandshake && len(payload) == 2 {
+				return payload, typ, nil
+			}
+		case recordTypeChangeCipherSpec:
+			// In TLS 1.3, change_cipher_spec messages are to be ignored without being
+			// decrypted. See RFC 8446, Appendix D.4.
+			return payload, typ, nil
+		}
 	}
 
 	paddingGood := byte(255)
