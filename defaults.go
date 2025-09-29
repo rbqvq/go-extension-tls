@@ -14,7 +14,7 @@ import (
 // defaultCurvePreferences is the default set of supported key exchanges, as
 // well as the preference order.
 func defaultCurvePreferences() []CurveID {
-	return []CurveID{X25519MLKEM768, X25519Kyber768Draft00, X25519, CurveP256, CurveP384, CurveP521}
+	return []CurveID{X25519MLKEM768, X25519Kyber768Draft00, X25519, CurveP256, CurveP384, CurveP521, FFDHE2048, FFDHE3072, FFDHE4096, FFDHE6144, FFDHE8192}
 }
 
 // defaultSupportedSignatureAlgorithms returns the signature and hash algorithms that

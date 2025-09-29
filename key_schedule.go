@@ -13,6 +13,7 @@ import (
 	"hash"
 	"io"
 
+	"gitlab.com/go-extension/ffdh"
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/sha3"
@@ -120,19 +121,22 @@ func (c *cipherSuiteTLS13) exportKeyingMaterial(masterSecret []byte, transcript 
 	}
 }
 
-type ecdheKeyStorage struct {
-	keys map[CurveID]*ecdh.PrivateKey
+type keyStorage struct {
+	ecdhe map[CurveID]*ecdh.PrivateKey
+	ffdhe map[CurveID]*ffdh.PrivateKey
+
+	mlkem *mlkem.DecapsulationKey768
 }
 
-func (ks *ecdheKeyStorage) GetOrGenerate(c *Config, curveID CurveID) (*ecdh.PrivateKey, error) {
+func (ks *keyStorage) generateECDHEKey(c *Config, curveID CurveID) (*ecdh.PrivateKey, error) {
 	if c.IndependentlyHybridKeyShare {
 		return generateECDHEKey(c.rand(), curveID)
 	}
 
-	if ks.keys == nil {
-		ks.keys = make(map[CurveID]*ecdh.PrivateKey)
+	if ks.ecdhe == nil {
+		ks.ecdhe = make(map[CurveID]*ecdh.PrivateKey)
 	} else {
-		ecdhe, ok := ks.keys[curveID]
+		ecdhe, ok := ks.ecdhe[curveID]
 		if ok {
 			return ecdhe, nil
 		}
@@ -143,13 +147,55 @@ func (ks *ecdheKeyStorage) GetOrGenerate(c *Config, curveID CurveID) (*ecdh.Priv
 		return nil, err
 	}
 
-	ks.keys[curveID] = ecdhe
+	ks.ecdhe[curveID] = ecdhe
 	return ecdhe, nil
+}
+
+func (ks *keyStorage) generateFFDHEKey(c *Config, curveID CurveID) (*ffdh.PrivateKey, error) {
+	if c.IndependentlyHybridKeyShare {
+		return generateFFDHEKey(c.rand(), curveID)
+	}
+
+	if ks.ffdhe == nil {
+		ks.ffdhe = make(map[CurveID]*ffdh.PrivateKey)
+	} else {
+		ffdhe, ok := ks.ffdhe[curveID]
+		if ok {
+			return ffdhe, nil
+		}
+	}
+
+	ffdhe, err := generateFFDHEKey(c.rand(), curveID)
+	if err != nil {
+		return nil, err
+	}
+
+	ks.ffdhe[curveID] = ffdhe
+	return ffdhe, nil
+}
+
+func (ks *keyStorage) generateMLKEM768(c *Config) (*mlkem.DecapsulationKey768, error) {
+	if c.IndependentlyHybridKeyShare {
+		return generateMLKEM768Key(c.rand())
+	}
+
+	if ks.mlkem != nil {
+		return ks.mlkem, nil
+	}
+
+	mlkem, err := generateMLKEM768Key(c.rand())
+	if err != nil {
+		return nil, err
+	}
+
+	ks.mlkem = mlkem
+	return mlkem, nil
 }
 
 type keySharePrivateKeys struct {
 	curveID CurveID
 	ecdhe   *ecdh.PrivateKey
+	ffdhe   *ffdh.PrivateKey
 	mlkem   *mlkem.DecapsulationKey768
 }
 
@@ -192,4 +238,40 @@ func curveForCurveID(id CurveID) (ecdh.Curve, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// generateFFDHEKey returns a PrivateKey that implements Diffie-Hellman
+// according to RFC 7919.
+func generateFFDHEKey(rand io.Reader, curveID CurveID) (*ffdh.PrivateKey, error) {
+	group, ok := curveForGroup(curveID)
+	if !ok {
+		return nil, errors.New("tls: internal error: unsupported ffdh group")
+	}
+
+	return group.GenerateKey(rand)
+}
+
+func curveForGroup(id CurveID) (ffdh.Group, bool) {
+	switch id {
+	case FFDHE2048:
+		return ffdh.FFDHE2048(), true
+	case FFDHE3072:
+		return ffdh.FFDHE3072(), true
+	case FFDHE4096:
+		return ffdh.FFDHE4096(), true
+	case FFDHE6144:
+		return ffdh.FFDHE6144(), true
+	case FFDHE8192:
+		return ffdh.FFDHE8192(), true
+	default:
+		return nil, false
+	}
+}
+
+func generateMLKEM768Key(rand io.Reader) (*mlkem.DecapsulationKey768, error) {
+	seed := make([]byte, mlkem.SeedSize)
+	if _, err := io.ReadFull(rand, seed); err != nil {
+		return nil, err
+	}
+	return mlkem.NewDecapsulationKey768(seed)
 }

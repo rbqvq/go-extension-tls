@@ -10,7 +10,6 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/mlkem"
 	"crypto/rsa"
 	"crypto/subtle"
 	"crypto/x509"
@@ -219,45 +218,53 @@ CipherSuiteLoop:
 	}
 
 	var keyShareKeys []*keySharePrivateKeys
-	var ecdheKeyStorage ecdheKeyStorage
+	var keyStorage keyStorage
 	for _, curveID := range config.keySharePreferences(maxVersion) {
 		switch curveID {
 		case X25519MLKEM768:
-			ecdhe, err := ecdheKeyStorage.GetOrGenerate(config, X25519)
+			ecdhe, err := keyStorage.generateECDHEKey(config, X25519)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			seed := make([]byte, mlkem.SeedSize)
-			if _, err := io.ReadFull(config.rand(), seed); err != nil {
-				return nil, nil, nil, err
-			}
-			mlkem, err := mlkem.NewDecapsulationKey768(seed)
+			x25519EphemeralKey := ecdhe.PublicKey().Bytes()
+
+			mlkem, err := keyStorage.generateMLKEM768(config)
 			if err != nil {
 				return nil, nil, nil, err
 			}
 			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
-			x25519EphemeralKey := ecdhe.PublicKey().Bytes()
 
 			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: X25519MLKEM768, ecdhe: ecdhe, mlkem: mlkem})
 			hello.keyShares = append(hello.keyShares, keyShare{group: X25519MLKEM768, data: append(mlkemEncapsulationKey, x25519EphemeralKey...)})
 		case X25519Kyber768Draft00: // Draft of X25519MLKEM768
-			ecdhe, err := ecdheKeyStorage.GetOrGenerate(config, X25519)
+			ecdhe, err := keyStorage.generateECDHEKey(config, X25519)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			seed := make([]byte, mlkem.SeedSize)
-			if _, err := io.ReadFull(config.rand(), seed); err != nil {
-				return nil, nil, nil, err
-			}
-			mlkem, err := mlkem.NewDecapsulationKey768(seed)
+			x25519EphemeralKey := ecdhe.PublicKey().Bytes()
+
+			mlkem, err := keyStorage.generateMLKEM768(config)
 			if err != nil {
 				return nil, nil, nil, err
 			}
 			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
-			x25519EphemeralKey := ecdhe.PublicKey().Bytes()
 
 			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: X25519Kyber768Draft00, ecdhe: ecdhe, mlkem: mlkem})
 			hello.keyShares = append(hello.keyShares, keyShare{group: X25519Kyber768Draft00, data: append(x25519EphemeralKey, mlkemEncapsulationKey...)})
+		case X25519, CurveP256, CurveP384, CurveP521:
+			ecdhe, err := keyStorage.generateECDHEKey(config, curveID)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, ecdhe: ecdhe})
+			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: ecdhe.PublicKey().Bytes()})
+		case FFDHE2048, FFDHE3072, FFDHE4096, FFDHE6144, FFDHE8192:
+			ffdhe, err := keyStorage.generateFFDHEKey(config, curveID)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, ffdhe: ffdhe})
+			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: ffdhe.PublicKey().Bytes()})
 		default:
 			if IsGREASE(curveID) {
 				if len(grease_groups_ids) <= 0 {
@@ -270,15 +277,7 @@ CipherSuiteLoop:
 				continue
 			}
 
-			if _, ok := curveForCurveID(curveID); !ok {
-				return nil, nil, nil, errors.New("tls: CurvePreferences includes unsupported curve")
-			}
-			ecdhe, err := ecdheKeyStorage.GetOrGenerate(config, curveID)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, ecdhe: ecdhe})
-			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: ecdhe.PublicKey().Bytes()})
+			return nil, nil, nil, errors.New("tls: CurvePreferences includes unsupported curve")
 		}
 	}
 

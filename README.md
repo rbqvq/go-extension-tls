@@ -11,6 +11,7 @@ This repository is an extension of the golang standard library [crypto/go](https
 - Kernel TLS
 - Encrypt-then-MAC (RFC7366)
 - TLS 1.3 0RTT (Early Data)
+- TLS 1.3 FFDHE Key Exchange (RFC 7919)
 - Compressed certificate
 - Application-Layer Protocol Settings (ALPS)
 - GREASE

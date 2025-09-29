@@ -18,8 +18,11 @@ require (
 	github.com/pedroalbanese/camellia v0.0.0-20220911183557-30cc05c20118
 	github.com/pmorjan/kmod v1.1.1
 	gitlab.com/go-extension/aes-ccm v0.0.0-20230221065045-e58665ef23c7
+	gitlab.com/go-extension/ffdh v0.0.0-20250929210514-093c0756fd1b
 	gitlab.com/go-extension/hash v0.0.0-20250912170447-263d1d8375e4
 	gitlab.com/go-extension/hpke v0.0.0-20250903154322-ae11394c5e06
 	gitlab.com/go-extension/rand v0.0.0-20240303103951-707937a049b5
 	gitlab.com/go-extension/utils v0.0.0-20250718194058-bae8b5a74647
 )
+
+require github.com/cronokirby/saferith v0.33.0 // indirect

@@ -161,6 +161,11 @@ const (
 	CurveP384             CurveID = 24
 	CurveP521             CurveID = 25
 	X25519                CurveID = 29
+	FFDHE2048             CurveID = 256
+	FFDHE3072             CurveID = 257
+	FFDHE4096             CurveID = 258
+	FFDHE6144             CurveID = 259
+	FFDHE8192             CurveID = 260
 	X25519MLKEM768        CurveID = 4588
 	X25519Kyber768Draft00 CurveID = 0x6399 // X25519Kyber768Draft00
 )
