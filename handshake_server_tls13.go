@@ -562,7 +562,7 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 			return nil
 		}
 
-		if sessionState.MaxEarlyData <= 0 {
+		if sessionState.maxEarlyData <= 0 {
 			return nil
 		}
 
@@ -585,7 +585,7 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 
 		hs.earlyData = true
 		c.clientProtocolSetting = sessionState.alpnClientSetting
-		c.maxEarlyData = sessionState.MaxEarlyData
+		c.maxEarlyData = sessionState.maxEarlyData
 
 		if c.quic == nil {
 			c.earlyNotify = sync.NewCond(&sync.Mutex{})
@@ -1331,7 +1331,7 @@ func (c *Conn) sendSessionTicket(maxEarlyData uint32, extra [][]byte) error {
 
 	state := c.sessionState()
 	state.secret = psk
-	state.MaxEarlyData = maxEarlyData
+	state.maxEarlyData = maxEarlyData
 	state.Extra = extra
 
 	// ticket_age_add is a random 32-bit value. See RFC 8446, section 4.6.1

@@ -704,7 +704,7 @@ func (c *Conn) loadSession(outer *clientHelloMsg, ech *echClientContext) (
 		c.quicResumeSession(session)
 	}
 
-	if c.config.AllowEarlyData && session.MaxEarlyData > 0 {
+	if c.config.AllowEarlyData && session.maxEarlyData > 0 {
 		// For 0-RTT, the cipher suite has to match exactly, and we need to be
 		// offering the same ALPN.
 		if mutualCipherSuiteTLS13(hello.cipherSuites, session.cipherSuite) != nil {
@@ -720,7 +720,7 @@ func (c *Conn) loadSession(outer *clientHelloMsg, ech *echClientContext) (
 
 	if c.quic == nil && hello.earlyData {
 		c.earlyNotify = sync.NewCond(&sync.Mutex{})
-		c.maxEarlyData = session.MaxEarlyData
+		c.maxEarlyData = session.maxEarlyData
 	}
 
 	// Set the pre_shared_key extension. See RFC 8446, Section 4.2.11.1.

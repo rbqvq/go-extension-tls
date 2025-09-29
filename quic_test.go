@@ -603,7 +603,7 @@ func testQUICEarlyDataDeclined(t *testing.T, server bool) {
 	srv2 := newTestQUICServer(t, serverConfig)
 	srv2.conn.SetTransportParameters(nil)
 	declineEarlyData := func(state *SessionState) {
-		state.MaxEarlyData = 0
+		state.maxEarlyData = 0
 	}
 	if server {
 		srv2.onResumeSession = declineEarlyData

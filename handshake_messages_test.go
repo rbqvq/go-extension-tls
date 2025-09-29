@@ -468,7 +468,6 @@ func (*SessionState) Generate(rand *rand.Rand, size int) reflect.Value {
 	for n, i := rand.Intn(3), 0; i < n; i++ {
 		s.Extra = append(s.Extra, randomBytes(rand.Intn(100), rand))
 	}
-	s.MaxEarlyData = rand.Uint32()
 	if rand.Intn(10) > 5 {
 		s.extMasterSecret = true
 	}
@@ -499,12 +498,13 @@ func (*SessionState) Generate(rand *rand.Rand, size int) reflect.Value {
 	if rand.Intn(10) > 5 {
 		s.alpnProtocol = string(randomBytes(rand.Intn(10), rand))
 	}
-	s.alpnClientSetting = randomBytes(rand.Intn(1000), rand)
-	s.alpnServerSetting = randomBytes(rand.Intn(1000), rand)
 	if isTLS13 {
+		s.ageAdd = uint32(rand.Int63() & math.MaxUint32)
+		s.maxEarlyData = rand.Uint32()
+		s.alpnClientSetting = randomBytes(rand.Intn(1000), rand)
+		s.alpnServerSetting = randomBytes(rand.Intn(1000), rand)
 		if s.isClient {
 			s.useBy = uint64(rand.Int63())
-			s.ageAdd = uint32(rand.Int63() & math.MaxUint32)
 		}
 	} else {
 		s.curveID = CurveID(rand.Intn(30000) + 1)

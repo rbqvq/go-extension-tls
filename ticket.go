@@ -37,22 +37,22 @@ type SessionState struct {
 	//       opaque secret<1..2^8-1>;
 	//       Extra extra<0..2^24-1>;
 	//       uint8 ext_master_secret = { 0, 1 };
-	//       uint8 early_data = { 0, 1 };
 	//       CertificateEntry certificate_list<0..2^24-1>;
 	//       CertificateChain verified_chains<0..2^24-1>; /* excluding leaf */
-	//       select (SessionState.early_data) {
-	//           case 0: Empty;
-	//           case 1: opaque alpn<1..2^8-1>;
-	//       };
+	//       opaque alpn<1..2^8-1>;
 	//       select (SessionState.version) {
 	//           case VersionTLS10..VersionTLS12: uint16 curve_id;
-	//           case VersionTLS13: select (SessionState.type) {
-	//               case server: Empty;
-	//               case client: struct {
-	//                   uint64 use_by;
-	//                   uint32 age_add;
-	//               };
-	//           };
+	//           case VersionTLS13: struct {
+	// 				uint32 age_add;
+	// 				uint32 max_early_data;
+	// 				opaque delegated_credential<1..2^16-1>;
+	// 				opaque alps_client<1..2^16-1>;
+	// 				opaque alps_server<1..2^16-1>;
+	// 			 	select (SessionState.type) {
+	//               	case server: Empty;
+	//               	case client: uint64 use_by;
+	//           	};
+	//			 };
 	//       };
 	//   } SessionState;
 	//
@@ -73,33 +73,29 @@ type SessionState struct {
 	// with an id and version prefix).
 	Extra [][]byte
 
-	// MaxEarlyData indicates whether the ticket can be used for 0-RTT in a
-	// connection. The application may set this to 0 if it is true to
-	// decline to offer 0-RTT even if supported.
-	MaxEarlyData uint32
-
 	version     uint16
 	isClient    bool
 	cipherSuite uint16
 	// createdAt is the generation time of the secret on the sever (which for
 	// TLS 1.0–1.2 might be earlier than the current session) and the time at
 	// which the ticket was received on the client.
-	createdAt         uint64 // seconds since UNIX epoch
-	secret            []byte // master secret for TLS 1.2, or the PSK for TLS 1.3
-	extMasterSecret   bool
-	peerCertificates  []*x509.Certificate
-	ocspResponse      []byte
-	scts              [][]byte
-	verifiedChains    [][]*x509.Certificate
-	verifiedDC        *DelegatedCredential
-	alpnProtocol      string
-	alpnClientSetting []byte
-	alpnServerSetting []byte
+	createdAt        uint64 // seconds since UNIX epoch
+	secret           []byte // master secret for TLS 1.2, or the PSK for TLS 1.3
+	extMasterSecret  bool
+	peerCertificates []*x509.Certificate
+	ocspResponse     []byte
+	scts             [][]byte
+	verifiedChains   [][]*x509.Certificate
+	alpnProtocol     string
 
 	ticket []byte
 
 	// TLS 1.3-only fields.
-	ageAdd uint32
+	ageAdd            uint32
+	maxEarlyData      uint32
+	verifiedDC        *DelegatedCredential
+	alpnClientSetting []byte
+	alpnServerSetting []byte
 
 	// Client-side TLS 1.3-only fields.
 	useBy uint64 // seconds since UNIX epoch
@@ -115,15 +111,6 @@ type SessionState struct {
 // The specific encoding should be considered opaque and may change incompatibly
 // between Go versions.
 func (s *SessionState) Bytes() ([]byte, error) {
-	var delegatedCredential []byte
-	var err error
-	if s.verifiedDC != nil {
-		delegatedCredential, err = s.verifiedDC.marshal()
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	var b cryptobyte.Builder
 	b.AddUint16(s.version)
 	if s.isClient {
@@ -148,7 +135,6 @@ func (s *SessionState) Bytes() ([]byte, error) {
 	} else {
 		b.AddUint8(0)
 	}
-	b.AddUint32(s.MaxEarlyData)
 	marshalCertificate(&b, Certificate{
 		Certificate:                 certificatesToBytesSlice(s.peerCertificates),
 		OCSPStaple:                  s.ocspResponse,
@@ -170,20 +156,28 @@ func (s *SessionState) Bytes() ([]byte, error) {
 			})
 		}
 	})
-	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-		b.AddBytes(delegatedCredential)
-	})
 	b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
 		b.AddBytes([]byte(s.alpnProtocol))
 	})
-	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-		b.AddBytes([]byte(s.alpnClientSetting))
-	})
-	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-		b.AddBytes([]byte(s.alpnServerSetting))
-	})
 	if s.version >= VersionTLS13 {
 		b.AddUint32(s.ageAdd)
+		b.AddUint32(s.maxEarlyData)
+		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+			if s.verifiedDC != nil {
+				delegatedCredential, err := s.verifiedDC.marshal()
+				if err != nil {
+					b.SetError(err)
+					return
+				}
+				b.AddBytes(delegatedCredential)
+			}
+		})
+		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+			b.AddBytes([]byte(s.alpnClientSetting))
+		})
+		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+			b.AddBytes([]byte(s.alpnServerSetting))
+		})
 		if s.isClient {
 			addUint64(&b, s.useBy)
 		}
@@ -215,7 +209,6 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 		!readUint8LengthPrefixed(&s, &ss.secret) ||
 		!s.ReadUint24LengthPrefixed(&extra) ||
 		!s.ReadUint8(&extMasterSecret) ||
-		!s.ReadUint32(&ss.MaxEarlyData) ||
 		len(ss.secret) == 0 ||
 		!unmarshalCertificate(&s, &cert, nil) {
 		return nil, errors.New("tls: invalid session encoding")
@@ -282,30 +275,30 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 		}
 		ss.verifiedChains = append(ss.verifiedChains, chain)
 	}
-	var delegatedCredential cryptobyte.String
-	if !s.ReadUint16LengthPrefixed(&delegatedCredential) {
-		return nil, errors.New("tls: invalid session encoding")
-	}
-	if len(delegatedCredential) > 0 {
-		dc, err := parseDelegatedCredential(delegatedCredential)
-		if err != nil {
-			return nil, err
-		}
-		ss.verifiedDC = &dc
-	}
 	var alpn []byte
 	if !readUint8LengthPrefixed(&s, &alpn) {
 		return nil, errors.New("tls: invalid session encoding")
 	}
 	ss.alpnProtocol = string(alpn)
-	if !readUint16LengthPrefixed(&s, &ss.alpnClientSetting) {
-		return nil, errors.New("tls: invalid session encoding")
-	}
-	if !readUint16LengthPrefixed(&s, &ss.alpnServerSetting) {
-		return nil, errors.New("tls: invalid session encoding")
-	}
 	if ss.version >= VersionTLS13 {
-		if !s.ReadUint32(&ss.ageAdd) {
+		if !s.ReadUint32(&ss.ageAdd) || !s.ReadUint32(&ss.maxEarlyData) {
+			return nil, errors.New("tls: invalid session encoding")
+		}
+		var delegatedCredential []byte
+		if !readUint16LengthPrefixed(&s, &delegatedCredential) {
+			return nil, errors.New("tls: invalid session encoding")
+		}
+		if len(delegatedCredential) > 0 {
+			dc, err := parseDelegatedCredential(delegatedCredential)
+			if err != nil {
+				return nil, err
+			}
+			ss.verifiedDC = &dc
+		}
+		if !readUint16LengthPrefixed(&s, &ss.alpnClientSetting) {
+			return nil, errors.New("tls: invalid session encoding")
+		}
+		if !readUint16LengthPrefixed(&s, &ss.alpnServerSetting) {
 			return nil, errors.New("tls: invalid session encoding")
 		}
 		if ss.isClient {
@@ -325,18 +318,20 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 // from the current connection.
 func (c *Conn) sessionState() *SessionState {
 	return &SessionState{
-		version:          c.vers,
-		cipherSuite:      c.cipherSuite,
-		createdAt:        uint64(c.config.time().Unix()),
-		alpnProtocol:     c.clientProtocol,
-		peerCertificates: c.peerCertificates,
-		ocspResponse:     c.ocspResponse,
-		scts:             c.scts,
-		isClient:         c.isClient,
-		extMasterSecret:  c.extMasterSecret,
-		verifiedChains:   c.verifiedChains,
-		verifiedDC:       c.verifiedDC,
-		curveID:          c.curveID,
+		version:           c.vers,
+		cipherSuite:       c.cipherSuite,
+		createdAt:         uint64(c.config.time().Unix()),
+		alpnProtocol:      c.clientProtocol,
+		alpnClientSetting: c.clientProtocolSetting,
+		alpnServerSetting: c.serverProtocolSetting,
+		peerCertificates:  c.peerCertificates,
+		ocspResponse:      c.ocspResponse,
+		scts:              c.scts,
+		isClient:          c.isClient,
+		extMasterSecret:   c.extMasterSecret,
+		verifiedChains:    c.verifiedChains,
+		verifiedDC:        c.verifiedDC,
+		curveID:           c.curveID,
 	}
 }
 

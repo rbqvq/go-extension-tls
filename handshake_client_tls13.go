@@ -1428,7 +1428,7 @@ func (c *Conn) handleNewSessionTicket(msg *newSessionTicketMsgTLS13) error {
 	session.secret = psk
 	session.useBy = uint64(c.config.time().Add(lifetime).Unix())
 	session.ageAdd = msg.ageAdd
-	session.MaxEarlyData = msg.maxEarlyData
+	session.maxEarlyData = msg.maxEarlyData
 	session.ticket = msg.label
 	if c.quic != nil && c.quic.enableSessionEvents {
 		c.quicStoreSession(session)
