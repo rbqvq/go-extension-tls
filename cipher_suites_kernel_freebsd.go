@@ -75,23 +75,31 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 		return nil
 	}
 
+	switch hc.version {
+	case VersionTLS10:
+		if isRX {
+			return nil
+		}
+
+	case VersionTLS11, VersionTLS12:
+	case VersionTLS13:
+		if isRX && !kernel.TLS_Version13_RX {
+			return nil
+		}
+
+	default:
+		return nil
+	}
+
 	crypto := new(kernelCryptoInfo)
 	switch cipherSuite {
 	case TLS_AES_128_GCM_SHA256, TLS_RSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 		TLS_AES_256_GCM_SHA384, TLS_RSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
-		if isRX && hc.version == VersionTLS13 && !kernel.TLS_Version13_RX {
-			return nil
-		}
-
 		crypto.cipher_algorithm = _CRYPTO_AES_NIST_GCM_16
 		crypto.setCipherKey(hc.key)
 		crypto.setIV(hc.iv)
 	case TLS_CHACHA20_POLY1305_SHA256, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256:
 		if !kernel.TLS_CHACHA20_POLY1305 {
-			return nil
-		}
-
-		if isRX && hc.version == VersionTLS13 && !kernel.TLS_Version13_RX {
 			return nil
 		}
 
@@ -108,7 +116,7 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
-		if isRX && (hc.version == VersionTLS10 || !kernel.TLS_Version11_12_CBC_RX) {
+		if isRX && !kernel.TLS_Version11_12_CBC_RX {
 			return nil
 		}
 
