@@ -850,6 +850,8 @@ func TestCloneNonFuncFields(t *testing.T) {
 		// testing/quick can't handle functions or interfaces and so
 		// isn't used here.
 		switch fn := typ.Field(i).Name; fn {
+		case "Defaults":
+			f.Set(reflect.ValueOf(Defaults{AllSupportedExtensions: true}))
 		case "Rand":
 			f.Set(reflect.ValueOf(io.Reader(os.Stdin)))
 		case "Time", "GetCertificate", "GetConfigForClient", "VerifyPeerCertificate", "VerifyConnection", "GetClientCertificate", "WrapSession", "UnwrapSession", "EncryptedClientHelloRejectionVerify", "GetEncryptedClientHelloKeys", "GetProtoSetting", "ClientHelloPadding":
@@ -863,10 +865,10 @@ func TestCloneNonFuncFields(t *testing.T) {
 			}))
 		case "NameToCertificate":
 			f.Set(reflect.ValueOf(map[string]*Certificate{"a": nil}))
-		case "CertCompressionDisabled":
+		case "CertificateCompressionDisabled":
 			f.Set(reflect.ValueOf(true))
-		case "CertCompressionPreferences":
-			f.Set(reflect.ValueOf([]CertCompressionAlgorithm{Zlib}))
+		case "CertificateCompressionPreferences":
+			f.Set(reflect.ValueOf([]CertificateCompressionAlgorithm{Zlib}))
 		case "SignatureAlgorithmsPreferences", "DelegatedCredentialPreferences":
 			f.Set(reflect.ValueOf([]SignatureScheme{PKCS1WithSHA1}))
 		case "RootCAs", "ClientCAs":
@@ -1593,16 +1595,15 @@ func TestCipherSuites(t *testing.T) {
 			if slices.Contains(defaultCipherSuites(false), c.id) {
 				t.Errorf("%#04x: extended suite in default list", c.id)
 			}
-			continue
 		}
 
 		if cc.Insecure {
-			if slices.Contains(defaultCipherSuites(false), c.id) {
-				t.Errorf("%#04x: insecure suite in default list", c.id)
+			if slices.Contains(fullCipherSuites(false), c.id) {
+				t.Errorf("%#04x: insecure suite in default full list", c.id)
 			}
 		} else {
-			if !slices.Contains(defaultCipherSuites(false), c.id) {
-				t.Errorf("%#04x: secure suite not in default list", c.id)
+			if !slices.Contains(fullCipherSuites(false), c.id) {
+				t.Errorf("%#04x: secure suite not in default full list", c.id)
 			}
 		}
 

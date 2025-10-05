@@ -44,29 +44,29 @@ type echServerContext struct {
 }
 
 type serverHandshakeStateTLS13 struct {
-	c                        *Conn
-	ctx                      context.Context
-	clientHello              *clientHelloMsg
-	hello                    *serverHelloMsg
-	sentDummyCCS             bool
-	usingPSK                 bool
-	usingALPS                bool
-	earlyData                bool
-	suite                    *cipherSuiteTLS13
-	certReq                  *certificateRequestMsgTLS13
-	certCompressionAlgorithm CertCompressionAlgorithm
-	cert                     *Certificate
-	delegatedCredential      *DelegatedCredential
-	sigAlg                   SignatureScheme
-	clientHandshakeSecret    []byte
-	earlySecret              []byte
-	sharedKey                []byte
-	handshakeSecret          []byte
-	masterSecret             []byte
-	trafficSecret            []byte // client_application_traffic_secret_0
-	transcript               hash.Hash
-	clientFinished           []byte
-	echContext               *echServerContext
+	c                               *Conn
+	ctx                             context.Context
+	clientHello                     *clientHelloMsg
+	hello                           *serverHelloMsg
+	sentDummyCCS                    bool
+	usingPSK                        bool
+	usingALPS                       bool
+	earlyData                       bool
+	suite                           *cipherSuiteTLS13
+	certReq                         *certificateRequestMsgTLS13
+	certificateCompressionAlgorithm CertificateCompressionAlgorithm
+	cert                            *Certificate
+	delegatedCredential             *DelegatedCredential
+	sigAlg                          SignatureScheme
+	clientHandshakeSecret           []byte
+	earlySecret                     []byte
+	sharedKey                       []byte
+	handshakeSecret                 []byte
+	masterSecret                    []byte
+	trafficSecret                   []byte // client_application_traffic_secret_0
+	transcript                      hash.Hash
+	clientFinished                  []byte
+	echContext                      *echServerContext
 
 	maxRecvLimit uint16
 	maxSentLimit uint16
@@ -439,10 +439,10 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	}
 
 CertificateCompressionAlgorithmSelection:
-	for _, preferredAlgorithm := range c.config.certCompressionPreferences() {
-		for _, algorithm := range hs.clientHello.supportedCertCompressionAlgorithms {
+	for _, preferredAlgorithm := range c.config.certificateCompressionPreferences() {
+		for _, algorithm := range hs.clientHello.supportedCertificateCompressionAlgorithms {
 			if algorithm == preferredAlgorithm {
-				hs.certCompressionAlgorithm = algorithm
+				hs.certificateCompressionAlgorithm = algorithm
 				break CertificateCompressionAlgorithmSelection
 			}
 		}
@@ -1199,8 +1199,8 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 	certMsg.delegatedCredential = delegatedCredential
 
 	var msg handshakeMessage = certMsg
-	if hs.certCompressionAlgorithm != 0 {
-		msg, err = certMsg.compress(hs.certCompressionAlgorithm)
+	if hs.certificateCompressionAlgorithm != 0 {
+		msg, err = certMsg.compress(hs.certificateCompressionAlgorithm)
 		if err != nil {
 			c.sendAlert(alertInternalError)
 			return err
@@ -1582,7 +1582,7 @@ func (hs *serverHandshakeStateTLS13) readClientCertificate() error {
 	case *certificateMsgTLS13:
 		certMsg = msg
 	case *compressedCertificateMsg:
-		if !c.config.supportsCertCompression(CertCompressionAlgorithm(msg.algorithm)) {
+		if !c.config.supportsCertificateCompression(msg.algorithm) {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: server selected unsupported algorithm")
 		}

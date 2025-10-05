@@ -15,19 +15,19 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-func (m *certificateMsgTLS13) compress(algorithm CertCompressionAlgorithm) (*compressedCertificateMsg, error) {
+func (m *certificateMsgTLS13) compress(algorithm CertificateCompressionAlgorithm) (*compressedCertificateMsg, error) {
 	compressed := bytes.NewBuffer(nil)
 
 	var compresser io.WriteCloser
-	switch CertCompressionAlgorithm(algorithm) {
+	switch algorithm {
 	case Brotli:
 		compresser = brotli.NewWriter(compressed)
 	case Zlib:
-		compresser, _ = zlib.NewWriterLevel(compressed, zlib.BestCompression)
+		compresser, _ = zlib.NewWriterLevel(compressed, zlib.DefaultCompression)
 	case Zstd:
 		compresser, _ = zstd.NewWriter(compressed)
 	default:
-		return nil, errors.New("tls: CertCompressionPreferences includes unsupported compression algorithm")
+		return nil, errors.New("tls: CertificateCompressionPreferences includes unsupported compression algorithm")
 	}
 
 	certMsg, err := m.marshal()
@@ -40,7 +40,7 @@ func (m *certificateMsgTLS13) compress(algorithm CertCompressionAlgorithm) (*com
 	compresser.Close()
 
 	return &compressedCertificateMsg{
-		algorithm:                    uint16(algorithm),
+		algorithm:                    algorithm,
 		uncompressedLength:           uint32(len(certMsg)),
 		compressedCertificateMessage: compressed.Bytes(),
 	}, nil
@@ -50,14 +50,14 @@ func (m *compressedCertificateMsg) decompress() (*certificateMsgTLS13, error) {
 	compressed := bytes.NewReader(m.compressedCertificateMessage)
 
 	var decompressed io.Reader
-	switch CertCompressionAlgorithm(m.algorithm) {
+	switch m.algorithm {
 	case Brotli:
 		decompressed = brotli.NewReader(compressed)
 
 	case Zlib:
 		rc, err := zlib.NewReader(compressed)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open zlib reader: %w", err)
+			return nil, fmt.Errorf("tls: failed to open zlib reader: %w", err)
 		}
 		defer rc.Close()
 		decompressed = rc
@@ -65,13 +65,13 @@ func (m *compressedCertificateMsg) decompress() (*certificateMsgTLS13, error) {
 	case Zstd:
 		rc, err := zstd.NewReader(compressed)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open zstd reader: %w", err)
+			return nil, fmt.Errorf("tls: failed to open zstd reader: %w", err)
 		}
 		defer rc.Close()
 		decompressed = rc
 
 	default:
-		return nil, fmt.Errorf("unsupported algorithm (%d)", m.algorithm)
+		return nil, fmt.Errorf("tls: unsupported certificate compression algorithm (%d)", m.algorithm)
 	}
 
 	rawMsg := make([]byte, m.uncompressedLength+4) // +4 for message type and uint24 length field
@@ -87,7 +87,7 @@ func (m *compressedCertificateMsg) decompress() (*certificateMsgTLS13, error) {
 
 	certMsg := new(certificateMsgTLS13)
 	if !certMsg.unmarshal(rawMsg) {
-		return nil, errors.New("unexpected message")
+		return nil, errors.New("tls: failed to decode decompressed certificate message")
 	}
 	return certMsg, nil
 }

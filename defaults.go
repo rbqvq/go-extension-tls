@@ -14,7 +14,7 @@ import (
 // defaultCurvePreferences is the default set of supported key exchanges, as
 // well as the preference order.
 func defaultCurvePreferences() []CurveID {
-	return []CurveID{X25519MLKEM768, X25519Kyber768Draft00, X25519, CurveP256, CurveP384, CurveP521, FFDHE2048, FFDHE3072, FFDHE4096, FFDHE6144, FFDHE8192}
+	return []CurveID{X25519MLKEM768, X25519, CurveP256, CurveP384, CurveP521}
 }
 
 // defaultSupportedSignatureAlgorithms returns the signature and hash algorithms that
@@ -47,6 +47,14 @@ func defaultSupportedSignatureAlgorithmsDC() []SignatureScheme {
 		Ed25519,
 		ECDSAWithP384AndSHA384,
 		ECDSAWithP521AndSHA512,
+	}
+}
+
+func defaultCertificateCompressionAlgorithms() []CertificateCompressionAlgorithm {
+	return []CertificateCompressionAlgorithm{
+		Zlib,
+		Brotli,
+		Zstd,
 	}
 }
 
@@ -100,10 +108,6 @@ var defaultInnerExtensions = []Extension{
 	&PreSharedKeyExtension{},
 }
 
-func DefaultInnerExtensions() []Extension {
-	return defaultInnerExtensions
-}
-
 var defaultOuterExtensions = []Extension{
 	&ServerNameIndicationExtension{},
 	&SCTExtension{},
@@ -120,13 +124,8 @@ var defaultOuterExtensions = []Extension{
 	&CookieExtension{},
 	&KeyShareExtension{},
 	&PSKModesExtension{},
-	&PaddingExtension{},
 
 	&PreSharedKeyExtension{},
-}
-
-func DefaultOuterExtensions() []Extension {
-	return defaultOuterExtensions
 }
 
 var defaultCompressedExtensions = []Extension{
@@ -139,10 +138,6 @@ var defaultCompressedExtensions = []Extension{
 	&CookieExtension{},
 	&KeyShareExtension{},
 	&PSKModesExtension{},
-}
-
-func DefaultCompressedExtensions() []Extension {
-	return defaultCompressedExtensions
 }
 
 var defaultExtensions = []Extension{
@@ -167,10 +162,6 @@ var defaultExtensions = []Extension{
 	&PSKModesExtension{},
 
 	&PreSharedKeyExtension{},
-}
-
-func DefaultExtensions() []Extension {
-	return defaultExtensions
 }
 
 var defaultEncryptedClientHelloConfig = &ECHConfig{}

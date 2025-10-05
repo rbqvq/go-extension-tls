@@ -106,24 +106,25 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, []*keySharePrivateKeys, *echC
 	minVersion := versions[len(versions)-1]
 
 	hello := &clientHelloMsg{
-		vers:                               maxVersion,
-		compressionMethods:                 []uint8{compressionNone},
-		random:                             make([]byte, 32),
-		encryptThenMAC:                     config.EncryptThenMAC,
-		extendedMasterSecret:               true,
-		limitSupported:                     true,
-		ocspStapling:                       true,
-		scts:                               true,
-		serverName:                         hostnameInSNI(config.ServerName),
-		supportedCertCompressionAlgorithms: config.certCompressionPreferences(),
-		supportedPoints:                    []uint8{pointFormatUncompressed},
-		secureRenegotiationSupported:       true,
-		alpnProtocols:                      config.NextProtos,
-		supportedVersions:                  supportedVersions,
+		vers:                         maxVersion,
+		compressionMethods:           []uint8{compressionNone},
+		random:                       make([]byte, 32),
+		encryptThenMAC:               config.EncryptThenMAC,
+		extendedMasterSecret:         true,
+		limitSupported:               true,
+		ocspStapling:                 true,
+		scts:                         true,
+		serverName:                   hostnameInSNI(config.ServerName),
+		supportedPoints:              []uint8{pointFormatUncompressed},
+		secureRenegotiationSupported: true,
+		alpnProtocols:                config.NextProtos,
+		supportedVersions:            supportedVersions,
 	}
 
 	var maxRecvLimit uint16 = maxPlaintext
 	if maxVersion >= VersionTLS13 {
+		hello.supportedCertificateCompressionAlgorithms = config.certificateCompressionPreferences()
+
 		for alpn := range config.NextProtoSettings {
 			hello.alpsProtocols = append(hello.alpsProtocols, alpn)
 		}

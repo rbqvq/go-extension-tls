@@ -141,12 +141,12 @@ const (
 )
 
 // TLS certificate compression types.
-type CertCompressionAlgorithm uint16
+type CertificateCompressionAlgorithm uint16
 
 const (
-	Zlib   CertCompressionAlgorithm = 0x0001
-	Brotli CertCompressionAlgorithm = 0x0002
-	Zstd   CertCompressionAlgorithm = 0x0003
+	Zlib   CertificateCompressionAlgorithm = 1
+	Brotli CertificateCompressionAlgorithm = 2
+	Zstd   CertificateCompressionAlgorithm = 3
 )
 
 // CurveID is the type of a TLS identifier for a key exchange mechanism. See
@@ -592,11 +592,31 @@ const (
 	RenegotiateFreelyAsClient
 )
 
+// A Defaults structure is used to configure a TLS client or server defaults.
+type Defaults struct {
+	// By default, only the cipher suites used by the standard library are sent.
+	// When true, all secure cipher suites will be sent, including locale-specific suites.
+	// For suites deemed unsafe by the standard library, you still need to manually add them.
+	AllSecureCipherSuites bool
+
+	// By default, only the curves used by the standard library are sent.
+	// When true, all secure curves will be sent.
+	AllSecureCurves bool
+
+	// By default, only the extensions used by the standard library are sent.
+	// When true, all supported extension will be sent.
+	AllSupportedExtensions bool
+}
+
 // A Config structure is used to configure a TLS client or server.
 // After one has been passed to a TLS function it must not be
 // modified. A Config may be reused; the tls package will also not
 // modify it.
 type Config struct {
+	// To minimize changes to the Golang ClientHello fingerprint, some extended
+	// client features require adding them to Extensions manually.
+	Defaults Defaults
+
 	// Rand provides the source of entropy for nonces and RSA blinding.
 	// If Rand is nil, TLS uses the cryptographic random reader in package
 	// crypto/rand.
@@ -868,17 +888,14 @@ type Config struct {
 	// It only works on client.
 	KeySharePreferences []CurveID
 
-	// CertCompressionDisabled disables TLS certificate compressions.
+	// CertificateCompressionDisabled disables TLS 1.3 certificate compressions.
 	// When true, the certificate message will not be compressed.
-	//
-	// It only works on the TLS 1.3.
-	CertCompressionDisabled bool
+	CertificateCompressionDisabled bool
 
-	// CertCompressionPreferences contains the compression that will be used in
+	// CertificateCompressionPreferences contains the compression that will be used in
 	// a certificate message, in preference order. If empty, the default will
-	// be used. The client will use the first preference as the type for
-	// its compress certificate in TLS 1.3.
-	CertCompressionPreferences []CertCompressionAlgorithm
+	// be used.
+	CertificateCompressionPreferences []CertificateCompressionAlgorithm
 
 	// SignatureAlgorithmsPreferences contains the signature algorithms that
 	// will be used in an handshake, in preference order. If empty, the default
@@ -899,7 +916,7 @@ type Config struct {
 
 	// MaxRecordSize limits the maximum plaintext size of received TLS records, if
 	// supported by the peer. This feature cannot be used with kernel offload.
-	// The value must be greater than 64. 
+	// The value must be greater than 64.
 	// If zero, the largest possible value will be used.
 	MaxRecordSize uint16
 
@@ -1133,6 +1150,7 @@ func (c *Config) Clone() *Config {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	return &Config{
+		Defaults:                            c.Defaults,
 		Rand:                                c.Rand,
 		Time:                                c.Time,
 		Certificates:                        c.Certificates,
@@ -1166,8 +1184,8 @@ func (c *Config) Clone() *Config {
 		CurvePreferences:                    c.CurvePreferences,
 		IndependentlyHybridKeyShare:         c.IndependentlyHybridKeyShare,
 		KeySharePreferences:                 c.KeySharePreferences,
-		CertCompressionDisabled:             c.CertCompressionDisabled,
-		CertCompressionPreferences:          c.CertCompressionPreferences,
+		CertificateCompressionDisabled:      c.CertificateCompressionDisabled,
+		CertificateCompressionPreferences:   c.CertificateCompressionPreferences,
 		SignatureAlgorithmsPreferences:      c.SignatureAlgorithmsPreferences,
 		DelegatedCredential:                 c.DelegatedCredential,
 		DelegatedCredentialPreferences:      c.DelegatedCredentialPreferences,
@@ -1342,6 +1360,10 @@ func (c *Config) cipherSuites(aesGCMPreferred bool) []uint16 {
 		})
 	}
 
+	if c.Defaults.AllSecureCipherSuites {
+		return fullCipherSuites(aesGCMPreferred)
+	}
+
 	return defaultCipherSuites(aesGCMPreferred)
 }
 
@@ -1425,8 +1447,10 @@ func supportedVersionsFromMax(maxVersion uint16) []uint16 {
 
 func (c *Config) curvePreferences(version uint16) []CurveID {
 	var curvePreferences []CurveID
-	if c != nil && len(c.CurvePreferences) != 0 {
+	if len(c.CurvePreferences) != 0 {
 		curvePreferences = slices.Clone(c.CurvePreferences)
+	} else if c.Defaults.AllSecureCurves {
+		curvePreferences = fullCurvePreferences()
 	} else {
 		curvePreferences = defaultCurvePreferences()
 	}
@@ -1471,22 +1495,16 @@ func (c *Config) supportsCurve(version uint16, curve CurveID) bool {
 	return slices.Contains(c.curvePreferences(version), curve)
 }
 
-var defaultCertCompressionPreferences = []CertCompressionAlgorithm{Zlib, Brotli, Zstd}
-
-func (c *Config) certCompressionPreferences() []CertCompressionAlgorithm {
-	if c == nil {
-		return defaultCertCompressionPreferences
-	}
-
-	if c.CertCompressionDisabled {
+func (c *Config) certificateCompressionPreferences() []CertificateCompressionAlgorithm {
+	if c.CertificateCompressionDisabled {
 		return nil
 	}
 
-	if len(c.CertCompressionPreferences) <= 0 {
-		return defaultCertCompressionPreferences
+	if len(c.CertificateCompressionPreferences) > 0 {
+		return c.CertificateCompressionPreferences
 	}
 
-	return c.CertCompressionPreferences
+	return defaultCertificateCompressionAlgorithms()
 }
 
 func (c *Config) signatureAlgorithmsPreferences(minVers uint16) []SignatureScheme {
@@ -1517,8 +1535,8 @@ func (c *Config) delegatedCredentialPreferences() []SignatureScheme {
 	return supportedSignatureAlgorithmsDC()
 }
 
-func (c *Config) supportsCertCompression(algorithm CertCompressionAlgorithm) bool {
-	return slices.Contains(c.certCompressionPreferences(), algorithm)
+func (c *Config) supportsCertificateCompression(algorithm CertificateCompressionAlgorithm) bool {
+	return slices.Contains(c.certificateCompressionPreferences(), algorithm)
 }
 
 // mutualVersion returns the protocol version to use given the advertised
@@ -1839,19 +1857,27 @@ func (c *Config) shuffleExtensions(m *clientHelloMsg) {
 }
 
 func (c *Config) extensions() []Extension {
-	if c == nil || c.Extensions == nil {
-		return defaultExtensions
+	if c.Extensions != nil {
+		return c.Extensions
 	}
 
-	return c.Extensions
+	if c.Defaults.AllSupportedExtensions {
+		return fullExtensions
+	}
+
+	return defaultExtensions
 }
 
 func (c *Config) echConfig() *ECHConfig {
-	if c == nil || c.EncryptedClientHelloConfig == nil {
-		return defaultEncryptedClientHelloConfig
+	if c.EncryptedClientHelloConfig != nil {
+		return c.EncryptedClientHelloConfig
 	}
 
-	return c.EncryptedClientHelloConfig
+	if c.Defaults.AllSupportedExtensions {
+		return fullEncryptedClientHelloConfig
+	}
+
+	return defaultEncryptedClientHelloConfig
 }
 
 const (

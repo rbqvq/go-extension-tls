@@ -141,7 +141,7 @@ func init() {
 		MinVersion:   VersionTLS10,
 		MaxVersion:   VersionTLS13,
 		CipherSuites: allCipherSuites(),
-		Extensions:   append([]Extension{&DelegatedCredentialsExtension{}}, DefaultExtensions()...),
+		Extensions:   fullExtensions,
 	}
 }
 

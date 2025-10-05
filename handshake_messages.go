@@ -71,40 +71,40 @@ func readUint24LengthPrefixed(s *cryptobyte.String, out *[]byte) bool {
 }
 
 type clientHelloMsg struct {
-	original                           []byte
-	vers                               uint16
-	random                             []byte
-	sessionId                          []byte
-	cipherSuites                       []uint16
-	compressionMethods                 []uint8
-	serverName                         string
-	ocspStapling                       bool
-	supportedCurves                    []CurveID
-	supportedPoints                    []uint8
-	ticketSupported                    bool
-	sessionTicket                      []uint8
-	limitSupported                     bool
-	recordSizeLimit                    uint16
-	supportedCertCompressionAlgorithms []CertCompressionAlgorithm
-	supportedSignatureAlgorithms       []SignatureScheme
-	supportedSignatureAlgorithmsCert   []SignatureScheme
-	supportedSignatureAlgorithmsDC     []SignatureScheme
-	secureRenegotiationSupported       bool
-	secureRenegotiation                []byte
-	encryptThenMAC                     bool
-	extendedMasterSecret               bool
-	alpnProtocols                      []string
-	alpsProtocols                      []string
-	scts                               bool
-	supportedVersions                  []uint16
-	cookie                             []byte
-	keyShares                          []keyShare
-	earlyData                          bool
-	pskModes                           []uint8
-	pskIdentities                      []pskIdentity
-	pskBinders                         [][]byte
-	quicTransportParameters            []byte
-	encryptedClientHello               []byte
+	original                                  []byte
+	vers                                      uint16
+	random                                    []byte
+	sessionId                                 []byte
+	cipherSuites                              []uint16
+	compressionMethods                        []uint8
+	serverName                                string
+	ocspStapling                              bool
+	supportedCurves                           []CurveID
+	supportedPoints                           []uint8
+	ticketSupported                           bool
+	sessionTicket                             []uint8
+	limitSupported                            bool
+	recordSizeLimit                           uint16
+	supportedCertificateCompressionAlgorithms []CertificateCompressionAlgorithm
+	supportedSignatureAlgorithms              []SignatureScheme
+	supportedSignatureAlgorithmsCert          []SignatureScheme
+	supportedSignatureAlgorithmsDC            []SignatureScheme
+	secureRenegotiationSupported              bool
+	secureRenegotiation                       []byte
+	encryptThenMAC                            bool
+	extendedMasterSecret                      bool
+	alpnProtocols                             []string
+	alpsProtocols                             []string
+	scts                                      bool
+	supportedVersions                         []uint16
+	cookie                                    []byte
+	keyShares                                 []keyShare
+	earlyData                                 bool
+	pskModes                                  []uint8
+	pskIdentities                             []pskIdentity
+	pskBinders                                [][]byte
+	quicTransportParameters                   []byte
+	encryptedClientHello                      []byte
 	// extensions are only populated on the server-side of a handshake
 	extensions []uint16
 
@@ -201,7 +201,7 @@ func (m *clientHelloMsg) echOuterExtensions(compressed []Extension) []uint16 {
 				echOuterExts = append(echOuterExts, extensionSupportedVersions)
 			}
 		case *CompressedCertificateExtension:
-			if len(m.supportedCertCompressionAlgorithms) > 0 {
+			if len(m.supportedCertificateCompressionAlgorithms) > 0 {
 				echOuterExts = append(echOuterExts, extensionCompressCertificate)
 			}
 		case *RecordSizeLimitExtension:
@@ -438,11 +438,11 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 				})
 			}
 		case *CompressedCertificateExtension:
-			if len(m.supportedCertCompressionAlgorithms) > 0 {
+			if len(m.supportedCertificateCompressionAlgorithms) > 0 {
 				exts.AddUint16(extensionCompressCertificate)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 					exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
-						for _, algorithm := range m.supportedCertCompressionAlgorithms {
+						for _, algorithm := range m.supportedCertificateCompressionAlgorithms {
 							exts.AddUint16(uint16(algorithm))
 						}
 					})
@@ -704,11 +704,11 @@ func (m *clientHelloMsg) getUnpaddedLength() int {
 					extLength += len(m.supportedVersions) * 2
 				}
 			case *CompressedCertificateExtension:
-				if len(m.supportedCertCompressionAlgorithms) > 0 {
+				if len(m.supportedCertificateCompressionAlgorithms) > 0 {
 					extLength += 4
 
 					extLength += 1
-					extLength += len(m.supportedCertCompressionAlgorithms) * 2
+					extLength += len(m.supportedCertificateCompressionAlgorithms) * 2
 				}
 			case *RecordSizeLimitExtension:
 				if m.limitSupported {
@@ -1127,7 +1127,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				if !compressionList.ReadUint16(&compression) {
 					return false
 				}
-				m.supportedCertCompressionAlgorithms = append(m.supportedCertCompressionAlgorithms, CertCompressionAlgorithm(compression))
+				m.supportedCertificateCompressionAlgorithms = append(m.supportedCertificateCompressionAlgorithms, CertificateCompressionAlgorithm(compression))
 			}
 			m.extensionList = append(m.extensionList, &CompressedCertificateExtension{})
 		case extensionRecordSizeLimit:
@@ -1267,43 +1267,43 @@ func (m *clientHelloMsg) originalBytes() []byte {
 
 func (m *clientHelloMsg) clone() *clientHelloMsg {
 	return &clientHelloMsg{
-		original:                           slices.Clone(m.original),
-		vers:                               m.vers,
-		random:                             slices.Clone(m.random),
-		sessionId:                          slices.Clone(m.sessionId),
-		cipherSuites:                       slices.Clone(m.cipherSuites),
-		compressionMethods:                 slices.Clone(m.compressionMethods),
-		serverName:                         m.serverName,
-		ocspStapling:                       m.ocspStapling,
-		supportedCurves:                    slices.Clone(m.supportedCurves),
-		supportedPoints:                    slices.Clone(m.supportedPoints),
-		ticketSupported:                    m.ticketSupported,
-		sessionTicket:                      slices.Clone(m.sessionTicket),
-		limitSupported:                     m.limitSupported,
-		recordSizeLimit:                    m.recordSizeLimit,
-		supportedCertCompressionAlgorithms: slices.Clone(m.supportedCertCompressionAlgorithms),
-		supportedSignatureAlgorithms:       slices.Clone(m.supportedSignatureAlgorithms),
-		supportedSignatureAlgorithmsCert:   slices.Clone(m.supportedSignatureAlgorithmsCert),
-		secureRenegotiationSupported:       m.secureRenegotiationSupported,
-		secureRenegotiation:                slices.Clone(m.secureRenegotiation),
-		encryptThenMAC:                     m.encryptThenMAC,
-		extendedMasterSecret:               m.extendedMasterSecret,
-		alpnProtocols:                      slices.Clone(m.alpnProtocols),
-		alpsProtocols:                      slices.Clone(m.alpsProtocols),
-		scts:                               m.scts,
-		supportedVersions:                  slices.Clone(m.supportedVersions),
-		cookie:                             slices.Clone(m.cookie),
-		keyShares:                          slices.Clone(m.keyShares),
-		earlyData:                          m.earlyData,
-		pskModes:                           slices.Clone(m.pskModes),
-		pskIdentities:                      slices.Clone(m.pskIdentities),
-		pskBinders:                         slices.Clone(m.pskBinders),
-		quicTransportParameters:            slices.Clone(m.quicTransportParameters),
-		encryptedClientHello:               slices.Clone(m.encryptedClientHello),
-		extensions:                         slices.Clone(m.extensions),
-		echOuterExts:                       slices.Clone(m.echOuterExts),
-		compressedList:                     slices.Clone(m.compressedList),
-		extensionList:                      slices.Clone(m.extensionList),
+		original:           slices.Clone(m.original),
+		vers:               m.vers,
+		random:             slices.Clone(m.random),
+		sessionId:          slices.Clone(m.sessionId),
+		cipherSuites:       slices.Clone(m.cipherSuites),
+		compressionMethods: slices.Clone(m.compressionMethods),
+		serverName:         m.serverName,
+		ocspStapling:       m.ocspStapling,
+		supportedCurves:    slices.Clone(m.supportedCurves),
+		supportedPoints:    slices.Clone(m.supportedPoints),
+		ticketSupported:    m.ticketSupported,
+		sessionTicket:      slices.Clone(m.sessionTicket),
+		limitSupported:     m.limitSupported,
+		recordSizeLimit:    m.recordSizeLimit,
+		supportedCertificateCompressionAlgorithms: slices.Clone(m.supportedCertificateCompressionAlgorithms),
+		supportedSignatureAlgorithms:              slices.Clone(m.supportedSignatureAlgorithms),
+		supportedSignatureAlgorithmsCert:          slices.Clone(m.supportedSignatureAlgorithmsCert),
+		secureRenegotiationSupported:              m.secureRenegotiationSupported,
+		secureRenegotiation:                       slices.Clone(m.secureRenegotiation),
+		encryptThenMAC:                            m.encryptThenMAC,
+		extendedMasterSecret:                      m.extendedMasterSecret,
+		alpnProtocols:                             slices.Clone(m.alpnProtocols),
+		alpsProtocols:                             slices.Clone(m.alpsProtocols),
+		scts:                                      m.scts,
+		supportedVersions:                         slices.Clone(m.supportedVersions),
+		cookie:                                    slices.Clone(m.cookie),
+		keyShares:                                 slices.Clone(m.keyShares),
+		earlyData:                                 m.earlyData,
+		pskModes:                                  slices.Clone(m.pskModes),
+		pskIdentities:                             slices.Clone(m.pskIdentities),
+		pskBinders:                                slices.Clone(m.pskBinders),
+		quicTransportParameters:                   slices.Clone(m.quicTransportParameters),
+		encryptedClientHello:                      slices.Clone(m.encryptedClientHello),
+		extensions:                                slices.Clone(m.extensions),
+		echOuterExts:                              slices.Clone(m.echOuterExts),
+		compressedList:                            slices.Clone(m.compressedList),
+		extensionList:                             slices.Clone(m.extensionList),
 	}
 }
 
@@ -2362,7 +2362,7 @@ func unmarshalCertificate(s *cryptobyte.String, certificate *Certificate, delega
 }
 
 type compressedCertificateMsg struct {
-	algorithm                    uint16
+	algorithm                    CertificateCompressionAlgorithm
 	uncompressedLength           uint32 // uint24
 	compressedCertificateMessage []byte
 }
@@ -2371,7 +2371,7 @@ func (m *compressedCertificateMsg) marshal() ([]byte, error) {
 	var b cryptobyte.Builder
 	b.AddUint8(typeCompressedCertificate)
 	b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
-		b.AddUint16(m.algorithm)
+		b.AddUint16(uint16(m.algorithm))
 		b.AddUint24(m.uncompressedLength)
 		b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
 			b.AddBytes(m.compressedCertificateMessage)
@@ -2386,7 +2386,7 @@ func (m *compressedCertificateMsg) unmarshal(data []byte) bool {
 	s := cryptobyte.String(data)
 
 	if !s.Skip(4) || // message type and uint24 length field
-		!s.ReadUint16(&m.algorithm) ||
+		!s.ReadUint16((*uint16)(&m.algorithm)) ||
 		!s.ReadUint24(&m.uncompressedLength) ||
 		!readUint24LengthPrefixed(&s, &m.compressedCertificateMessage) {
 		return false

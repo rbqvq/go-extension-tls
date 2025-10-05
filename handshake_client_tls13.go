@@ -32,17 +32,17 @@ type clientHandshakeStateTLS13 struct {
 	earlySecret []byte
 	binderKey   []byte
 
-	alpsReq                  bool
-	certReq                  *certificateRequestMsgTLS13
-	usingPSK                 bool
-	earlyData                bool
-	sentDummyCCS             bool
-	certCompressionAlgorithm CertCompressionAlgorithm
-	suite                    *cipherSuiteTLS13
-	transcript               hash.Hash
-	masterSecret             []byte
-	handshakeSecret          []byte // client_handshake_traffic_secret_0
-	trafficSecret            []byte // client_application_traffic_secret_0
+	alpsReq                         bool
+	certReq                         *certificateRequestMsgTLS13
+	usingPSK                        bool
+	earlyData                       bool
+	sentDummyCCS                    bool
+	certificateCompressionAlgorithm CertificateCompressionAlgorithm
+	suite                           *cipherSuiteTLS13
+	transcript                      hash.Hash
+	masterSecret                    []byte
+	handshakeSecret                 []byte // client_handshake_traffic_secret_0
+	trafficSecret                   []byte // client_application_traffic_secret_0
 
 	maxRecvLimit uint16
 	maxSentLimit uint16
@@ -1014,8 +1014,8 @@ func (hs *clientHandshakeStateTLS13) readServerCertificate() error {
 	case *certificateMsgTLS13:
 		certMsg = msg
 	case *compressedCertificateMsg:
-		hs.certCompressionAlgorithm = CertCompressionAlgorithm(msg.algorithm)
-		if !c.config.supportsCertCompression(hs.certCompressionAlgorithm) {
+		hs.certificateCompressionAlgorithm = CertificateCompressionAlgorithm(msg.algorithm)
+		if !c.config.supportsCertificateCompression(hs.certificateCompressionAlgorithm) {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: server selected unsupported algorithm")
 		}
@@ -1276,9 +1276,9 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 	certMsg.delegatedCredential = delegatedCredential
 
 	var msg handshakeMessage = certMsg
-	if hs.certCompressionAlgorithm != 0 {
+	if hs.certificateCompressionAlgorithm != 0 {
 		var err error
-		msg, err = certMsg.compress(hs.certCompressionAlgorithm)
+		msg, err = certMsg.compress(hs.certificateCompressionAlgorithm)
 		if err != nil {
 			c.sendAlert(alertInternalError)
 			return err
