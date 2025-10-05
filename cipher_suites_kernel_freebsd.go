@@ -81,9 +81,21 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
+		if hc.limit < maxPlaintext {
+			return nil
+		}
+
 	case VersionTLS11, VersionTLS12:
+		if hc.limit < maxPlaintext {
+			return nil
+		}
+
 	case VersionTLS13:
 		if isRX && !kernel.TLS_Version13_RX {
+			return nil
+		}
+
+		if hc.limit < maxPlaintext+1 {
 			return nil
 		}
 

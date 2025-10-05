@@ -917,6 +917,8 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf(true))
 		case "MaxEarlyData":
 			f.Set(reflect.ValueOf(uint32(2048)))
+		case "MaxRecordSize":
+			f.Set(reflect.ValueOf(uint16(2048)))
 		case "ShuffleExtensions":
 			f.Set(reflect.ValueOf(true))
 		case "Extensions":

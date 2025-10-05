@@ -295,6 +295,26 @@ func (hs *serverHandshakeState) processClientHello() error {
 		return errors.New("tls: initial handshake had non-empty renegotiation extension")
 	}
 
+	if hs.clientHello.limitSupported {
+		if hs.clientHello.recordSizeLimit < 64 {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: client sent an invalid record size limit")
+		}
+
+		var maxRecvLimit uint16 = maxPlaintext
+		if c.config.MaxRecordSize != 0 {
+			if c.config.MaxRecordSize < 64 {
+				c.sendAlert(alertInternalError)
+				return errors.New("tls: MaxRecordSize must greater than 64")
+			}
+
+			maxRecvLimit = min(maxRecvLimit, c.config.MaxRecordSize)
+		}
+
+		hs.hello.limitSupported = true
+		hs.hello.recordSizeLimit = maxRecvLimit
+	}
+
 	hs.hello.extendedMasterSecret = hs.clientHello.extendedMasterSecret
 	hs.hello.secureRenegotiationSupported = hs.clientHello.secureRenegotiationSupported
 	hs.hello.compressionMethod = compressionNone
@@ -859,8 +879,13 @@ func (hs *serverHandshakeState) establishKeys() error {
 		serverCipher = hs.suite.aead(serverKey, serverIV)
 	}
 
-	c.in.prepareCipherSpec(c.vers, clientCipher, clientHash, clientKey, clientIV, clientMAC, hs.hello.encryptThenMAC)
-	c.out.prepareCipherSpec(c.vers, serverCipher, serverHash, serverKey, serverIV, serverMAC, hs.hello.encryptThenMAC)
+	var maxRecvLimit, maxSentLimit uint16 = maxPlaintext, maxPlaintext
+	if hs.hello.limitSupported {
+		maxRecvLimit = hs.hello.recordSizeLimit
+		maxSentLimit = hs.clientHello.recordSizeLimit
+	}
+	c.in.prepareCipherSpec(c.vers, clientCipher, clientHash, clientKey, clientIV, clientMAC, hs.hello.encryptThenMAC, maxRecvLimit)
+	c.out.prepareCipherSpec(c.vers, serverCipher, serverHash, serverKey, serverIV, serverMAC, hs.hello.encryptThenMAC, maxSentLimit)
 
 	return nil
 }

@@ -238,6 +238,16 @@ func (*CompressedCertificateExtension) Clone() Extension {
 	return &CompressedCertificateExtension{}
 }
 
+type RecordSizeLimitExtension struct{ implementedExtension }
+
+func (*RecordSizeLimitExtension) ExtensionId() uint16 {
+	return extensionRecordSizeLimit
+}
+
+func (*RecordSizeLimitExtension) Clone() Extension {
+	return &RecordSizeLimitExtension{}
+}
+
 type CookieExtension struct{ implementedExtension }
 
 func (*CookieExtension) ExtensionId() uint16 {

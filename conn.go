@@ -204,6 +204,7 @@ type halfConn struct {
 
 	err     error  // first permanent error
 	version uint16 // protocol version
+	limit   uint16 // record size limit
 	etm     bool   // encrypt-then-mac
 	cipher  any    // cipher algorithm
 	hash    hash.Hash
@@ -211,6 +212,7 @@ type halfConn struct {
 
 	scratchBuf [13]byte // to avoid allocs; interface method args escape
 
+	nextLimit  uint16    // next record size limit
 	nextETM    bool      // next encrypt-then-mac
 	nextCipher any       // next encryption state
 	nextHash   hash.Hash // next MAC algorithm
@@ -247,8 +249,9 @@ func (hc *halfConn) setErrorLocked(err error) error {
 
 // prepareCipherSpec sets the encryption and MAC states
 // that a subsequent changeCipherSpec will use.
-func (hc *halfConn) prepareCipherSpec(version uint16, cipher any, hash hash.Hash, key, iv, mac []byte, encryptThenMAC bool) {
+func (hc *halfConn) prepareCipherSpec(version uint16, cipher any, hash hash.Hash, key, iv, mac []byte, encryptThenMAC bool, limit uint16) {
 	hc.version = version
+	hc.nextLimit = limit
 	hc.nextETM = encryptThenMAC
 	hc.nextCipher = cipher
 	hc.nextHash = hash
@@ -263,12 +266,14 @@ func (hc *halfConn) changeCipherSpec() error {
 	if hc.nextCipher == nil || hc.version == VersionTLS13 {
 		return alertInternalError
 	}
+	hc.limit = hc.nextLimit
 	hc.etm = hc.nextETM
 	hc.cipher = hc.nextCipher
 	hc.hash = hc.nextHash
 	hc.key = hc.nextKey
 	hc.iv = hc.nextIV
 	hc.mac = hc.nextMac
+	hc.nextLimit = 0
 	hc.nextETM = false
 	hc.nextCipher = nil
 	hc.nextHash = nil
@@ -281,7 +286,8 @@ func (hc *halfConn) changeCipherSpec() error {
 	return nil
 }
 
-func (hc *halfConn) setTrafficSecret(suite *cipherSuiteTLS13, level QUICEncryptionLevel, secret []byte) {
+func (hc *halfConn) setTrafficSecret(suite *cipherSuiteTLS13, level QUICEncryptionLevel, secret []byte, limit uint16) {
+	hc.limit = limit
 	hc.trafficSecret = secret
 	hc.level = level
 	hc.key, hc.iv = suite.trafficKey(secret)
@@ -472,12 +478,41 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 			panic("unknown cipher type")
 		}
 
+		if hc.hash != nil {
+			macSize := hc.hash.Size()
+			if len(payload) < macSize {
+				return nil, 0, alertBadRecordMAC
+			}
+
+			n := len(payload) - macSize - paddingLen
+			n = subtle.ConstantTimeSelect(int(uint32(n)>>31), 0, n) // if n < 0 { n = 0 }
+			record[3] = byte(n >> 8)
+			record[4] = byte(n)
+			remoteMAC := payload[n : n+macSize]
+			localMAC := tls10MAC(hc.hash, hc.scratchBuf[:0], hc.seq[:], record[:recordHeaderLen], payload[:n], payload[n+macSize:])
+
+			// This is equivalent to checking the MACs and paddingGood
+			// separately, but in constant-time to prevent distinguishing
+			// padding failures from MAC failures. Depending on what value
+			// of paddingLen was returned on bad padding, distinguishing
+			// bad MAC from bad padding can lead to an attack.
+			//
+			// See also the logic at the end of extractPadding.
+			macAndPaddingGood := subtle.ConstantTimeCompare(localMAC, remoteMAC) & int(paddingGood)
+			if macAndPaddingGood != 1 {
+				return nil, 0, alertBadRecordMAC
+			}
+
+			plaintext = payload[:n]
+		}
+
+		if len(plaintext) > int(hc.limit) {
+			return nil, 0, alertRecordOverflow
+		}
+
 		if hc.version == VersionTLS13 {
 			if typ != recordTypeApplicationData {
 				return nil, 0, alertUnexpectedMessage
-			}
-			if len(plaintext) > maxPlaintext+1 {
-				return nil, 0, alertRecordOverflow
 			}
 			// Remove padding and find the ContentType scanning from the end.
 			for i := len(plaintext) - 1; i >= 0; i-- {
@@ -493,34 +528,6 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 		}
 	} else {
 		plaintext = payload
-	}
-
-	if hc.hash != nil {
-		macSize := hc.hash.Size()
-		if len(payload) < macSize {
-			return nil, 0, alertBadRecordMAC
-		}
-
-		n := len(payload) - macSize - paddingLen
-		n = subtle.ConstantTimeSelect(int(uint32(n)>>31), 0, n) // if n < 0 { n = 0 }
-		record[3] = byte(n >> 8)
-		record[4] = byte(n)
-		remoteMAC := payload[n : n+macSize]
-		localMAC := tls10MAC(hc.hash, hc.scratchBuf[:0], hc.seq[:], record[:recordHeaderLen], payload[:n], payload[n+macSize:])
-
-		// This is equivalent to checking the MACs and paddingGood
-		// separately, but in constant-time to prevent distinguishing
-		// padding failures from MAC failures. Depending on what value
-		// of paddingLen was returned on bad padding, distinguishing
-		// bad MAC from bad padding can lead to an attack.
-		//
-		// See also the logic at the end of extractPadding.
-		macAndPaddingGood := subtle.ConstantTimeCompare(localMAC, remoteMAC) & int(paddingGood)
-		if macAndPaddingGood != 1 {
-			return nil, 0, alertBadRecordMAC
-		}
-
-		plaintext = payload[:n]
 	}
 
 	hc.incSeq()
@@ -591,6 +598,10 @@ func (hc *halfConn) decryptETM(record []byte) ([]byte, recordType, error) {
 	}
 
 	plaintext = payload[:n]
+
+	if len(plaintext) > int(hc.limit) {
+		return nil, 0, alertRecordOverflow
+	}
 
 	hc.incSeq()
 	return plaintext, typ, nil
@@ -1138,6 +1149,15 @@ const (
 // In the interests of simplicity and determinism, this code does not attempt
 // to reset the record size once the connection is idle, however.
 func (c *Conn) maxPayloadSizeForWrite(typ recordType) int {
+	maxPlaintext := maxPlaintext
+	if c.out.cipher != nil {
+		maxPlaintext = int(c.out.limit)
+
+		if c.vers == VersionTLS13 {
+			maxPlaintext-- // encrypted ContentType
+		}
+	}
+
 	if c.config.DynamicRecordSizingDisabled || typ != recordTypeApplicationData {
 		return maxPlaintext
 	}
@@ -1636,7 +1656,7 @@ func (c *Conn) handleKeyUpdate(keyUpdate *keyUpdateMsg) error {
 	}
 
 	newSecret := cipherSuite.nextTrafficSecret(c.in.trafficSecret)
-	c.in.setTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret)
+	c.in.setTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret, c.in.limit)
 
 	err := c.resetupRX()
 	if err != nil {
@@ -1667,7 +1687,7 @@ func (c *Conn) handleKeyUpdate(keyUpdate *keyUpdateMsg) error {
 		}
 
 		newSecret := cipherSuite.nextTrafficSecret(c.out.trafficSecret)
-		c.out.setTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret)
+		c.out.setTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret, c.out.limit)
 
 		err = resetup()
 		if err != nil {

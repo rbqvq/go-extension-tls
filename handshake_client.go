@@ -111,6 +111,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, []*keySharePrivateKeys, *echC
 		random:                             make([]byte, 32),
 		encryptThenMAC:                     config.EncryptThenMAC,
 		extendedMasterSecret:               true,
+		limitSupported:                     true,
 		ocspStapling:                       true,
 		scts:                               true,
 		serverName:                         hostnameInSNI(config.ServerName),
@@ -121,11 +122,23 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, []*keySharePrivateKeys, *echC
 		supportedVersions:                  supportedVersions,
 	}
 
+	var maxRecvLimit uint16 = maxPlaintext
 	if maxVersion >= VersionTLS13 {
 		for alpn := range config.NextProtoSettings {
 			hello.alpsProtocols = append(hello.alpsProtocols, alpn)
 		}
+
+		maxRecvLimit += 1
 	}
+
+	if config.MaxRecordSize != 0 {
+		if config.MaxRecordSize < 64 {
+			return nil, nil, nil, errors.New("tls: MaxRecordSize must greater than 64")
+		}
+
+		maxRecvLimit = min(maxRecvLimit, config.MaxRecordSize)
+	}
+	hello.recordSizeLimit = maxRecvLimit
 
 	// The version at the beginning of the ClientHello was capped at TLS 1.2
 	// for compatibility reasons. The supported_versions extension is used
@@ -562,7 +575,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 
 		earlyTrafficSecret := suite.deriveSecret(earlySecret, clientEarlyTrafficLabel, transcript)
 		if c.quic == nil {
-			c.out.setTrafficSecret(suite, QUICEncryptionLevelEarly, earlyTrafficSecret)
+			c.out.setTrafficSecret(suite, QUICEncryptionLevelEarly, earlyTrafficSecret, maxPlaintext+1)
 		} else {
 			c.quicSetWriteSecret(QUICEncryptionLevelEarly, suite.id, earlyTrafficSecret)
 		}
@@ -1097,8 +1110,13 @@ func (hs *clientHandshakeState) establishKeys() error {
 		serverCipher = hs.suite.aead(serverKey, serverIV)
 	}
 
-	c.in.prepareCipherSpec(c.vers, serverCipher, serverHash, serverKey, serverIV, serverMAC, hs.serverHello.encryptThenMAC)
-	c.out.prepareCipherSpec(c.vers, clientCipher, clientHash, clientKey, clientIV, clientMAC, hs.serverHello.encryptThenMAC)
+	var maxRecvLimit, maxSentLimit uint16 = maxPlaintext, maxPlaintext
+	if hs.serverHello.limitSupported {
+		maxRecvLimit = hs.hello.recordSizeLimit
+		maxSentLimit = hs.serverHello.recordSizeLimit
+	}
+	c.in.prepareCipherSpec(c.vers, serverCipher, serverHash, serverKey, serverIV, serverMAC, hs.serverHello.encryptThenMAC, maxRecvLimit)
+	c.out.prepareCipherSpec(c.vers, clientCipher, clientHash, clientKey, clientIV, clientMAC, hs.serverHello.encryptThenMAC, maxSentLimit)
 	return nil
 }
 
@@ -1149,6 +1167,13 @@ func (hs *clientHandshakeState) processServerHello() (bool, error) {
 		if !bytes.Equal(hs.serverHello.secureRenegotiation, expectedSecureRenegotiation[:]) {
 			c.sendAlert(alertHandshakeFailure)
 			return false, errors.New("tls: incorrect renegotiation extension contents")
+		}
+	}
+
+	if hs.serverHello.limitSupported {
+		if hs.serverHello.recordSizeLimit < 64 || hs.serverHello.recordSizeLimit > maxPlaintext {
+			c.sendAlert(alertIllegalParameter)
+			return false, errors.New("tls: server sent an invalid record size limit")
 		}
 	}
 

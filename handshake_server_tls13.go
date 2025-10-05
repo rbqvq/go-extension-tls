@@ -68,6 +68,9 @@ type serverHandshakeStateTLS13 struct {
 	clientFinished           []byte
 	echContext               *echServerContext
 
+	maxRecvLimit uint16
+	maxSentLimit uint16
+
 	extensions []Extension
 }
 
@@ -416,6 +419,25 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 		}
 	}
 
+	hs.maxRecvLimit = maxPlaintext + 1
+	hs.maxSentLimit = maxPlaintext + 1
+	if hs.clientHello.limitSupported {
+		if hs.clientHello.recordSizeLimit < 64 {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: client sent an invalid record size limit")
+		}
+		hs.maxSentLimit = min(hs.maxSentLimit, hs.clientHello.recordSizeLimit)
+
+		if c.config.MaxRecordSize != 0 {
+			if c.config.MaxRecordSize < 64 {
+				c.sendAlert(alertInternalError)
+				return errors.New("tls: MaxRecordSize must greater than 64")
+			}
+
+			hs.maxRecvLimit = min(hs.maxRecvLimit, c.config.MaxRecordSize)
+		}
+	}
+
 CertificateCompressionAlgorithmSelection:
 	for _, preferredAlgorithm := range c.config.certCompressionPreferences() {
 		for _, algorithm := range hs.clientHello.supportedCertCompressionAlgorithms {
@@ -597,7 +619,7 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 		}
 		earlyTrafficSecret := hs.suite.deriveSecret(hs.earlySecret, clientEarlyTrafficLabel, transcript)
 		if c.quic == nil {
-			c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelEarly, earlyTrafficSecret)
+			c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelEarly, earlyTrafficSecret, maxPlaintext+1)
 		} else {
 			c.quicSetReadSecret(QUICEncryptionLevelEarly, hs.suite.id, earlyTrafficSecret)
 		}
@@ -975,6 +997,8 @@ func illegalClientHelloChange(ch, ch1 *clientHelloMsg) bool {
 		!bytes.Equal(ch.supportedPoints, ch1.supportedPoints) ||
 		ch.ticketSupported != ch1.ticketSupported ||
 		!bytes.Equal(ch.sessionTicket, ch1.sessionTicket) ||
+		ch.limitSupported != ch1.limitSupported ||
+		ch.recordSizeLimit != ch1.recordSizeLimit ||
 		ch.secureRenegotiationSupported != ch1.secureRenegotiationSupported ||
 		!bytes.Equal(ch.secureRenegotiation, ch1.secureRenegotiation) ||
 		ch.scts != ch1.scts ||
@@ -1024,11 +1048,11 @@ func (hs *serverHandshakeStateTLS13) sendServerParameters() error {
 	clientSecret := hs.suite.deriveSecret(hs.handshakeSecret,
 		clientHandshakeTrafficLabel, hs.transcript)
 	if c.quic != nil || !hs.earlyData {
-		c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, clientSecret)
+		c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, clientSecret, hs.maxRecvLimit)
 	}
 	serverSecret := hs.suite.deriveSecret(hs.handshakeSecret,
 		serverHandshakeTrafficLabel, hs.transcript)
-	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret)
+	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret, hs.maxSentLimit)
 
 	hs.clientHandshakeSecret = clientSecret
 
@@ -1052,6 +1076,7 @@ func (hs *serverHandshakeStateTLS13) sendServerParameters() error {
 	}
 
 	encryptedExtensions := new(encryptedExtensionsMsg)
+	encryptedExtensions.extensions = hs.extensions
 	encryptedExtensions.alpnProtocol = c.clientProtocol
 	if hs.usingALPS {
 		encryptedExtensions.alps = true
@@ -1065,7 +1090,6 @@ func (hs *serverHandshakeStateTLS13) sendServerParameters() error {
 		}
 		encryptedExtensions.quicTransportParameters = p
 	}
-	encryptedExtensions.extensions = hs.extensions
 
 	if !hs.c.didResume && hs.clientHello.serverName != "" {
 		encryptedExtensions.serverNameAck = true
@@ -1087,6 +1111,11 @@ func (hs *serverHandshakeStateTLS13) sendServerParameters() error {
 			c.sendAlert(alertInternalError)
 			return err
 		}
+	}
+
+	if hs.clientHello.limitSupported {
+		encryptedExtensions.limitSupported = true
+		encryptedExtensions.recordSizeLimit = hs.maxRecvLimit
 	}
 
 	if _, err := hs.c.writeHandshakeRecord(encryptedExtensions, hs.transcript); err != nil {
@@ -1241,7 +1270,7 @@ func (hs *serverHandshakeStateTLS13) sendServerFinished() error {
 		clientApplicationTrafficLabel, hs.transcript)
 	serverSecret := hs.suite.deriveSecret(hs.masterSecret,
 		serverApplicationTrafficLabel, hs.transcript)
-	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, serverSecret)
+	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, serverSecret, hs.maxSentLimit)
 
 	if c.quic != nil {
 		if c.hand.Len() != 0 {
@@ -1420,7 +1449,7 @@ func (hs *serverHandshakeStateTLS13) readClientEarlyData() error {
 	} else {
 		c.earlyNotify.Wait()
 	}
-	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.clientHandshakeSecret)
+	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.clientHandshakeSecret, hs.maxSentLimit)
 	return c.handshakeErr
 }
 
@@ -1680,7 +1709,7 @@ func (hs *serverHandshakeStateTLS13) readClientFinished() error {
 		return errors.New("tls: invalid client finished hash")
 	}
 
-	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret)
+	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret, hs.maxSentLimit)
 
 	return nil
 }

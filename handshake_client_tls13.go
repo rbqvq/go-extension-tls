@@ -44,6 +44,9 @@ type clientHandshakeStateTLS13 struct {
 	handshakeSecret          []byte // client_handshake_traffic_secret_0
 	trafficSecret            []byte // client_application_traffic_secret_0
 
+	maxRecvLimit uint16
+	maxSentLimit uint16
+
 	echContext *echClientContext
 
 	extensions []Extension
@@ -763,12 +766,12 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 	clientSecret := hs.suite.deriveSecret(handshakeSecret,
 		clientHandshakeTrafficLabel, hs.transcript)
 	if c.quic != nil {
-		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, clientSecret)
+		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, clientSecret, maxPlaintext+1)
 	}
 	serverSecret := hs.suite.deriveSecret(handshakeSecret,
 		serverHandshakeTrafficLabel, hs.transcript)
 
-	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret)
+	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret, maxPlaintext+1)
 
 	if c.quic != nil {
 		if c.hand.Len() != 0 {
@@ -869,6 +872,20 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 		}
 	}
 
+	hs.maxRecvLimit = maxPlaintext + 1
+	hs.maxSentLimit = maxPlaintext + 1
+	if encryptedExtensions.limitSupported {
+		if encryptedExtensions.recordSizeLimit < 64 || encryptedExtensions.recordSizeLimit > maxPlaintext+1 {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: server sent an invalid record size limit")
+		}
+
+		hs.maxRecvLimit = hs.hello.recordSizeLimit
+		hs.maxSentLimit = encryptedExtensions.recordSizeLimit
+
+		c.out.limit = hs.maxSentLimit
+	}
+
 	if !hs.hello.earlyData && encryptedExtensions.earlyData {
 		c.sendAlert(alertUnsupportedExtension)
 		return errors.New("tls: server sent an unexpected early_data extension")
@@ -892,7 +909,7 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 		hs.earlyData = true
 	}
 	if c.quic == nil && !hs.earlyData {
-		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret)
+		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret, hs.maxSentLimit)
 	}
 	if hs.echContext != nil {
 		if hs.echContext.echRejected {
@@ -1130,7 +1147,7 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 		clientApplicationTrafficLabel, hs.transcript)
 	serverSecret := hs.suite.deriveSecret(hs.masterSecret,
 		serverApplicationTrafficLabel, hs.transcript)
-	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, serverSecret)
+	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, serverSecret, hs.maxRecvLimit)
 
 	err = c.config.writeKeyLog(keyLogLabelClientTraffic, hs.hello.random, hs.trafficSecret)
 	if err != nil {
@@ -1328,7 +1345,7 @@ func (hs *clientHandshakeStateTLS13) sendClientFinished() error {
 			return err
 		}
 
-		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret)
+		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret, hs.maxSentLimit)
 	}
 
 	finished := &finishedMsg{
@@ -1339,7 +1356,7 @@ func (hs *clientHandshakeStateTLS13) sendClientFinished() error {
 		return err
 	}
 
-	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret)
+	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret, hs.maxSentLimit)
 
 	if !c.config.SessionTicketsDisabled && c.config.ClientSessionCache != nil {
 		c.resumptionSecret = hs.suite.deriveSecret(hs.masterSecret,

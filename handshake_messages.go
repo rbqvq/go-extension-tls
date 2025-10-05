@@ -83,6 +83,8 @@ type clientHelloMsg struct {
 	supportedPoints                    []uint8
 	ticketSupported                    bool
 	sessionTicket                      []uint8
+	limitSupported                     bool
+	recordSizeLimit                    uint16
 	supportedCertCompressionAlgorithms []CertCompressionAlgorithm
 	supportedSignatureAlgorithms       []SignatureScheme
 	supportedSignatureAlgorithmsCert   []SignatureScheme
@@ -201,6 +203,10 @@ func (m *clientHelloMsg) echOuterExtensions(compressed []Extension) []uint16 {
 		case *CompressedCertificateExtension:
 			if len(m.supportedCertCompressionAlgorithms) > 0 {
 				echOuterExts = append(echOuterExts, extensionCompressCertificate)
+			}
+		case *RecordSizeLimitExtension:
+			if m.limitSupported {
+				echOuterExts = append(echOuterExts, extensionRecordSizeLimit)
 			}
 		case *CookieExtension:
 			if len(m.cookie) > 0 {
@@ -440,6 +446,14 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 							exts.AddUint16(uint16(algorithm))
 						}
 					})
+				})
+			}
+		case *RecordSizeLimitExtension:
+			if m.limitSupported {
+				// RFC 8449, Section 4
+				exts.AddUint16(extensionRecordSizeLimit)
+				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					exts.AddUint16(m.recordSizeLimit)
 				})
 			}
 		case *CookieExtension:
@@ -695,6 +709,12 @@ func (m *clientHelloMsg) getUnpaddedLength() int {
 
 					extLength += 1
 					extLength += len(m.supportedCertCompressionAlgorithms) * 2
+				}
+			case *RecordSizeLimitExtension:
+				if m.limitSupported {
+					extLength += 4
+					// RFC 8449, Section 4
+					extLength += 2
 				}
 			case *CookieExtension:
 				if len(m.cookie) > 0 {
@@ -1110,6 +1130,13 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				m.supportedCertCompressionAlgorithms = append(m.supportedCertCompressionAlgorithms, CertCompressionAlgorithm(compression))
 			}
 			m.extensionList = append(m.extensionList, &CompressedCertificateExtension{})
+		case extensionRecordSizeLimit:
+			// RFC 8449, Section 4
+			m.limitSupported = true
+			if !extData.ReadUint16(&m.recordSizeLimit) {
+				return false
+			}
+			m.extensionList = append(m.extensionList, &RecordSizeLimitExtension{})
 		case extensionSupportedVersions:
 			// RFC 8446, Section 4.2.1
 			var versList cryptobyte.String
@@ -1252,6 +1279,8 @@ func (m *clientHelloMsg) clone() *clientHelloMsg {
 		supportedPoints:                    slices.Clone(m.supportedPoints),
 		ticketSupported:                    m.ticketSupported,
 		sessionTicket:                      slices.Clone(m.sessionTicket),
+		limitSupported:                     m.limitSupported,
+		recordSizeLimit:                    m.recordSizeLimit,
 		supportedCertCompressionAlgorithms: slices.Clone(m.supportedCertCompressionAlgorithms),
 		supportedSignatureAlgorithms:       slices.Clone(m.supportedSignatureAlgorithms),
 		supportedSignatureAlgorithmsCert:   slices.Clone(m.supportedSignatureAlgorithmsCert),
@@ -1287,6 +1316,8 @@ type serverHelloMsg struct {
 	compressionMethod            uint8
 	ocspStapling                 bool
 	ticketSupported              bool
+	limitSupported               bool
+	recordSizeLimit              uint16
 	secureRenegotiationSupported bool
 	secureRenegotiation          []byte
 	encryptThenMAC               bool
@@ -1396,6 +1427,14 @@ func (m *serverHelloMsg) marshal() ([]byte, error) {
 				exts.AddUint16(extensionPreSharedKey)
 				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 					exts.AddUint16(m.selectedIdentity)
+				})
+			}
+		case *RecordSizeLimitExtension:
+			if m.limitSupported {
+				// RFC 8449, Section 4
+				exts.AddUint16(extensionRecordSizeLimit)
+				exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					exts.AddUint16(m.recordSizeLimit)
 				})
 			}
 		case *CookieExtension:
@@ -1551,6 +1590,13 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 				return false
 			}
 			m.extensions = append(m.extensions, &SupportedVersionsExtension{})
+		case extensionRecordSizeLimit:
+			// RFC 8449, Section 4
+			m.limitSupported = true
+			if !extData.ReadUint16(&m.recordSizeLimit) {
+				return false
+			}
+			m.extensions = append(m.extensions, &RecordSizeLimitExtension{})
 		case extensionCookie:
 			if !readUint16LengthPrefixed(&extData, &m.cookie) ||
 				len(m.cookie) == 0 {
@@ -1633,6 +1679,8 @@ type encryptedExtensionsMsg struct {
 	quicTransportParameters []byte
 	earlyData               bool
 	echRetryConfigs         []byte
+	limitSupported          bool
+	recordSizeLimit         uint16
 	serverNameAck           bool
 
 	extensions []Extension
@@ -1690,6 +1738,14 @@ func (m *encryptedExtensionsMsg) marshal() ([]byte, error) {
 						b.AddUint16(extensionEncryptedClientHello)
 						b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 							b.AddBytes(m.echRetryConfigs)
+						})
+					}
+				case *RecordSizeLimitExtension:
+					if m.limitSupported {
+						// RFC 8449, Section 4
+						b.AddUint16(extensionRecordSizeLimit)
+						b.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+							exts.AddUint16(m.recordSizeLimit)
 						})
 					}
 				case *ServerNameIndicationExtension:
@@ -1774,6 +1830,13 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 				return false
 			}
 			m.extensions = append(m.extensions, &EncryptedClientHelloExtension{})
+		case extensionRecordSizeLimit:
+			// RFC 8449, Section 4
+			m.limitSupported = true
+			if !extData.ReadUint16(&m.recordSizeLimit) {
+				return false
+			}
+			m.extensions = append(m.extensions, &RecordSizeLimitExtension{})
 		case extensionServerName:
 			if len(extData) != 0 {
 				return false

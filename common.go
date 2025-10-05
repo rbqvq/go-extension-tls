@@ -116,6 +116,7 @@ const (
 	extensionEncryptThenMAC          uint16 = 22
 	extensionExtendedMasterSecret    uint16 = 23
 	extensionCompressCertificate     uint16 = 27 // compress_certificate in TLS 1.3
+	extensionRecordSizeLimit         uint16 = 28
 	extensionDelegatedCredentials    uint16 = 34
 	extensionSessionTicket           uint16 = 35
 	extensionPreSharedKey            uint16 = 41
@@ -896,6 +897,12 @@ type Config struct {
 	// If empty, the default will be used.
 	DelegatedCredentialPreferences []SignatureScheme
 
+	// MaxRecordSize limits the maximum plaintext size of received TLS records, if
+	// supported by the peer. This feature cannot be used with kernel offload.
+	// The value must be greater than 64. 
+	// If zero, the largest possible value will be used.
+	MaxRecordSize uint16
+
 	// DynamicRecordSizingDisabled disables adaptive sizing of TLS records.
 	// When true, the largest possible TLS record size is always used. When
 	// false, the size of TLS records may be adjusted in an attempt to
@@ -1164,6 +1171,7 @@ func (c *Config) Clone() *Config {
 		SignatureAlgorithmsPreferences:      c.SignatureAlgorithmsPreferences,
 		DelegatedCredential:                 c.DelegatedCredential,
 		DelegatedCredentialPreferences:      c.DelegatedCredentialPreferences,
+		MaxRecordSize:                       c.MaxRecordSize,
 		DynamicRecordSizingDisabled:         c.DynamicRecordSizingDisabled,
 		Renegotiation:                       c.Renegotiation,
 		AllowEarlyData:                      c.AllowEarlyData,

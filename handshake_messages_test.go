@@ -197,6 +197,12 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	}
 
 	if rand.Intn(10) > 5 {
+		m.limitSupported = true
+		m.recordSizeLimit = uint16(rand.Intn(10))
+		m.extensionList = append(m.extensionList, &RecordSizeLimitExtension{})
+	}
+
+	if rand.Intn(10) > 5 {
 		m.supportedSignatureAlgorithms = supportedSignatureAlgorithms(VersionTLS12)
 		m.extensionList = append(m.extensionList, &SignatureAlgorithmsExtension{})
 	}
@@ -314,6 +320,11 @@ func (*serverHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 		m.extensions = append(m.extensions, &SessionTicketExtension{})
 	}
 	if rand.Intn(10) > 5 {
+		m.limitSupported = true
+		m.recordSizeLimit = uint16(rand.Intn(10))
+		m.extensions = append(m.extensions, &RecordSizeLimitExtension{})
+	}
+	if rand.Intn(10) > 5 {
 		m.alpnProtocol = randomString(rand.Intn(32)+1, rand)
 		m.extensions = append(m.extensions, &ALPNExtension{})
 	}
@@ -382,6 +393,11 @@ func (*encryptedExtensionsMsg) Generate(rand *rand.Rand, size int) reflect.Value
 	if rand.Intn(10) > 5 {
 		m.earlyData = true
 		m.extensions = append(m.extensions, &EarlyDataExtension{})
+	}
+	if rand.Intn(10) > 5 {
+		m.limitSupported = true
+		m.recordSizeLimit = uint16(rand.Intn(10))
+		m.extensions = append(m.extensions, &RecordSizeLimitExtension{})
 	}
 
 	return reflect.ValueOf(m)
