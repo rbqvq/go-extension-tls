@@ -202,7 +202,7 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 
 	switch hc.version {
 	case VersionTLS12:
-		if isRX && !kernel.TLS_Version13_RX {
+		if isRX && !kernel.TLS_RX {
 			return nil
 		}
 
