@@ -606,6 +606,7 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 		}
 
 		hs.earlyData = true
+		hs.usingALPS = false
 		c.clientProtocolSetting = sessionState.alpnClientSetting
 		c.maxEarlyData = sessionState.maxEarlyData
 
@@ -1133,18 +1134,12 @@ func (config *Config) negotiateALPS(selectedProto string, clientProtos []string)
 		return nil, false
 	}
 
-	protoSetting, ok := config.NextProtoSettings[selectedProto]
-	if !ok {
+	if !slices.Contains(clientProtos, selectedProto) {
 		return nil, false
 	}
 
-	for _, c := range clientProtos {
-		if selectedProto == c {
-			return protoSetting, true
-		}
-	}
-
-	return nil, false
+	protoSetting, ok := config.NextProtoSettings[selectedProto]
+	return protoSetting, ok
 }
 
 func (hs *serverHandshakeStateTLS13) requestClientCert() bool {
@@ -1293,10 +1288,10 @@ func (hs *serverHandshakeStateTLS13) sendServerFinished() error {
 
 	c.ekm = hs.suite.exportKeyingMaterial(hs.masterSecret, hs.transcript)
 
-	// If we did not request client certificates, at this point we can
+	// If we did not request client certificates and encrypted extensions, at this point we can
 	// precompute the client finished and roll the transcript forward to send
 	// session tickets in our first flight.
-	if !hs.requestClientCert() {
+	if !hs.requestClientCert() && !hs.usingALPS {
 		if err := hs.sendSessionTickets(); err != nil {
 			return err
 		}
@@ -1456,7 +1451,7 @@ func (hs *serverHandshakeStateTLS13) readClientEarlyData() error {
 func (hs *serverHandshakeStateTLS13) readClientParameters() error {
 	c := hs.c
 
-	if hs.earlyData || !hs.usingALPS {
+	if !hs.usingALPS {
 		return nil
 	}
 
@@ -1499,6 +1494,14 @@ func (hs *serverHandshakeStateTLS13) readClientParameters() error {
 
 	c.clientProtocolSetting = encryptedExtensions.alpnSetting
 
+	// If we did not request client certificates, at this point we can
+	// precompute the client finished and roll the transcript forward to send
+	// session tickets in our first flight.
+	if !hs.requestClientCert() {
+		if err := hs.sendSessionTickets(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

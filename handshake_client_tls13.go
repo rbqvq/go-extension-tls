@@ -849,15 +849,6 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 	}
 	c.clientProtocol = encryptedExtensions.alpnProtocol
 
-	if encryptedExtensions.alps {
-		hs.alpsReq = true
-		if encryptedExtensions.alpnProtocol == "" {
-			c.sendAlert(alertUnsupportedExtension)
-			return errors.New("tls: server sent application settings without ALPN")
-		}
-
-		c.serverProtocolSetting = encryptedExtensions.alpnSetting
-	}
 	if c.quic != nil {
 		if encryptedExtensions.quicTransportParameters == nil {
 			// RFC 9001 Section 8.2.
@@ -902,14 +893,27 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 			c.sendAlert(alertHandshakeFailure)
 			return errors.New("tls: server accepted 0-RTT with the wrong ALPN")
 		}
-		if !bytes.Equal(hs.session.alpnServerSetting, c.serverProtocolSetting) {
-			c.sendAlert(alertHandshakeFailure)
-			return errors.New("tls: server accepted 0-RTT with the wrong ALPS")
-		}
+		c.clientProtocolSetting = hs.session.alpnClientSetting
+		c.serverProtocolSetting = hs.session.alpnServerSetting
 		hs.earlyData = true
 	}
 	if c.quic == nil && !hs.earlyData {
 		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret, hs.maxSentLimit)
+	}
+
+	if encryptedExtensions.alps {
+		if hs.earlyData {
+			c.sendAlert(alertUnsupportedExtension)
+			return errors.New("tls: server sent application settings in early handshake")
+		}
+
+		if encryptedExtensions.alpnProtocol == "" {
+			c.sendAlert(alertUnsupportedExtension)
+			return errors.New("tls: server sent application settings without ALPN")
+		}
+
+		hs.alpsReq = true
+		c.serverProtocolSetting = encryptedExtensions.alpnSetting
 	}
 	if hs.echContext != nil {
 		if hs.echContext.echRejected {
@@ -1168,7 +1172,7 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 func (hs *clientHandshakeStateTLS13) sendClientParameters() error {
 	c := hs.c
 
-	if hs.earlyData || !hs.alpsReq {
+	if !hs.alpsReq {
 		return nil
 	}
 
@@ -1184,7 +1188,6 @@ func (hs *clientHandshakeStateTLS13) sendClientParameters() error {
 	if c.config.GetProtoSetting != nil {
 		clientProtocolSetting, ok = c.config.GetProtoSetting(c.clientProtocol, c.serverProtocolSetting)
 	} else {
-		// Check if the ALPN selected by the server exists in the client's list.
 		clientProtocolSetting, ok = c.config.NextProtoSettings[c.clientProtocol]
 	}
 
