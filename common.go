@@ -917,7 +917,7 @@ type Config struct {
 	// MaxRecordSize limits the maximum plaintext size of received TLS records, if
 	// supported by the peer. This feature cannot be used with kernel offload.
 	// The value must be greater than 64.
-	// If zero, the largest possible value will be used.
+	// If zero, the record size limit feature will be disabled.
 	MaxRecordSize uint16
 
 	// DynamicRecordSizingDisabled disables adaptive sizing of TLS records.

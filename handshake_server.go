@@ -301,18 +301,15 @@ func (hs *serverHandshakeState) processClientHello() error {
 			return errors.New("tls: client sent an invalid record size limit")
 		}
 
-		var maxRecvLimit uint16 = maxPlaintext
 		if c.config.MaxRecordSize != 0 {
 			if c.config.MaxRecordSize < 64 {
 				c.sendAlert(alertInternalError)
 				return errors.New("tls: MaxRecordSize must greater than 64")
 			}
 
-			maxRecvLimit = min(maxRecvLimit, c.config.MaxRecordSize)
+			hs.hello.limitSupported = true
+			hs.hello.recordSizeLimit = min(maxPlaintext, c.config.MaxRecordSize)
 		}
-
-		hs.hello.limitSupported = true
-		hs.hello.recordSizeLimit = maxRecvLimit
 	}
 
 	hs.hello.extendedMasterSecret = hs.clientHello.extendedMasterSecret
@@ -882,7 +879,7 @@ func (hs *serverHandshakeState) establishKeys() error {
 	var maxRecvLimit, maxSentLimit uint16 = maxPlaintext, maxPlaintext
 	if hs.hello.limitSupported {
 		maxRecvLimit = hs.hello.recordSizeLimit
-		maxSentLimit = hs.clientHello.recordSizeLimit
+		maxSentLimit = min(maxSentLimit, hs.clientHello.recordSizeLimit)
 	}
 	c.in.prepareCipherSpec(c.vers, clientCipher, clientHash, clientKey, clientIV, clientMAC, hs.hello.encryptThenMAC, maxRecvLimit)
 	c.out.prepareCipherSpec(c.vers, serverCipher, serverHash, serverKey, serverIV, serverMAC, hs.hello.encryptThenMAC, maxSentLimit)

@@ -111,7 +111,6 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, []*keySharePrivateKeys, *echC
 		random:                       make([]byte, 32),
 		encryptThenMAC:               config.EncryptThenMAC,
 		extendedMasterSecret:         true,
-		limitSupported:               true,
 		ocspStapling:                 true,
 		scts:                         true,
 		serverName:                   hostnameInSNI(config.ServerName),
@@ -121,15 +120,12 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, []*keySharePrivateKeys, *echC
 		supportedVersions:            supportedVersions,
 	}
 
-	var maxRecvLimit uint16 = maxPlaintext
 	if maxVersion >= VersionTLS13 {
 		hello.supportedCertificateCompressionAlgorithms = config.certificateCompressionPreferences()
 
 		for alpn := range config.NextProtoSettings {
 			hello.alpsProtocols = append(hello.alpsProtocols, alpn)
 		}
-
-		maxRecvLimit += 1
 	}
 
 	if config.MaxRecordSize != 0 {
@@ -137,9 +133,14 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, []*keySharePrivateKeys, *echC
 			return nil, nil, nil, errors.New("tls: MaxRecordSize must greater than 64")
 		}
 
-		maxRecvLimit = min(maxRecvLimit, config.MaxRecordSize)
+		var maxPlaintext uint16 = maxPlaintext
+		if maxVersion >= VersionTLS13 {
+			maxPlaintext += 1
+		}
+
+		hello.limitSupported = true
+		hello.recordSizeLimit = min(maxPlaintext, config.MaxRecordSize)
 	}
-	hello.recordSizeLimit = maxRecvLimit
 
 	// The version at the beginning of the ClientHello was capped at TLS 1.2
 	// for compatibility reasons. The supported_versions extension is used
@@ -1172,6 +1173,11 @@ func (hs *clientHandshakeState) processServerHello() (bool, error) {
 	}
 
 	if hs.serverHello.limitSupported {
+		if !hs.hello.limitSupported {
+			c.sendAlert(alertIllegalParameter)
+			return false, errors.New("tls: server sent unexpected record-size-limit")
+		}
+
 		if hs.serverHello.recordSizeLimit < 64 || hs.serverHello.recordSizeLimit > maxPlaintext {
 			c.sendAlert(alertIllegalParameter)
 			return false, errors.New("tls: server sent an invalid record size limit")

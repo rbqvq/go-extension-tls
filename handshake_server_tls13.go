@@ -426,7 +426,6 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: client sent an invalid record size limit")
 		}
-		hs.maxSentLimit = min(hs.maxSentLimit, hs.clientHello.recordSizeLimit)
 
 		if c.config.MaxRecordSize != 0 {
 			if c.config.MaxRecordSize < 64 {
@@ -434,6 +433,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 				return errors.New("tls: MaxRecordSize must greater than 64")
 			}
 
+			hs.maxSentLimit = min(hs.maxSentLimit, hs.clientHello.recordSizeLimit)
 			hs.maxRecvLimit = min(hs.maxRecvLimit, c.config.MaxRecordSize)
 		}
 	}
@@ -1114,7 +1114,7 @@ func (hs *serverHandshakeStateTLS13) sendServerParameters() error {
 		}
 	}
 
-	if hs.clientHello.limitSupported {
+	if hs.clientHello.limitSupported && c.config.MaxRecordSize != 0 {
 		encryptedExtensions.limitSupported = true
 		encryptedExtensions.recordSizeLimit = hs.maxRecvLimit
 	}

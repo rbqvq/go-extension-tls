@@ -866,6 +866,11 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 	hs.maxRecvLimit = maxPlaintext + 1
 	hs.maxSentLimit = maxPlaintext + 1
 	if encryptedExtensions.limitSupported {
+		if !hs.hello.limitSupported {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: server sent unexpected record-size-limit")
+		}
+
 		if encryptedExtensions.recordSizeLimit < 64 || encryptedExtensions.recordSizeLimit > maxPlaintext+1 {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: server sent an invalid record size limit")
