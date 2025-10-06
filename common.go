@@ -504,6 +504,10 @@ type ClientHelloInfo struct {
 	// in the ClientHello.
 	Extensions []uint16
 
+	// CompressedExtensions lists the IDs of the extensions presented
+	// by the client in the ClientHelloInnner ECHOuterExtension.
+	CompressedExtensions []uint16
+
 	// Extensions lists the TLS extensions send by the client.
 	// If its nil, defaultExtension will be used.
 	ExtensionList []Extension
@@ -609,7 +613,7 @@ type Defaults struct {
 	//
 	// For server:
 	// If features was enabled and offered by client, the extension will be sent.
-	// So this option 
+	// So this option
 	AllSupportedExtensions bool
 }
 

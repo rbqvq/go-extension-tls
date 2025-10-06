@@ -493,7 +493,7 @@ func (m *clientHelloMsg) marshalMsg(echInner bool) ([]byte, error) {
 			}
 		case *ECHOuterExtension:
 			if echInner {
-				if len(m.compressedList) > 0 {
+				if len(m.echOuterExts) > 0 {
 					exts.AddUint16(extensionECHOuterExtensions)
 					exts.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
 						exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {

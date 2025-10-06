@@ -332,6 +332,7 @@ func decodeInnerClientHello(outer *clientHelloMsg, encoded []byte) (*clientHello
 	if err != nil {
 		return nil, err
 	}
+	echOuterExts := make([]uint16, 0, len(rawOuterExts))
 
 	recon := cryptobyte.NewBuilder(nil)
 	recon.AddUint8(typeClientHello)
@@ -384,6 +385,8 @@ func decodeInnerClientHello(outer *clientHelloMsg, encoded []byte) (*clientHello
 						recon.AddUint16LengthPrefixed(func(recon *cryptobyte.Builder) {
 							recon.AddBytes(rawOuterExts[i].data)
 						})
+
+						echOuterExts = append(echOuterExts, extType)
 					}
 				} else {
 					recon.AddUint16(extension)
@@ -403,6 +406,7 @@ func decodeInnerClientHello(outer *clientHelloMsg, encoded []byte) (*clientHello
 	if !inner.unmarshal(reconBytes) {
 		return nil, errors.New("tls: invalid reconstructed inner client hello")
 	}
+	inner.echOuterExts = echOuterExts
 
 	if !bytes.Equal(inner.encryptedClientHello, []byte{uint8(innerECHExt)}) {
 		return nil, errInvalidECHExt
