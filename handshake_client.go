@@ -353,8 +353,9 @@ CipherSuiteLoop:
 		ech.innerHello.secureRenegotiationSupported = false
 		ech.innerHello.encryptThenMAC = false
 		ech.innerHello.extendedMasterSecret = false
-
-		ech.innerHello.cipherSuites = slices.DeleteFunc(ech.innerHello.cipherSuites, func(suite uint16) bool { return !IsGREASE(suite) && cipherSuiteTLS13ByID(suite) == nil })
+		if !echConf.KeepCipherSuites {
+			ech.innerHello.cipherSuites = slices.DeleteFunc(ech.innerHello.cipherSuites, func(suite uint16) bool { return !IsGREASE(suite) && cipherSuiteTLS13ByID(suite) == nil })
+		}
 		ech.innerHello.supportedVersions = slices.DeleteFunc(ech.innerHello.supportedVersions, func(v uint16) bool { return !IsGREASE(v) && v < VersionTLS13 })
 
 		echPK, err := hpke.ParseHPKEPublicKey(ech.config.KemID, ech.config.PublicKey)

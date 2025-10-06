@@ -19,6 +19,10 @@ type ECHConfig struct {
 	// offers the dummy ECH extension.
 	Dummy *ECHDummyConfig
 
+	// KeepCipherSuites controls whether to keep non-TLS 1.3 cipher suites
+	// in ClientHelloInner.
+	KeepCipherSuites bool
+
 	// InnerLens will padding to one of HelloLens.
 	// If not set, the padding will be 128 for dummy and the default padding for non-dummy.
 	InnerLens []uint16 // Pre-encryption. If 0, will pick 128 (+16=144)
