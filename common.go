@@ -603,8 +603,13 @@ type Defaults struct {
 	// When true, all secure curves will be sent.
 	AllSecureCurves bool
 
+	// For client:
 	// By default, only the extensions used by the standard library are sent.
-	// When true, all supported extension will be sent.
+	// When true, If features was enabled, the extension will be sent.
+	//
+	// For server:
+	// If features was enabled and offered by client, the extension will be sent.
+	// So this option 
 	AllSupportedExtensions bool
 }
 
@@ -917,7 +922,7 @@ type Config struct {
 	// MaxRecordSize limits the maximum plaintext size of received TLS records, if
 	// supported by the peer. This feature cannot be used with kernel offload.
 	// The value must be greater than 64.
-	// If zero, the record size limit feature will be disabled.
+	// If zero, the largest possible value will be used.
 	MaxRecordSize uint16
 
 	// DynamicRecordSizingDisabled disables adaptive sizing of TLS records.
@@ -965,9 +970,11 @@ type Config struct {
 	// It only works on the client.
 	ShuffleExtensions bool
 
-	// Extensions contains the tls extensions that will be used in client hello.
+	// Extensions contains the tls extensions that will be sent in clientHello, serverHello
+	// and encryptedExtension.
 	// If its nil, the default will be used.
-	// Its can modify tls fingerprint.
+	//
+	// It can add custom extensions or modify clientHello fingerprint.
 	Extensions []Extension
 
 	// KeyLogWriter optionally specifies a destination for TLS master secrets
