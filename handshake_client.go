@@ -321,7 +321,7 @@ CipherSuiteLoop:
 
 	var ech *echClientContext
 	if config.EncryptedClientHelloConfigList == nil {
-		if err := generateAndUpdateOuterECHExtension(c.config.rand(), hello, echConf); err != nil {
+		if err := generateAndUpdateOuterECHExtension(c.config.rand(), hello, echConf.Dummy); err != nil {
 			return nil, nil, nil, err
 		}
 		if err := c.makeClientHelloExtensions(hello, config.extensions()); err != nil {

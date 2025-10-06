@@ -7,8 +7,6 @@ package tls
 import (
 	"reflect"
 	"slices"
-
-	"gitlab.com/go-extension/rand"
 )
 
 type ECHConfig struct {
@@ -23,10 +21,6 @@ type ECHConfig struct {
 	// in ClientHelloInner.
 	KeepCipherSuites bool
 
-	// InnerLens will padding to one of HelloLens.
-	// If not set, the padding will be 128 for dummy and the default padding for non-dummy.
-	InnerLens []uint16 // Pre-encryption. If 0, will pick 128 (+16=144)
-
 	// InnerExtensions defines extensions to ClientHelloInner.
 	InnerExtensions []Extension
 
@@ -35,14 +29,6 @@ type ECHConfig struct {
 
 	// CompressedExtensions defines extensions for extract from outer.
 	CompressedExtensions []Extension
-}
-
-func (config *ECHConfig) innerLen() uint16 {
-	if len(config.InnerLens) <= 0 {
-		return 128
-	}
-
-	return config.InnerLens[rand.Crypto.IntN(len(config.InnerLens))]
 }
 
 func (config *ECHConfig) innerExtensions() []Extension {

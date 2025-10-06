@@ -31,6 +31,7 @@ type ECHCipher struct {
 type ECHDummyConfig struct {
 	ConfigIds    []uint8
 	CipherSuites []ECHCipher
+	InnerLens    []uint16
 }
 
 func (config *ECHDummyConfig) configId() uint8 {
@@ -49,12 +50,20 @@ func (config *ECHDummyConfig) cipherSuite() ECHCipher {
 	return config.CipherSuites[rand.Crypto.IntN(len(config.CipherSuites))]
 }
 
-func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, echConfig *ECHConfig) error {
-	if echConfig.Dummy == nil {
+func (config *ECHDummyConfig) innerLen() uint16 {
+	if len(config.InnerLens) <= 0 {
+		return 128
+	}
+
+	return config.InnerLens[rand.Crypto.IntN(len(config.InnerLens))]
+}
+
+func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, echConfig *ECHDummyConfig) error {
+	if echConfig == nil {
 		return nil
 	}
 
-	suite := echConfig.Dummy.cipherSuite()
+	suite := echConfig.cipherSuite()
 
 	var dummyPublicKey []byte
 	switch suite.KEM {
@@ -87,7 +96,7 @@ func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, e
 		return err
 	}
 
-	outer.encryptedClientHello, err = generateOuterECHExt(echConfig.Dummy.configId(), suite.KDF, suite.AEAD, encapKey, payload)
+	outer.encryptedClientHello, err = generateOuterECHExt(echConfig.configId(), suite.KDF, suite.AEAD, encapKey, payload)
 	if err != nil {
 		return err
 	}
