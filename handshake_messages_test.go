@@ -450,6 +450,7 @@ func (*finishedMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 
 func (*newSessionTicketMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	m := &newSessionTicketMsg{}
+	m.lifetime = rand.Uint32()
 	m.ticket = randomBytes(rand.Intn(4), rand)
 	return reflect.ValueOf(m)
 }
@@ -519,11 +520,11 @@ func (*SessionState) Generate(rand *rand.Rand, size int) reflect.Value {
 		s.maxEarlyData = rand.Uint32()
 		s.alpnClientSetting = randomBytes(rand.Intn(1000), rand)
 		s.alpnServerSetting = randomBytes(rand.Intn(1000), rand)
-		if s.isClient {
-			s.useBy = uint64(rand.Int63())
-		}
 	} else {
 		s.curveID = CurveID(rand.Intn(30000) + 1)
+	}
+	if s.isClient {
+		s.useBy = uint64(rand.Int63())
 	}
 	return reflect.ValueOf(s)
 }

@@ -34,8 +34,8 @@ type clientHandshakeState struct {
 	suite        *cipherSuite
 	finishedHash finishedHash
 	masterSecret []byte
-	session      *SessionState // the session being resumed
-	ticket       []byte        // a fresh ticket received during this handshake
+	session      *SessionState        // the session being resumed
+	ticket       *newSessionTicketMsg // a fresh ticket received during this handshake
 	extensions   []Extension
 }
 
@@ -687,6 +687,12 @@ func (c *Conn) loadSession(outer *clientHelloMsg, ech *echClientContext) (
 			return nil, nil, nil, nil
 		}
 
+		// Check that the session ticket is not expired.
+		if session.useBy != 0 && c.config.time().After(time.Unix(int64(session.useBy), 0)) {
+			c.config.ClientSessionCache.Put(cacheKey, nil)
+			return nil, nil, nil, nil
+		}
+
 		hello.sessionTicket = session.ticket
 		c.config.updateClientHelloPadding(hello, false)
 		return
@@ -1316,7 +1322,7 @@ func (hs *clientHandshakeState) readSessionTicket() error {
 		return unexpectedMessageError(sessionTicketMsg, msg)
 	}
 
-	hs.ticket = sessionTicketMsg.ticket
+	hs.ticket = sessionTicketMsg
 	return nil
 }
 
@@ -1333,7 +1339,10 @@ func (hs *clientHandshakeState) saveSessionTicket() error {
 
 	session := c.sessionState()
 	session.secret = hs.masterSecret
-	session.ticket = hs.ticket
+	session.ticket = hs.ticket.ticket
+	if hs.ticket.lifetime != 0 {
+		session.useBy = uint64(time.Now().Add(time.Duration(hs.ticket.lifetime) * time.Second).Unix())
+	}
 
 	cs := &ClientSessionState{session: session}
 	c.config.ClientSessionCache.Put(cacheKey, cs)

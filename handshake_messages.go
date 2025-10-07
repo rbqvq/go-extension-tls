@@ -2628,7 +2628,8 @@ func (m *certificateVerifyMsg) unmarshal(data []byte) bool {
 }
 
 type newSessionTicketMsg struct {
-	ticket []byte
+	lifetime uint32
+	ticket   []byte
 }
 
 func (m *newSessionTicketMsg) marshal() ([]byte, error) {
@@ -2636,7 +2637,7 @@ func (m *newSessionTicketMsg) marshal() ([]byte, error) {
 	var b cryptobyte.Builder
 	b.AddUint8(typeNewSessionTicket)
 	b.AddUint24LengthPrefixed(func(b *cryptobyte.Builder) {
-		b.AddUint32(0)
+		b.AddUint32(m.lifetime)
 		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 			b.AddBytes(m.ticket)
 		})
@@ -2652,7 +2653,7 @@ func (m *newSessionTicketMsg) unmarshal(data []byte) bool {
 		return false
 	}
 
-	if !s.Skip(4) {
+	if !s.ReadUint32(&m.lifetime) {
 		return false
 	}
 	return readUint16LengthPrefixed(&s, &m.ticket) && s.Empty()

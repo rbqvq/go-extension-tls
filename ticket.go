@@ -48,11 +48,11 @@ type SessionState struct {
 	// 				opaque delegated_credential<1..2^16-1>;
 	// 				opaque alps_client<1..2^16-1>;
 	// 				opaque alps_server<1..2^16-1>;
-	// 			 	select (SessionState.type) {
-	//               	case server: Empty;
-	//               	case client: uint64 use_by;
-	//           	};
 	//			 };
+	//       };
+	//       select (SessionState.type) {
+	//              case server: Empty;
+	//              case client: uint64 use_by;
 	//       };
 	//   } SessionState;
 	//
@@ -97,11 +97,11 @@ type SessionState struct {
 	alpnClientSetting []byte
 	alpnServerSetting []byte
 
-	// Client-side TLS 1.3-only fields.
-	useBy uint64 // seconds since UNIX epoch
-
 	// TLS 1.0–1.2 only fields.
 	curveID CurveID
+
+	// Client-side fields.
+	useBy uint64 // seconds since UNIX epoch
 }
 
 // Bytes encodes the session, including any private fields, so that it can be
@@ -178,11 +178,11 @@ func (s *SessionState) Bytes() ([]byte, error) {
 		b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 			b.AddBytes([]byte(s.alpnServerSetting))
 		})
-		if s.isClient {
-			addUint64(&b, s.useBy)
-		}
 	} else {
 		b.AddUint16(uint16(s.curveID))
+	}
+	if s.isClient {
+		addUint64(&b, s.useBy)
 	}
 	return b.Bytes()
 }
@@ -301,13 +301,13 @@ func ParseSessionState(data []byte) (*SessionState, error) {
 		if !readUint16LengthPrefixed(&s, &ss.alpnServerSetting) {
 			return nil, errors.New("tls: invalid session encoding")
 		}
-		if ss.isClient {
-			if !s.ReadUint64(&ss.useBy) {
-				return nil, errors.New("tls: invalid session encoding")
-			}
-		}
 	} else {
 		if !s.ReadUint16((*uint16)(&ss.curveID)) {
+			return nil, errors.New("tls: invalid session encoding")
+		}
+	}
+	if ss.isClient {
+		if !s.ReadUint64(&ss.useBy) {
 			return nil, errors.New("tls: invalid session encoding")
 		}
 	}
