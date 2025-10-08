@@ -396,6 +396,8 @@ type cbcMode interface {
 	SetIV([]byte)
 }
 
+var errPlaintextAlert = errors.New("tls: client sent a plaintext alert")
+
 // decrypt authenticates and decrypts the record if protection is active at
 // this stage. The returned plaintext might overlap with the input.
 func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
@@ -409,7 +411,7 @@ func (hc *halfConn) decrypt(record []byte) ([]byte, recordType, error) {
 			// If the client (e.g. OpenSSL) does not accept the KeyShare,
 			// they may send the Alert in plaintext.
 			if hc.level == QUICEncryptionLevelHandshake && len(payload) == 2 {
-				return payload, typ, nil
+				return payload, typ, errPlaintextAlert
 			}
 		case recordTypeChangeCipherSpec:
 			// In TLS 1.3, change_cipher_spec messages are to be ignored without being
@@ -1040,9 +1042,14 @@ func (c *Conn) readRawRecord(handshakeState uint32) (typ recordType, data []byte
 	record := c.rawInput.Next(recordHeaderLen + n)
 	data, typ, err = c.decrypt(record)
 	if err != nil {
-		if handshakeState == handshake0RTT {
-			// Skip when server rejected 0RTT
-			return c.readRawRecord(handshakeState)
+		switch err {
+		case errPlaintextAlert:
+			c.in.setErrorLocked(c.sendAlert(alertBadRecordMAC))
+			return typ, data, nil
+		case alertBadRecordMAC:
+			if handshakeState == handshake0RTT {
+				return c.readRawRecord(handshakeState) // Skip decrypt error when server rejected 0-RTT
+			}
 		}
 		err = c.in.setErrorLocked(c.sendAlert(err.(alert)))
 		return
