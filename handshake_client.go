@@ -593,7 +593,10 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 			c.handshakeState.Store(handshake0RTT)
 
 			go func() {
-				c.handshakeErr = handshakeFn()
+				if err := handshakeFn(); err != nil {
+					c.handshakeErr = err
+					c.flush()
+				}
 
 				c.earlyNotify.L.Lock()
 				c.earlyNotify.Broadcast()
