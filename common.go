@@ -626,6 +626,11 @@ type Config struct {
 	// client features require adding them to Extensions manually.
 	Defaults Defaults
 
+	// Behavior is used to control the specific behavior of TLS implementation,
+	// which is used to deeply disguise other implementations.
+	// If not set, the default value is used.
+	Behavior *Behavior
+
 	// Rand provides the source of entropy for nonces and RSA blinding.
 	// If Rand is nil, TLS uses the cryptographic random reader in package
 	// crypto/rand.
@@ -1162,6 +1167,7 @@ func (c *Config) Clone() *Config {
 	defer c.mutex.RUnlock()
 	return &Config{
 		Defaults:                            c.Defaults,
+		Behavior:                            c.Behavior,
 		Rand:                                c.Rand,
 		Time:                                c.Time,
 		Certificates:                        c.Certificates,
@@ -1346,6 +1352,14 @@ func (c *Config) SetSessionTicketKeys(keys [][32]byte) {
 	c.mutex.Lock()
 	c.sessionTicketKeys = newKeys
 	c.mutex.Unlock()
+}
+
+func (c *Config) behavior() *Behavior {
+	if c == nil || c.Behavior == nil {
+		return defaultBehavior
+	}
+
+	return c.Behavior
 }
 
 func (c *Config) rand() io.Reader {

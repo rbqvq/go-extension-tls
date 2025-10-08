@@ -123,6 +123,12 @@ type Conn struct {
 	// handshake, nor deliver application data. Protected by in.Mutex.
 	retryCount int
 
+	// uselessRecordCount counts the number of consecutive non-advancing records
+	// received by Conn.readRecord.
+	uselessRecordCount UselessRecordCount
+	changedCipherTLS13 bool
+	ccsPlaintextTLS13  bool // Indicates whether the changeCipherSpec is plain text.
+
 	// maxEarlyData is the number of bytes of max early data received
 	maxEarlyData uint32
 
@@ -858,6 +864,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 	if typ != recordTypeAlert && typ != recordTypeChangeCipherSpec && len(data) > 0 {
 		// This is a state-advancing message: reset the retry count.
 		c.retryCount = 0
+		c.uselessRecordCount = UselessRecordCount{}
 	}
 
 	// Handshake messages MUST NOT be interleaved with other record types in TLS 1.3.
@@ -873,36 +880,88 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 		if c.quic != nil {
 			return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 		}
+		behavior := c.config.behavior()
 		if len(data) != 2 {
+			if err := behavior.Alert.DecodeResponse; err != 0 {
+				return c.in.setErrorLocked(c.sendAlert(alert(err)))
+			}
 			return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 		}
 		if alert(data[1]) == alertCloseNotify {
 			return c.in.setErrorLocked(io.EOF)
 		}
 		if c.vers == VersionTLS13 {
+			if behavior.Alert.DisableIgnoreUserCanceled {
+				return c.in.setErrorLocked(&net.OpError{Op: "remote error", Err: alert(data[1])})
+			}
+
 			// TLS 1.3 removed warning-level alerts except for alertUserCanceled
 			// (RFC 8446, § 6.1). Since at least one major implementation
 			// (https://bugs.openjdk.org/browse/JDK-8323517) misuses this alert,
 			// many TLS stacks now ignore it outright when seen in a TLS 1.3
 			// handshake (e.g. BoringSSL, NSS, Rustls).
 			if alert(data[1]) == alertUserCanceled {
+				if behavior.Alert.DisableIgnoreFatalUserCanceled && data[0] == alertLevelError {
+					return c.in.setErrorLocked(&net.OpError{Op: "remote error", Err: alert(data[1])})
+				}
+
 				// Like TLS 1.2 alertLevelWarning alerts, we drop the record and retry.
+				c.uselessRecordCount.WarningAlerts++
 				return c.retryReadRecord(expectChangeCipherSpec)
 			}
+
+			if behavior.Alert.LevelCheck {
+				switch data[0] {
+				case alertLevelError:
+				case alertLevelWarning:
+					return c.in.setErrorLocked(c.sendAlert(alertDecodeError))
+				default:
+					if err := behavior.Alert.UnknownResponse; err != 0 {
+						return c.in.setErrorLocked(c.sendAlert(alert(err)))
+					}
+				}
+			}
+
 			return c.in.setErrorLocked(&net.OpError{Op: "remote error", Err: alert(data[1])})
 		}
 		switch data[0] {
 		case alertLevelWarning:
 			// Drop the record on the floor and retry.
+			c.uselessRecordCount.WarningAlerts++
 			return c.retryReadRecord(expectChangeCipherSpec)
 		case alertLevelError:
 			return c.in.setErrorLocked(&net.OpError{Op: "remote error", Err: alert(data[1])})
 		default:
+			if behavior.Alert.UnknownAsWarning {
+				c.uselessRecordCount.WarningAlerts++
+				return c.retryReadRecord(expectChangeCipherSpec)
+			}
+			if err := behavior.Alert.UnknownResponse; err != 0 {
+				return c.in.setErrorLocked(c.sendAlert(alert(err)))
+			}
 			return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 		}
 
 	case recordTypeChangeCipherSpec:
+		behavior := c.config.behavior()
+		if behavior.ChangeCipherSpec.RejectPlaintextAfterEncrypted && c.changedCipherTLS13 && c.ccsPlaintextTLS13 {
+			return c.in.setErrorLocked(c.sendAlert(alertBadRecordMAC))
+		}
+		if behavior.ChangeCipherSpec.RejectAfterEncrypted && c.changedCipherTLS13 {
+			return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+		}
+
 		if len(data) != 1 || data[0] != 1 {
+			if c.vers == VersionTLS13 {
+				if err := behavior.ChangeCipherSpec.DecodeResponseTLS13; err != 0 {
+					return c.in.setErrorLocked(c.sendAlert(alert(err)))
+				}
+			}
+
+			if err := behavior.ChangeCipherSpec.DecodeResponse; err != 0 {
+				return c.in.setErrorLocked(c.sendAlert(alert(err)))
+			}
+
 			return c.in.setErrorLocked(c.sendAlert(alertDecodeError))
 		}
 		// Handshake messages are not allowed to fragment across the CCS.
@@ -915,7 +974,8 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 		// c.vers is still unset. That's not useful though and suspicious if the
 		// server then selects a lower protocol version, so don't allow that.
 		if c.vers == VersionTLS13 {
-			return c.retryReadRecord(expectChangeCipherSpec)
+			c.uselessRecordCount.ChangeCipherSpec++
+			return c.retryReadRecordBehavior(expectChangeCipherSpec, behavior)
 		}
 		if !expectChangeCipherSpec {
 			return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
@@ -931,6 +991,7 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 		// Some OpenSSL servers send empty records in order to randomize the
 		// CBC IV. Ignore a limited number of empty records.
 		if len(data) == 0 {
+			c.uselessRecordCount.Empty++
 			return c.retryReadRecord(expectChangeCipherSpec)
 		}
 
@@ -961,12 +1022,23 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 // retryReadRecord recurs into readRecordOrCCS to drop a non-advancing record, like
 // a warning alert, empty application_data, or a change_cipher_spec in TLS 1.3.
 func (c *Conn) retryReadRecord(expectChangeCipherSpec bool) error {
+	return c.retryReadRecordBehavior(expectChangeCipherSpec, c.config.behavior())
+}
+func (c *Conn) retryReadRecordBehavior(expectChangeCipherSpec bool, behavior *Behavior) error {
 	c.retryCount++
-	if c.retryCount > maxUselessRecords {
-		c.sendAlert(alertUnexpectedMessage)
-		return c.in.setErrorLocked(errors.New("tls: too many ignored records"))
+
+	if check := behavior.CheckUselessRecordsCount; check != nil && !check(c.uselessRecordCount) {
+		goto sendAlert
 	}
+	if behavior.MaxUselessRecords > 0 && c.retryCount > behavior.MaxUselessRecords {
+		goto sendAlert
+	}
+
 	return c.readRecordOrCCS(expectChangeCipherSpec)
+
+sendAlert:
+	c.sendAlert(alertUnexpectedMessage)
+	return c.in.setErrorLocked(errors.New("tls: too many ignored records"))
 }
 
 func (c *Conn) readRawRecord(handshakeState uint32) (typ recordType, data []byte, err error) {
@@ -1007,6 +1079,9 @@ func (c *Conn) readRawRecord(handshakeState uint32) (typ recordType, data []byte
 		// All TLS 1.3 records are expected to have 0x0303 (1.2) after
 		// the initial hello (RFC 8446 Section 5.1).
 		expectedVers = VersionTLS12
+
+		c.changedCipherTLS13 = c.changedCipherTLS13 || typ == recordTypeApplicationData
+		c.ccsPlaintextTLS13 = typ == recordTypeChangeCipherSpec
 	}
 	n := int(hdr[3])<<8 | int(hdr[4])
 	if c.haveVers && vers != expectedVers {
@@ -1834,6 +1909,12 @@ func (c *Conn) CloseWrite() error {
 func (c *Conn) closeNotify() error {
 	c.out.Lock()
 	defer c.out.Unlock()
+
+	behavior := c.config.behavior()
+	if behavior.Alert.DisableCloseNotify {
+		c.SetWriteDeadline(time.Now())
+		return nil
+	}
 
 	if !c.closeNotifySent {
 		// Set a Write Deadline to prevent possibly blocking forever.

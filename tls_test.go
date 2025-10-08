@@ -852,6 +852,8 @@ func TestCloneNonFuncFields(t *testing.T) {
 		switch fn := typ.Field(i).Name; fn {
 		case "Defaults":
 			f.Set(reflect.ValueOf(Defaults{AllSupportedExtensions: true}))
+		case "Behavior":
+			f.Set(reflect.ValueOf(&Behavior{MaxUselessRecords: 2}))
 		case "Rand":
 			f.Set(reflect.ValueOf(io.Reader(os.Stdin)))
 		case "Time", "GetCertificate", "GetConfigForClient", "VerifyPeerCertificate", "VerifyConnection", "GetClientCertificate", "WrapSession", "UnwrapSession", "EncryptedClientHelloRejectionVerify", "GetEncryptedClientHelloKeys", "GetProtoSetting", "ClientHelloPadding":

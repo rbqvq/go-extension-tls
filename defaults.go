@@ -96,6 +96,10 @@ var defaultCipherSuitesTLS13NoAES = []uint16{
 	TLS_SM4_CCM_SM3,
 }
 
+var defaultBehavior = &Behavior{
+	MaxUselessRecords: maxUselessRecords,
+}
+
 var defaultInnerExtensions = []Extension{
 	&ServerNameIndicationExtension{},
 	&SCTExtension{},

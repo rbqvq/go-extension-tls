@@ -66,6 +66,7 @@ type serverHandshakeStateTLS13 struct {
 	trafficSecret                   []byte // client_application_traffic_secret_0
 	transcript                      hash.Hash
 	clientFinished                  []byte
+	sendTicketOnCompleted           bool
 	echContext                      *echServerContext
 
 	maxRecvLimit uint16
@@ -1338,6 +1339,12 @@ func (hs *serverHandshakeStateTLS13) sendSessionTickets() error {
 	if !hs.shouldSendSessionTickets() {
 		return nil
 	}
+
+	behavior := c.config.behavior()
+	if behavior.SendTicketOnCompleted {
+		hs.sendTicketOnCompleted = true
+		return nil
+	}
 	return c.sendSessionTicket(c.config.maxEarlyData(), nil)
 }
 
@@ -1713,6 +1720,13 @@ func (hs *serverHandshakeStateTLS13) readClientFinished() error {
 	}
 
 	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret, hs.maxSentLimit)
+
+	if hs.sendTicketOnCompleted {
+		err := c.sendSessionTicket(c.config.maxEarlyData(), nil)
+		if err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
