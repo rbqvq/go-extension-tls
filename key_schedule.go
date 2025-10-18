@@ -243,7 +243,7 @@ func curveForCurveID(id CurveID) (ecdh.Curve, bool) {
 // generateFFDHEKey returns a PrivateKey that implements Diffie-Hellman
 // according to RFC 7919.
 func generateFFDHEKey(rand io.Reader, curveID CurveID) (*ffdh.PrivateKey, error) {
-	group, ok := curveForGroup(curveID)
+	group, ok := groupForCurveID(curveID)
 	if !ok {
 		return nil, errors.New("tls: internal error: unsupported ffdh group")
 	}
@@ -251,7 +251,7 @@ func generateFFDHEKey(rand io.Reader, curveID CurveID) (*ffdh.PrivateKey, error)
 	return group.GenerateKey(rand)
 }
 
-func curveForGroup(id CurveID) (ffdh.Group, bool) {
+func groupForCurveID(id CurveID) (ffdh.Group, bool) {
 	switch id {
 	case FFDHE2048:
 		return ffdh.FFDHE2048(), true

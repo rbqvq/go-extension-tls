@@ -174,6 +174,9 @@ type ecdheKeyAgreement struct {
 
 func (ka *ecdheKeyAgreement) generateServerKeyExchange(config *Config, cert *Certificate, clientHello *clientHelloMsg, hello *serverHelloMsg) (*serverKeyExchangeMsg, error) {
 	for _, c := range clientHello.supportedCurves {
+		if !isECDHEKeyExchange(c) {
+			continue
+		}
 		if config.supportsCurve(ka.version, c) {
 			ka.curveID = c
 			break

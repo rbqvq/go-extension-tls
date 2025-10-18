@@ -172,6 +172,10 @@ const (
 	X25519Kyber768Draft00 CurveID = 0x6399 // X25519Kyber768Draft00
 )
 
+func isECDHEKeyExchange(curve CurveID) bool {
+	return curve == X25519 || curve == CurveP256 || curve == CurveP384 || curve == CurveP521
+}
+
 func isTLS13OnlyKeyExchange(curve CurveID) bool {
 	return curve == X25519Kyber768Draft00 || curve == X25519MLKEM768
 }
