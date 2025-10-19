@@ -277,6 +277,13 @@ CipherSuiteLoop:
 			}
 			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, ecdhe: ecdhe})
 			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: ecdhe.PublicKey().Bytes()})
+		case CurveSM2:
+			ecdhe, err := keyStorage.generateECDHEKeySM2(config, curveID)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, ecdheSM2: ecdhe})
+			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: ecdhe.PublicKey().Bytes()})
 		case FFDHE2048, FFDHE3072, FFDHE4096, FFDHE6144, FFDHE8192:
 			ffdhe, err := keyStorage.generateFFDHEKey(config, curveID)
 			if err != nil {

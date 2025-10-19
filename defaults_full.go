@@ -16,7 +16,7 @@ func fullCipherSuites(aesGCMPreferred bool) []uint16 {
 }
 
 func fullCurvePreferences() []CurveID {
-	return []CurveID{X25519MLKEM768, X25519Kyber768Draft00, X25519, CurveP256, CurveP384, CurveP521, FFDHE2048, FFDHE3072, FFDHE4096, FFDHE6144, FFDHE8192}
+	return []CurveID{X25519MLKEM768, X25519Kyber768Draft00, X25519, CurveP256, CurveP384, CurveP521, CurveSM2, FFDHE2048, FFDHE3072, FFDHE4096, FFDHE6144, FFDHE8192}
 }
 
 var fullInnerExtensions = []Extension{

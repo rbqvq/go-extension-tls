@@ -440,6 +440,14 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 			}
 			hs.keyShareKeys = []*keySharePrivateKeys{{curveID: curveID, ecdhe: key}}
 			hello.keyShares = []keyShare{{group: curveID, data: key.PublicKey().Bytes()}}
+		case CurveSM2:
+			key, err := generateECDHEKeySM2(c.config.rand(), curveID)
+			if err != nil {
+				c.sendAlert(alertInternalError)
+				return err
+			}
+			hs.keyShareKeys = []*keySharePrivateKeys{{curveID: curveID, ecdheSM2: key}}
+			hello.keyShares = []keyShare{{group: curveID, data: key.PublicKey().Bytes()}}
 		case FFDHE2048, FFDHE3072, FFDHE4096, FFDHE6144, FFDHE8192:
 			key, err := generateFFDHEKey(c.config.rand(), curveID)
 			if err != nil {
@@ -723,6 +731,23 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 		}
 
 		sharedKey, err = keyShareKeys.ecdhe.ECDH(peerKey)
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid server key share")
+		}
+	case CurveSM2:
+		if keyShareKeys.ecdheSM2 == nil {
+			return c.sendAlert(alertInternalError)
+		}
+
+		peerData := hs.serverHello.serverShare.data
+		peerKey, err := keyShareKeys.ecdheSM2.Curve().NewPublicKey(peerData)
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid server key share")
+		}
+
+		sharedKey, err = keyShareKeys.ecdheSM2.ECDH(peerKey)
 		if err != nil {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: invalid server key share")

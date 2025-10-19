@@ -361,6 +361,26 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: invalid client key share")
 		}
+	case CurveSM2:
+		key, err := generateECDHEKeySM2(c.config.rand(), selectedGroup)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+		hs.hello.serverShare = keyShare{group: selectedGroup, data: key.PublicKey().Bytes()}
+
+		peerData := clientKeyShare.data
+		peerKey, err := key.Curve().NewPublicKey(peerData)
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+
+		hs.sharedKey, err = key.ECDH(peerKey)
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
 	case FFDHE2048, FFDHE3072, FFDHE4096, FFDHE6144, FFDHE8192:
 		key, err := generateFFDHEKey(c.config.rand(), selectedGroup)
 		if err != nil {

@@ -13,6 +13,7 @@ import (
 	"hash"
 	"io"
 
+	sm2ecdh "github.com/emmansun/gmsm/ecdh"
 	"gitlab.com/go-extension/ffdh"
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/hkdf"
@@ -126,6 +127,8 @@ type keyStorage struct {
 	ffdhe map[CurveID]*ffdh.PrivateKey
 
 	mlkem *mlkem.DecapsulationKey768
+
+	ecdheSM2 map[CurveID]*sm2ecdh.PrivateKey
 }
 
 func (ks *keyStorage) generateECDHEKey(c *Config, curveID CurveID) (*ecdh.PrivateKey, error) {
@@ -192,11 +195,36 @@ func (ks *keyStorage) generateMLKEM768(c *Config) (*mlkem.DecapsulationKey768, e
 	return mlkem, nil
 }
 
+func (ks *keyStorage) generateECDHEKeySM2(c *Config, curveID CurveID) (*sm2ecdh.PrivateKey, error) {
+	if c.IndependentlyHybridKeyShare {
+		return generateECDHEKeySM2(c.rand(), curveID)
+	}
+
+	if ks.ecdheSM2 == nil {
+		ks.ecdheSM2 = make(map[CurveID]*sm2ecdh.PrivateKey)
+	} else {
+		ecdhe, ok := ks.ecdheSM2[curveID]
+		if ok {
+			return ecdhe, nil
+		}
+	}
+
+	ecdhe, err := generateECDHEKeySM2(c.rand(), curveID)
+	if err != nil {
+		return nil, err
+	}
+
+	ks.ecdheSM2[curveID] = ecdhe
+	return ecdhe, nil
+}
+
 type keySharePrivateKeys struct {
 	curveID CurveID
 	ecdhe   *ecdh.PrivateKey
 	ffdhe   *ffdh.PrivateKey
 	mlkem   *mlkem.DecapsulationKey768
+
+	ecdheSM2 *sm2ecdh.PrivateKey
 }
 
 func kyberSharedSecret(mlkemSharedSecret, ciphertext []byte) []byte {
@@ -274,4 +302,24 @@ func generateMLKEM768Key(rand io.Reader) (*mlkem.DecapsulationKey768, error) {
 		return nil, err
 	}
 	return mlkem.NewDecapsulationKey768(seed)
+}
+
+// generateECDHEKeySM2 returns a PrivateKey that implements Diffie-Hellman
+// according to RFC 8998.
+func generateECDHEKeySM2(rand io.Reader, curveID CurveID) (*sm2ecdh.PrivateKey, error) {
+	curve, ok := sm2CurveForCurveID(curveID)
+	if !ok {
+		return nil, errors.New("tls: internal error: unsupported curve")
+	}
+
+	return curve.GenerateKey(rand)
+}
+
+func sm2CurveForCurveID(id CurveID) (sm2ecdh.Curve, bool) {
+	switch id {
+	case CurveSM2:
+		return sm2ecdh.P256(), true
+	default:
+		return nil, false
+	}
 }
