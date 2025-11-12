@@ -59,7 +59,7 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 
 	// The server must not select TLS 1.3 in a renegotiation. See RFC 8446,
 	// sections 4.1.2 and 4.1.3.
-	if c.handshakeState.Load() != handshake0RTT && c.handshakes > 0 {
+	if c.handshakeState.Load() != handshakeEarly && c.handshakes > 0 {
 		c.sendAlert(alertProtocolVersion)
 		return errors.New("tls: server selected TLS 1.3 in a renegotiation")
 	}
@@ -180,11 +180,14 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 	if err := hs.readServerFinished(); err != nil {
 		return err
 	}
-	if err := hs.sendClientParameters(); err != nil {
-		return err
-	}
-	if err := hs.sendClientCertificate(); err != nil {
-		return err
+	if !hs.earlyData {
+		if err := hs.doFullHandshake(); err != nil {
+			return err
+		}
+	} else {
+		if err := hs.doEarlyHandshake(); err != nil {
+			return err
+		}
 	}
 	if err := hs.sendClientFinished(); err != nil {
 		return err
@@ -205,6 +208,33 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 		return err
 	}
 	c.handshakeState.Store(handshakeCompleted)
+
+	return nil
+}
+
+func (hs *clientHandshakeStateTLS13) doFullHandshake() error {
+	c := hs.c
+
+	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret, hs.maxSentLimit)
+
+	if err := hs.sendClientParameters(); err != nil {
+		return err
+	}
+	if err := hs.sendClientCertificate(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (hs *clientHandshakeStateTLS13) doEarlyHandshake() error {
+	c := hs.c
+
+	if err := hs.sendClientEndOfEarly(); err != nil {
+		return err
+	}
+
+	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret, hs.maxSentLimit)
 
 	return nil
 }
@@ -469,15 +499,7 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 
 	if hello.earlyData {
 		hello.earlyData = false
-
-		if c.quic == nil {
-			c.earlyNotify.L.Lock()
-			c.earlyDataEOF = true
-			c.earlyNotify.L.Unlock()
-		} else {
-			c.quicRejectedEarlyData()
-		}
-		c.out.cipher = nil
+		c.rejectedEarlyData()
 	}
 
 	echConf := c.config.echConfig()
@@ -790,9 +812,7 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 
 	clientSecret := hs.suite.deriveSecret(handshakeSecret,
 		clientHandshakeTrafficLabel, hs.transcript)
-	if c.quic != nil {
-		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, clientSecret, maxPlaintext+1)
-	}
+	hs.handshakeSecret = clientSecret
 	serverSecret := hs.suite.deriveSecret(handshakeSecret,
 		serverHandshakeTrafficLabel, hs.transcript)
 
@@ -817,7 +837,6 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 		return err
 	}
 
-	hs.handshakeSecret = clientSecret
 	hs.masterSecret = hs.suite.extract(nil,
 		hs.suite.deriveSecret(handshakeSecret, "derived", nil))
 
@@ -911,8 +930,8 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 		c.sendAlert(alertUnsupportedExtension)
 		return errors.New("tls: server sent an unexpected early_data extension")
 	}
-	if hs.hello.earlyData && !encryptedExtensions.earlyData && c.quic != nil {
-		c.quicRejectedEarlyData()
+	if hs.hello.earlyData && !encryptedExtensions.earlyData {
+		c.rejectedEarlyData()
 	}
 	if encryptedExtensions.earlyData {
 		if hs.session.cipherSuite != c.cipherSuite {
@@ -1366,20 +1385,23 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 	return nil
 }
 
-func (hs *clientHandshakeStateTLS13) sendClientFinished() error {
+func (hs *clientHandshakeStateTLS13) sendClientEndOfEarly() error {
 	c := hs.c
 
-	if c.quic == nil && hs.earlyData {
-		c.earlyNotify.L.Lock()
-		c.earlyDataEOF = true
-		c.earlyNotify.L.Unlock()
-
-		if _, err := hs.c.writeHandshakeRecord(&endOfEarlyDataMsg{}, hs.transcript); err != nil {
-			return err
-		}
-
-		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret, hs.maxSentLimit)
+	if c.quic != nil {
+		return nil
 	}
+
+	c.earlyData.Done()
+	if _, err := hs.c.writeHandshakeRecord(&endOfEarlyDataMsg{}, hs.transcript); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (hs *clientHandshakeStateTLS13) sendClientFinished() error {
+	c := hs.c
 
 	finished := &finishedMsg{
 		verifyData: hs.suite.finishedHash(c.out.trafficSecret, hs.transcript),
@@ -1408,25 +1430,20 @@ func (hs *clientHandshakeStateTLS13) sendClientFinished() error {
 
 func (hs *clientHandshakeStateTLS13) sendClientData() error {
 	c := hs.c
-	defer c.earlyData.Reset()
 
-	if c.earlyData.Len() == 0 {
+	if hs.earlyData {
+		return nil
+	}
+
+	data := c.earlyData.Data()
+	if len(data) == 0 {
 		return nil
 	}
 
 	c.out.Lock()
 	defer c.out.Unlock()
 
-	if !hs.earlyData {
-		_, err := c.writeRecordLocked(recordTypeApplicationData, c.earlyData.Bytes())
-		return err
-	}
-
-	if c.earlyData.Len() <= int(c.maxEarlyData) {
-		return nil
-	}
-
-	_, err := c.writeRecordLocked(recordTypeApplicationData, c.earlyData.Bytes()[c.maxEarlyData:])
+	_, err := c.writeRecordLocked(recordTypeApplicationData, data)
 	return err
 }
 
@@ -1436,7 +1453,7 @@ func (c *Conn) handleNewSessionTicket(msg *newSessionTicketMsgTLS13) error {
 		return errors.New("tls: received new session ticket from a client")
 	}
 
-	if c.handshakeState.Load() == handshake0RTT {
+	if c.handshakeState.Load() == handshakeEarly {
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(&endOfEarlyDataMsg{}, msg)
 	}

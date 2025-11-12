@@ -431,6 +431,18 @@ func (c *Conn) WriteTo(w io.Writer) (int64, error) {
 	}
 
 	var written int64
+	if c.earlyData.Len() > 0 {
+		n, err := c.earlyData.WriteTo(w)
+		if c.earlyData.Len() == 0 {
+			c.earlyData.Reset()
+		}
+		written += n
+
+		if err != nil {
+			return written, err
+		}
+	}
+
 	if c.input.Len() > 0 {
 		n, err := c.input.WriteTo(w)
 		written += n

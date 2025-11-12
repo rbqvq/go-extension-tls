@@ -18,9 +18,9 @@ import (
 	"hash"
 	"io"
 	"net"
+	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"gitlab.com/go-extension/hpke"
@@ -568,10 +568,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		}
 
 		if c.quic == nil {
-			c.vers = VersionTLS13
-			c.in.version = VersionTLS13
-			c.out.version = VersionTLS13
-
+			c.initClientEarlyData(session.maxEarlyData)
 			if err := c.writeChangeCipherRecord(); err != nil {
 				return err
 			}
@@ -584,9 +581,8 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		}
 
 		earlyTrafficSecret := suite.deriveSecret(earlySecret, clientEarlyTrafficLabel, transcript)
-		if c.quic == nil {
-			c.out.setTrafficSecret(suite, QUICEncryptionLevelEarly, earlyTrafficSecret, maxPlaintext+1)
-		} else {
+		c.out.setTrafficSecret(suite, QUICEncryptionLevelEarly, earlyTrafficSecret, maxPlaintext+1)
+		if c.quic != nil {
 			c.quicSetWriteSecret(QUICEncryptionLevelEarly, suite.id, earlyTrafficSecret)
 		}
 
@@ -597,17 +593,27 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		}
 
 		if c.quic == nil {
-			c.handshakeState.Store(handshake0RTT)
-
 			go func() {
+				c.in.Lock()
+				defer c.in.Unlock()
+
+				// let caller can write early data.
+				runtime.Gosched()
+
 				if err := handshakeFn(); err != nil {
+					// If we got a handshake failure when resuming a session with early data,
+					// throw away the session ticket to recover.
+					if cacheKey := c.clientSessionCacheKey(); cacheKey != "" {
+						c.config.ClientSessionCache.Put(cacheKey, nil)
+					}
+
 					c.handshakeErr = err
 					c.flush()
 				}
 
-				c.earlyNotify.L.Lock()
-				c.earlyNotify.Broadcast()
-				c.earlyNotify.L.Unlock()
+				c.earlyData.Done()
+				c.earlyData.Reset()
+				c.earlyData.Notify()
 			}()
 
 			return nil
@@ -750,11 +756,6 @@ func (c *Conn) loadSession(outer *clientHelloMsg, ech *echClientContext) (
 		}
 	}
 
-	if c.quic == nil && hello.earlyData {
-		c.earlyNotify = sync.NewCond(&sync.Mutex{})
-		c.maxEarlyData = session.maxEarlyData
-	}
-
 	// Set the pre_shared_key extension. See RFC 8446, Section 4.2.11.1.
 	ticketAge := c.config.time().Sub(time.Unix(int64(session.createdAt), 0))
 	identity := pskIdentity{
@@ -804,12 +805,8 @@ func (c *Conn) pickTLSVersion(serverHello *serverHelloMsg) error {
 func (hs *clientHandshakeState) handshake() error {
 	c := hs.c
 
-	if c.handshakeState.CompareAndSwap(handshake0RTT, handshakeRunning) {
-		c.earlyNotify.L.Lock()
-		c.earlyDataEOF = true
-		c.earlyNotify.L.Unlock()
-
-		c.out.cipher = nil
+	if c.handshakeState.Load() == handshakeEarly {
+		return errors.New("tls: server selected TLS 1.2 in early handshake")
 	}
 
 	// If we did not load a session (hs.session == nil), but we did set a
@@ -900,9 +897,6 @@ func (hs *clientHandshakeState) handshake() error {
 		return err
 	}
 	if err := hs.saveSessionTicket(); err != nil {
-		return err
-	}
-	if err := hs.sendClientData(); err != nil {
 		return err
 	}
 
@@ -1373,20 +1367,6 @@ func (hs *clientHandshakeState) sendFinished(out []byte) error {
 	}
 	copy(out, finished.verifyData)
 	return nil
-}
-
-func (hs *clientHandshakeState) sendClientData() error {
-	c := hs.c
-	defer c.earlyData.Reset()
-
-	if c.earlyData.Len() == 0 {
-		return nil
-	}
-
-	c.out.Lock()
-	defer c.out.Unlock()
-	_, err := c.writeRecordLocked(recordTypeApplicationData, c.earlyData.Bytes())
-	return err
 }
 
 // defaultMaxRSAKeySize is the maximum RSA key size in bits that we are willing
