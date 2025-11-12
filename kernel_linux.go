@@ -18,6 +18,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type platform struct {
+	spliceError error // for RX only
+}
+
 const (
 	_TLS_TX               = 1
 	_TLS_RX               = 2
@@ -296,8 +300,8 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 			return true
 		}
 
-		if c.spliceError != nil {
-			err = c.spliceError
+		if c.platform.spliceError != nil {
+			err = c.platform.spliceError
 			return true
 		}
 
@@ -324,7 +328,7 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (recordType, []byte, erro
 		return 0, nil, c.in.setErrorLocked(io.EOF)
 	}
 
-	c.spliceError = nil
+	c.platform.spliceError = nil
 
 	if cmsg.Level == unix.SOL_TLS && cmsg.Type == _TLS_GET_RECORD_TYPE {
 		typ := recordType(buffer[unix.CmsgLen(0)])
@@ -446,7 +450,7 @@ func (c *Conn) WriteTo(w io.Writer) (int64, error) {
 			// If first call spliceDrain return -EINVAL (bad protocol version), it will fallback to generic copy and never reached here
 			// call recvmsg() will return -EAGAIN, then generic copy will blocking until connection close
 
-			c.spliceError = syscall.EINVAL
+			c.platform.spliceError = syscall.EINVAL
 			fallthrough
 		case errors.Is(err, syscall.EIO):
 			// splice receive handshake msg will return -EIO

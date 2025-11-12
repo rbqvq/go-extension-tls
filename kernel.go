@@ -4,14 +4,6 @@
 
 package tls
 
-import (
-	"io"
-)
-
-type wrappedConn struct {
-	io.ReadWriter
-}
-
 type resetup func() error
 
 var nopResetup = func() error {
@@ -19,10 +11,6 @@ var nopResetup = func() error {
 }
 
 type kernelCipher struct{}
-
-func (c *halfConn) useKernel() {
-	c.cipher = new(kernelCipher)
-}
 
 func (c *halfConn) usingKernel() (ok bool) {
 	_, ok = c.cipher.(*kernelCipher)

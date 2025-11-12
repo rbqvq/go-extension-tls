@@ -16,6 +16,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type platform struct{}
+
 const (
 	_TCP_TXTLS_ENABLE = 39 /* TLS framing and encryption for transmit */
 	_TCP_TXTLS_MODE   = 40 /* Transmit TLS mode */

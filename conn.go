@@ -146,8 +146,8 @@ type Conn struct {
 	earlyNotify *sync.Cond
 
 	// kernel tls
-	rawConn     syscall.RawConn
-	spliceError error // for RX only
+	rawConn  syscall.RawConn
+	platform platform
 
 	// activeCall indicates whether Close has been call in the low bit.
 	// the rest of the bits are the number of goroutines in Conn.Write.
