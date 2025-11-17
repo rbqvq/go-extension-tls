@@ -159,18 +159,24 @@ const (
 type CurveID uint16
 
 const (
-	CurveP256             CurveID = 23
-	CurveP384             CurveID = 24
-	CurveP521             CurveID = 25
-	X25519                CurveID = 29
-	CurveSM2              CurveID = 41
-	FFDHE2048             CurveID = 256
-	FFDHE3072             CurveID = 257
-	FFDHE4096             CurveID = 258
-	FFDHE6144             CurveID = 259
-	FFDHE8192             CurveID = 260
-	X25519MLKEM768        CurveID = 4588
-	X25519Kyber768Draft00 CurveID = 0x6399 // X25519Kyber768Draft00
+	CurveP256                CurveID = 23
+	CurveP384                CurveID = 24
+	CurveP521                CurveID = 25
+	X25519                   CurveID = 29
+	CurveSM2                 CurveID = 41
+	FFDHE2048                CurveID = 256
+	FFDHE3072                CurveID = 257
+	FFDHE4096                CurveID = 258
+	FFDHE6144                CurveID = 259
+	FFDHE8192                CurveID = 260
+	MLKEM768                 CurveID = 513
+	MLKEM1024                CurveID = 514
+	CurveP256MLKEM768        CurveID = 4587
+	X25519MLKEM768           CurveID = 4588
+	CurveP384MLKEM1024       CurveID = 4589
+	CurveSM2MLKEM768         CurveID = 4590
+	X25519Kyber768Draft00    CurveID = 25497
+	CurveP256Kyber768Draft00 CurveID = 25498
 )
 
 func isECDHEKeyExchange(curve CurveID) bool {
@@ -178,11 +184,23 @@ func isECDHEKeyExchange(curve CurveID) bool {
 }
 
 func isTLS13OnlyKeyExchange(curve CurveID) bool {
-	return curve == X25519Kyber768Draft00 || curve == X25519MLKEM768
+	switch curve {
+	case MLKEM768, MLKEM1024,
+		X25519MLKEM768, CurveP256MLKEM768, CurveP384MLKEM1024, CurveSM2MLKEM768,
+		X25519Kyber768Draft00, CurveP256Kyber768Draft00:
+		return true
+	}
+	return false
 }
 
 func isPQKeyExchange(curve CurveID) bool {
-	return curve == X25519Kyber768Draft00 || curve == X25519MLKEM768
+	switch curve {
+	case MLKEM768, MLKEM1024,
+		X25519MLKEM768, CurveP256MLKEM768, CurveP384MLKEM1024, CurveSM2MLKEM768,
+		X25519Kyber768Draft00, CurveP256Kyber768Draft00:
+		return true
+	}
+	return false
 }
 
 // TLS 1.3 Key Share. See RFC 8446, Section 4.2.8.

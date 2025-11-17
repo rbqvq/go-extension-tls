@@ -240,6 +240,24 @@ CipherSuiteLoop:
 	var keyStorage keyStorage
 	for _, curveID := range config.keySharePreferences(maxVersion) {
 		switch curveID {
+		case MLKEM768:
+			mlkem, err := keyStorage.generateMLKEM768(config)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
+
+			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, mlkem768: mlkem})
+			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: mlkemEncapsulationKey})
+		case MLKEM1024:
+			mlkem, err := keyStorage.generateMLKEM1024(config)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
+
+			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, mlkem1024: mlkem})
+			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: mlkemEncapsulationKey})
 		case X25519MLKEM768:
 			ecdhe, err := keyStorage.generateECDHEKey(config, X25519)
 			if err != nil {
@@ -253,14 +271,15 @@ CipherSuiteLoop:
 			}
 			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
 
-			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: X25519MLKEM768, ecdhe: ecdhe, mlkem: mlkem})
-			hello.keyShares = append(hello.keyShares, keyShare{group: X25519MLKEM768, data: append(mlkemEncapsulationKey, x25519EphemeralKey...)})
-		case X25519Kyber768Draft00: // Draft of X25519MLKEM768
-			ecdhe, err := keyStorage.generateECDHEKey(config, X25519)
+			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, ecdhe: ecdhe, mlkem768: mlkem})
+			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: append(mlkemEncapsulationKey, x25519EphemeralKey...)})
+		case CurveP256MLKEM768,
+			X25519Kyber768Draft00, CurveP256Kyber768Draft00: // Draft of MLKEM768
+			ecdhe, err := keyStorage.generateECDHEKey(config, curveForHybrid(curveID))
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			x25519EphemeralKey := ecdhe.PublicKey().Bytes()
+			ephemeralKey := ecdhe.PublicKey().Bytes()
 
 			mlkem, err := keyStorage.generateMLKEM768(config)
 			if err != nil {
@@ -268,8 +287,38 @@ CipherSuiteLoop:
 			}
 			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
 
-			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: X25519Kyber768Draft00, ecdhe: ecdhe, mlkem: mlkem})
-			hello.keyShares = append(hello.keyShares, keyShare{group: X25519Kyber768Draft00, data: append(x25519EphemeralKey, mlkemEncapsulationKey...)})
+			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, ecdhe: ecdhe, mlkem768: mlkem})
+			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: append(ephemeralKey, mlkemEncapsulationKey...)})
+		case CurveP384MLKEM1024:
+			ecdhe, err := keyStorage.generateECDHEKey(config, CurveP384)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			ephemeralKey := ecdhe.PublicKey().Bytes()
+
+			mlkem, err := keyStorage.generateMLKEM1024(config)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
+
+			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, ecdhe: ecdhe, mlkem1024: mlkem})
+			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: append(ephemeralKey, mlkemEncapsulationKey...)})
+		case CurveSM2MLKEM768:
+			ecdhe, err := keyStorage.generateECDHEKeySM2(config, CurveSM2)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			ephemeralKey := ecdhe.PublicKey().Bytes()
+
+			mlkem, err := keyStorage.generateMLKEM768(config)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			mlkemEncapsulationKey := mlkem.EncapsulationKey().Bytes()
+
+			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, ecdheSM2: ecdhe, mlkem768: mlkem})
+			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: append(ephemeralKey, mlkemEncapsulationKey...)})
 		case X25519, CurveP256, CurveP384, CurveP521:
 			ecdhe, err := keyStorage.generateECDHEKey(config, curveID)
 			if err != nil {

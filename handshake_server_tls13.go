@@ -274,10 +274,24 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	c.curveID = selectedGroup
 
 	switch selectedGroup {
+	case MLKEM768:
+		k, err := mlkem.NewEncapsulationKey768(clientKeyShare.data)
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+		hs.sharedKey, hs.hello.serverShare.data = k.Encapsulate()
+	case MLKEM1024:
+		k, err := mlkem.NewEncapsulationKey1024(clientKeyShare.data)
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+		hs.sharedKey, hs.hello.serverShare.data = k.Encapsulate()
 	case X25519MLKEM768:
 		if len(clientKeyShare.data) != mlkem.EncapsulationKeySize768+x25519PublicKeySize {
 			c.sendAlert(alertIllegalParameter)
-			return errors.New("tls: invalid X25519MLKEM768 client key share")
+			return errors.New("tls: invalid client key share")
 		}
 
 		key, err := generateECDHEKey(c.config.rand(), X25519)
@@ -303,7 +317,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 		k, err := mlkem.NewEncapsulationKey768(clientKeyShare.data[:mlkem.EncapsulationKeySize768])
 		if err != nil {
 			c.sendAlert(alertIllegalParameter)
-			return errors.New("tls: invalid X25519MLKEM768 client key share")
+			return errors.New("tls: invalid client key share")
 		}
 		mlkemSharedSecret, ciphertext := k.Encapsulate()
 		// draft-kwiatkowski-tls-ecdhe-mlkem-02, Section 3.1.3: "For
@@ -317,20 +331,20 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 		// encapsulation to the client's encapsulation key, and the server's
 		// ephemeral X25519 share."
 		hs.hello.serverShare.data = append(ciphertext, hs.hello.serverShare.data...)
-	case X25519Kyber768Draft00:
-		if len(clientKeyShare.data) != mlkem.EncapsulationKeySize768+x25519PublicKeySize {
+	case CurveP256MLKEM768:
+		if len(clientKeyShare.data) != p256PublicKeySize+mlkem.EncapsulationKeySize768 {
 			c.sendAlert(alertIllegalParameter)
-			return errors.New("tls: invalid X25519Kyber768Draft00 client key share")
+			return errors.New("tls: invalid client key share")
 		}
 
-		key, err := generateECDHEKey(c.config.rand(), X25519)
+		key, err := generateECDHEKey(c.config.rand(), CurveP256)
 		if err != nil {
 			c.sendAlert(alertInternalError)
 			return err
 		}
 		hs.hello.serverShare = keyShare{group: selectedGroup, data: key.PublicKey().Bytes()}
 
-		peerData := clientKeyShare.data[:x25519PublicKeySize]
+		peerData := clientKeyShare.data[:p256PublicKeySize]
 		peerKey, err := key.Curve().NewPublicKey(peerData)
 		if err != nil {
 			c.sendAlert(alertIllegalParameter)
@@ -343,10 +357,113 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 			return errors.New("tls: invalid client key share")
 		}
 
-		k, err := mlkem.NewEncapsulationKey768(clientKeyShare.data[x25519PublicKeySize:])
+		k, err := mlkem.NewEncapsulationKey768(clientKeyShare.data[p256PublicKeySize:])
 		if err != nil {
 			c.sendAlert(alertIllegalParameter)
-			return errors.New("tls: invalid X25519Kyber768Draft00 client key share")
+			return errors.New("tls: invalid client key share")
+		}
+		mlkemSharedSecret, ciphertext := k.Encapsulate()
+		hs.sharedKey = append(hs.sharedKey, mlkemSharedSecret...)
+		hs.hello.serverShare.data = append(hs.hello.serverShare.data, ciphertext...)
+	case CurveP384MLKEM1024:
+		if len(clientKeyShare.data) != p384PublicKeySize+mlkem.EncapsulationKeySize1024 {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+
+		key, err := generateECDHEKey(c.config.rand(), CurveP384)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+		hs.hello.serverShare = keyShare{group: selectedGroup, data: key.PublicKey().Bytes()}
+
+		peerData := clientKeyShare.data[:p384PublicKeySize]
+		peerKey, err := key.Curve().NewPublicKey(peerData)
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+
+		hs.sharedKey, err = key.ECDH(peerKey)
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+
+		k, err := mlkem.NewEncapsulationKey1024(clientKeyShare.data[p384PublicKeySize:])
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+		mlkemSharedSecret, ciphertext := k.Encapsulate()
+		hs.sharedKey = append(hs.sharedKey, mlkemSharedSecret...)
+		hs.hello.serverShare.data = append(hs.hello.serverShare.data, ciphertext...)
+	case CurveSM2MLKEM768:
+		if len(clientKeyShare.data) != sm2PublicKeySize+mlkem.EncapsulationKeySize768 {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+
+		key, err := generateECDHEKeySM2(c.config.rand(), CurveSM2)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+		hs.hello.serverShare = keyShare{group: selectedGroup, data: key.PublicKey().Bytes()}
+
+		peerData := clientKeyShare.data[:sm2PublicKeySize]
+		peerKey, err := key.Curve().NewPublicKey(peerData)
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+
+		hs.sharedKey, err = key.ECDH(peerKey)
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+
+		k, err := mlkem.NewEncapsulationKey768(clientKeyShare.data[sm2PublicKeySize:])
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+		mlkemSharedSecret, ciphertext := k.Encapsulate()
+		hs.sharedKey = append(hs.sharedKey, mlkemSharedSecret...)
+		hs.hello.serverShare.data = append(hs.hello.serverShare.data, ciphertext...)
+	case X25519Kyber768Draft00, CurveP256Kyber768Draft00:
+		publicKeySize := publicKeySizeForHybrid(selectedGroup)
+		if len(clientKeyShare.data) != publicKeySize+mlkem.EncapsulationKeySize768 {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+
+		key, err := generateECDHEKey(c.config.rand(), curveForHybrid(selectedGroup))
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+		hs.hello.serverShare = keyShare{group: selectedGroup, data: key.PublicKey().Bytes()}
+
+		peerData := clientKeyShare.data[:publicKeySize]
+		peerKey, err := key.Curve().NewPublicKey(peerData)
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+
+		hs.sharedKey, err = key.ECDH(peerKey)
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
+		}
+
+		k, err := mlkem.NewEncapsulationKey768(clientKeyShare.data[publicKeySize:])
+		if err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: invalid client key share")
 		}
 		mlkemSharedSecret, ciphertext := k.Encapsulate()
 		kyberSharedSecret := kyberSharedSecret(mlkemSharedSecret, ciphertext)

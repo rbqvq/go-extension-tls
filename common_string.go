@@ -77,8 +77,14 @@ func _() {
 	_ = x[FFDHE4096-258]
 	_ = x[FFDHE6144-259]
 	_ = x[FFDHE8192-260]
+	_ = x[MLKEM768-513]
+	_ = x[MLKEM1024-514]
+	_ = x[CurveP256MLKEM768-4587]
 	_ = x[X25519MLKEM768-4588]
+	_ = x[CurveP384MLKEM1024-4589]
+	_ = x[CurveSM2MLKEM768-4590]
 	_ = x[X25519Kyber768Draft00-25497]
+	_ = x[CurveP256Kyber768Draft00-25498]
 }
 
 const (
@@ -86,13 +92,17 @@ const (
 	_CurveID_name_1 = "X25519"
 	_CurveID_name_2 = "CurveSM2"
 	_CurveID_name_3 = "FFDHE2048FFDHE3072FFDHE4096FFDHE6144FFDHE8192"
-	_CurveID_name_4 = "X25519MLKEM768"
-	_CurveID_name_5 = "X25519Kyber768Draft00"
+	_CurveID_name_4 = "MLKEM768MLKEM1024"
+	_CurveID_name_5 = "CurveP256MLKEM768X25519MLKEM768CurveP384MLKEM1024CurveSM2MLKEM768"
+	_CurveID_name_6 = "X25519Kyber768Draft00CurveP256Kyber768Draft00"
 )
 
 var (
 	_CurveID_index_0 = [...]uint8{0, 9, 18, 27}
 	_CurveID_index_3 = [...]uint8{0, 9, 18, 27, 36, 45}
+	_CurveID_index_4 = [...]uint8{0, 8, 17}
+	_CurveID_index_5 = [...]uint8{0, 17, 31, 49, 65}
+	_CurveID_index_6 = [...]uint8{0, 21, 45}
 )
 
 func (i CurveID) String() string {
@@ -107,10 +117,15 @@ func (i CurveID) String() string {
 	case 256 <= i && i <= 260:
 		i -= 256
 		return _CurveID_name_3[_CurveID_index_3[i]:_CurveID_index_3[i+1]]
-	case i == 4588:
-		return _CurveID_name_4
-	case i == 25497:
-		return _CurveID_name_5
+	case 513 <= i && i <= 514:
+		i -= 513
+		return _CurveID_name_4[_CurveID_index_4[i]:_CurveID_index_4[i+1]]
+	case 4587 <= i && i <= 4590:
+		i -= 4587
+		return _CurveID_name_5[_CurveID_index_5[i]:_CurveID_index_5[i+1]]
+	case 25497 <= i && i <= 25498:
+		i -= 25497
+		return _CurveID_name_6[_CurveID_index_6[i]:_CurveID_index_6[i+1]]
 	default:
 		return "CurveID(" + strconv.FormatInt(int64(i), 10) + ")"
 	}

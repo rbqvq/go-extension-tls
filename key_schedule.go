@@ -126,7 +126,8 @@ type keyStorage struct {
 	ecdhe map[CurveID]*ecdh.PrivateKey
 	ffdhe map[CurveID]*ffdh.PrivateKey
 
-	mlkem *mlkem.DecapsulationKey768
+	mlkem768  *mlkem.DecapsulationKey768
+	mlkem1024 *mlkem.DecapsulationKey1024
 
 	ecdheSM2 map[CurveID]*sm2ecdh.PrivateKey
 }
@@ -182,8 +183,8 @@ func (ks *keyStorage) generateMLKEM768(c *Config) (*mlkem.DecapsulationKey768, e
 		return generateMLKEM768Key(c.rand())
 	}
 
-	if ks.mlkem != nil {
-		return ks.mlkem, nil
+	if ks.mlkem768 != nil {
+		return ks.mlkem768, nil
 	}
 
 	mlkem, err := generateMLKEM768Key(c.rand())
@@ -191,7 +192,25 @@ func (ks *keyStorage) generateMLKEM768(c *Config) (*mlkem.DecapsulationKey768, e
 		return nil, err
 	}
 
-	ks.mlkem = mlkem
+	ks.mlkem768 = mlkem
+	return mlkem, nil
+}
+
+func (ks *keyStorage) generateMLKEM1024(c *Config) (*mlkem.DecapsulationKey1024, error) {
+	if c.IndependentlyHybridKeyShare {
+		return generateMLKEM1024Key(c.rand())
+	}
+
+	if ks.mlkem1024 != nil {
+		return ks.mlkem1024, nil
+	}
+
+	mlkem, err := generateMLKEM1024Key(c.rand())
+	if err != nil {
+		return nil, err
+	}
+
+	ks.mlkem1024 = mlkem
 	return mlkem, nil
 }
 
@@ -219,10 +238,11 @@ func (ks *keyStorage) generateECDHEKeySM2(c *Config, curveID CurveID) (*sm2ecdh.
 }
 
 type keySharePrivateKeys struct {
-	curveID CurveID
-	ecdhe   *ecdh.PrivateKey
-	ffdhe   *ffdh.PrivateKey
-	mlkem   *mlkem.DecapsulationKey768
+	curveID   CurveID
+	ecdhe     *ecdh.PrivateKey
+	ffdhe     *ffdh.PrivateKey
+	mlkem768  *mlkem.DecapsulationKey768
+	mlkem1024 *mlkem.DecapsulationKey1024
 
 	ecdheSM2 *sm2ecdh.PrivateKey
 }
@@ -240,7 +260,40 @@ func kyberSharedSecret(mlkemSharedSecret, ciphertext []byte) []byte {
 	return out
 }
 
+func curveForHybrid(id CurveID) CurveID {
+	switch id {
+	case X25519MLKEM768, X25519Kyber768Draft00:
+		return X25519
+	case CurveP256MLKEM768, CurveP256Kyber768Draft00:
+		return CurveP256
+	case CurveP384MLKEM1024:
+		return CurveP384
+	case CurveSM2MLKEM768:
+		return CurveSM2
+	default:
+		return id
+	}
+}
+
 const x25519PublicKeySize = 32
+const p256PublicKeySize = 65
+const p384PublicKeySize = 97
+const sm2PublicKeySize = 65
+
+func publicKeySizeForHybrid(id CurveID) int {
+	switch id {
+	case X25519MLKEM768, X25519Kyber768Draft00:
+		return x25519PublicKeySize
+	case CurveP256MLKEM768, CurveP256Kyber768Draft00:
+		return p256PublicKeySize
+	case CurveP384MLKEM1024:
+		return p384PublicKeySize
+	case CurveSM2MLKEM768:
+		return sm2PublicKeySize
+	default:
+		return 0
+	}
+}
 
 // generateECDHEKey returns a PrivateKey that implements Diffie-Hellman
 // according to RFC 8446, Section 4.2.8.2.
@@ -302,6 +355,14 @@ func generateMLKEM768Key(rand io.Reader) (*mlkem.DecapsulationKey768, error) {
 		return nil, err
 	}
 	return mlkem.NewDecapsulationKey768(seed)
+}
+
+func generateMLKEM1024Key(rand io.Reader) (*mlkem.DecapsulationKey1024, error) {
+	seed := make([]byte, mlkem.SeedSize)
+	if _, err := io.ReadFull(rand, seed); err != nil {
+		return nil, err
+	}
+	return mlkem.NewDecapsulationKey1024(seed)
 }
 
 // generateECDHEKeySM2 returns a PrivateKey that implements Diffie-Hellman
