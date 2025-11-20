@@ -1492,7 +1492,6 @@ func (c *Conn) sendSessionTicket(maxEarlyData uint32, extra [][]byte) error {
 
 	state := c.sessionState()
 	state.secret = psk
-	state.maxEarlyData = maxEarlyData
 	state.Extra = extra
 
 	// ticket_age_add is a random 32-bit value. See RFC 8446, section 4.6.1
@@ -1501,6 +1500,10 @@ func (c *Conn) sendSessionTicket(maxEarlyData uint32, extra [][]byte) error {
 		return err
 	}
 	state.ageAdd = binary.LittleEndian.Uint32(ageAdd)
+
+	if !c.didHRR {
+		state.maxEarlyData = maxEarlyData
+	}
 
 	if c.config.WrapSession != nil {
 		var err error
