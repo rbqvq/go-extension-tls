@@ -1064,6 +1064,7 @@ func (hs *serverHandshakeStateTLS13) doHelloRetryRequest(selectedGroup CurveID) 
 		c.sendAlert(alertIllegalParameter)
 		return nil, errors.New("tls: client indicated early data in second ClientHello")
 	}
+	c.earlyData.done = true
 
 	if illegalClientHelloChange(clientHello, hs.clientHello) {
 		c.sendAlert(alertIllegalParameter)
@@ -1555,7 +1556,7 @@ func (hs *serverHandshakeStateTLS13) readClientEarlyData() error {
 		return nil
 	}
 
-	if hs.earlyData {
+	if !hs.clientHello.earlyData {
 		return nil
 	}
 

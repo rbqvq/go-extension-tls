@@ -840,6 +840,10 @@ func (c *Conn) readRecordOrCCS(expectChangeCipherSpec bool) error {
 
 	// Application Data messages are always protected.
 	if c.in.cipher == nil && typ == recordTypeApplicationData {
+		if handshakeState == handshakeEarly && !(c.isClient || c.earlyData.done) {
+			// Skip early data when server did HRR
+			return c.readRecordOrCCS(expectChangeCipherSpec)
+		}
 		return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 	}
 
