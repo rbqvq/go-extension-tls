@@ -171,12 +171,12 @@ const (
 	FFDHE8192                CurveID = 260
 	MLKEM768                 CurveID = 513
 	MLKEM1024                CurveID = 514
-	CurveP256MLKEM768        CurveID = 4587
 	X25519MLKEM768           CurveID = 4588
-	CurveP384MLKEM1024       CurveID = 4589
+	SecP256r1MLKEM768        CurveID = 4587
+	SecP384r1MLKEM1024       CurveID = 4589
 	CurveSM2MLKEM768         CurveID = 4590
 	X25519Kyber768Draft00    CurveID = 25497
-	CurveP256Kyber768Draft00 CurveID = 25498
+	SecP256r1Kyber768Draft00 CurveID = 25498
 )
 
 func isECDHEKeyExchange(curve CurveID) bool {
@@ -186,8 +186,8 @@ func isECDHEKeyExchange(curve CurveID) bool {
 func isTLS13OnlyKeyExchange(curve CurveID) bool {
 	switch curve {
 	case MLKEM768, MLKEM1024,
-		X25519MLKEM768, CurveP256MLKEM768, CurveP384MLKEM1024, CurveSM2MLKEM768,
-		X25519Kyber768Draft00, CurveP256Kyber768Draft00:
+		X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, CurveSM2MLKEM768,
+		X25519Kyber768Draft00, SecP256r1Kyber768Draft00:
 		return true
 	}
 	return false
@@ -196,8 +196,17 @@ func isTLS13OnlyKeyExchange(curve CurveID) bool {
 func isPQKeyExchange(curve CurveID) bool {
 	switch curve {
 	case MLKEM768, MLKEM1024,
-		X25519MLKEM768, CurveP256MLKEM768, CurveP384MLKEM1024, CurveSM2MLKEM768,
-		X25519Kyber768Draft00, CurveP256Kyber768Draft00:
+		X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, CurveSM2MLKEM768,
+		X25519Kyber768Draft00, SecP256r1Kyber768Draft00:
+		return true
+	}
+	return false
+}
+
+func isHybridKeyExchange(curve CurveID) bool {
+	switch curve {
+	case X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, CurveSM2MLKEM768,
+		X25519Kyber768Draft00, SecP256r1Kyber768Draft00:
 		return true
 	}
 	return false
@@ -1519,15 +1528,18 @@ func (c *Config) keySharePreferences(version uint16) []CurveID {
 		keySharePreferences := make([]CurveID, 0, 2)
 		for _, curveID := range supportedCurves {
 			keySharePreferences = append(keySharePreferences, curveID)
-			switch curveID {
-			case X25519MLKEM768, X25519Kyber768Draft00:
-				if slices.Contains(supportedCurves, X25519) {
-					keySharePreferences = append(keySharePreferences, X25519)
-				}
-			default:
-				if IsGREASE(curveID) {
-					continue
-				}
+
+			if IsGREASE(curveID) {
+				continue
+			}
+
+			if !isHybridKeyExchange(curveID) {
+				break
+			}
+
+			curveID = curveForHybrid(curveID)
+			if slices.Contains(supportedCurves, curveID) {
+				keySharePreferences = append(keySharePreferences, curveID)
 			}
 			break
 		}

@@ -264,9 +264,9 @@ func curveForHybrid(id CurveID) CurveID {
 	switch id {
 	case X25519MLKEM768, X25519Kyber768Draft00:
 		return X25519
-	case CurveP256MLKEM768, CurveP256Kyber768Draft00:
+	case SecP256r1MLKEM768, SecP256r1Kyber768Draft00:
 		return CurveP256
-	case CurveP384MLKEM1024:
+	case SecP384r1MLKEM1024:
 		return CurveP384
 	case CurveSM2MLKEM768:
 		return CurveSM2
@@ -284,9 +284,9 @@ func publicKeySizeForHybrid(id CurveID) int {
 	switch id {
 	case X25519MLKEM768, X25519Kyber768Draft00:
 		return x25519PublicKeySize
-	case CurveP256MLKEM768, CurveP256Kyber768Draft00:
+	case SecP256r1MLKEM768, SecP256r1Kyber768Draft00:
 		return p256PublicKeySize
-	case CurveP384MLKEM1024:
+	case SecP384r1MLKEM1024:
 		return p384PublicKeySize
 	case CurveSM2MLKEM768:
 		return sm2PublicKeySize

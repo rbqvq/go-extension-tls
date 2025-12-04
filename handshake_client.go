@@ -273,8 +273,8 @@ CipherSuiteLoop:
 
 			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, ecdhe: ecdhe, mlkem768: mlkem})
 			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: append(mlkemEncapsulationKey, x25519EphemeralKey...)})
-		case CurveP256MLKEM768,
-			X25519Kyber768Draft00, CurveP256Kyber768Draft00: // Draft of MLKEM768
+		case SecP256r1MLKEM768,
+			X25519Kyber768Draft00, SecP256r1Kyber768Draft00: // Draft of MLKEM768
 			ecdhe, err := keyStorage.generateECDHEKey(config, curveForHybrid(curveID))
 			if err != nil {
 				return nil, nil, nil, err
@@ -289,7 +289,7 @@ CipherSuiteLoop:
 
 			keyShareKeys = append(keyShareKeys, &keySharePrivateKeys{curveID: curveID, ecdhe: ecdhe, mlkem768: mlkem})
 			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: append(ephemeralKey, mlkemEncapsulationKey...)})
-		case CurveP384MLKEM1024:
+		case SecP384r1MLKEM1024:
 			ecdhe, err := keyStorage.generateECDHEKey(config, CurveP384)
 			if err != nil {
 				return nil, nil, nil, err
@@ -611,9 +611,9 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 	}
 
 	if hello.earlyData {
-		hello := hello
+		transcriptHello := hello
 		if ech != nil {
-			hello = ech.innerHello
+			transcriptHello = ech.innerHello
 		}
 
 		if c.quic == nil {
@@ -625,7 +625,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 
 		suite := cipherSuiteTLS13ByID(session.cipherSuite)
 		transcript := suite.hash.New()
-		if err := transcriptMsg(hello, transcript); err != nil {
+		if err := transcriptMsg(transcriptHello, transcript); err != nil {
 			return err
 		}
 
@@ -635,7 +635,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 			c.quicSetWriteSecret(QUICEncryptionLevelEarly, suite.id, earlyTrafficSecret)
 		}
 
-		err = c.config.writeKeyLog(keyLogLabelClientEarly, hello.random, earlyTrafficSecret)
+		err = c.config.writeKeyLog(keyLogLabelClientEarly, transcriptHello.random, earlyTrafficSecret)
 		if err != nil {
 			c.sendAlert(alertInternalError)
 			return err

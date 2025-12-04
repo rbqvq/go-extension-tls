@@ -465,8 +465,8 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 
 			hs.keyShareKeys = []*keySharePrivateKeys{{curveID: curveID, ecdhe: key, mlkem768: mlkem}}
 			hello.keyShares = []keyShare{{group: curveID, data: append(mlkemEncapsulationKey, x25519EphemeralKey...)}}
-		case CurveP256MLKEM768,
-			X25519Kyber768Draft00, CurveP256Kyber768Draft00:
+		case SecP256r1MLKEM768,
+			X25519Kyber768Draft00, SecP256r1Kyber768Draft00:
 			key, err := generateECDHEKey(c.config.rand(), curveForHybrid(curveID))
 			if err != nil {
 				c.sendAlert(alertInternalError)
@@ -483,7 +483,7 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 
 			hs.keyShareKeys = []*keySharePrivateKeys{{curveID: curveID, ecdhe: key, mlkem768: mlkem}}
 			hello.keyShares = append(hello.keyShares, keyShare{group: curveID, data: append(ephemeralKey, mlkemEncapsulationKey...)})
-		case CurveP384MLKEM1024:
+		case SecP384r1MLKEM1024:
 			key, err := generateECDHEKey(c.config.rand(), CurveP384)
 			if err != nil {
 				c.sendAlert(alertInternalError)
@@ -790,7 +790,7 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 			return errors.New("tls: invalid server key share")
 		}
 		sharedKey = append(mlkemShared, sharedKey...)
-	case CurveP256MLKEM768:
+	case SecP256r1MLKEM768:
 		if keyShareKeys.mlkem768 == nil || keyShareKeys.ecdhe == nil {
 			return c.sendAlert(alertInternalError)
 		}
@@ -820,7 +820,7 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 			return errors.New("tls: invalid server key share")
 		}
 		sharedKey = append(sharedKey, mlkemShared...)
-	case CurveP384MLKEM1024:
+	case SecP384r1MLKEM1024:
 		if keyShareKeys.mlkem1024 == nil || keyShareKeys.ecdhe == nil {
 			return c.sendAlert(alertInternalError)
 		}
@@ -880,7 +880,7 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 			return errors.New("tls: invalid server key share")
 		}
 		sharedKey = append(sharedKey, mlkemShared...)
-	case X25519Kyber768Draft00, CurveP256Kyber768Draft00:
+	case X25519Kyber768Draft00, SecP256r1Kyber768Draft00:
 		if keyShareKeys.mlkem768 == nil || keyShareKeys.ecdhe == nil {
 			return c.sendAlert(alertInternalError)
 		}

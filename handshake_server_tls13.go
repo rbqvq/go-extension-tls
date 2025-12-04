@@ -331,7 +331,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 		// encapsulation to the client's encapsulation key, and the server's
 		// ephemeral X25519 share."
 		hs.hello.serverShare.data = append(ciphertext, hs.hello.serverShare.data...)
-	case CurveP256MLKEM768:
+	case SecP256r1MLKEM768:
 		if len(clientKeyShare.data) != p256PublicKeySize+mlkem.EncapsulationKeySize768 {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: invalid client key share")
@@ -365,7 +365,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 		mlkemSharedSecret, ciphertext := k.Encapsulate()
 		hs.sharedKey = append(hs.sharedKey, mlkemSharedSecret...)
 		hs.hello.serverShare.data = append(hs.hello.serverShare.data, ciphertext...)
-	case CurveP384MLKEM1024:
+	case SecP384r1MLKEM1024:
 		if len(clientKeyShare.data) != p384PublicKeySize+mlkem.EncapsulationKeySize1024 {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: invalid client key share")
@@ -433,7 +433,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 		mlkemSharedSecret, ciphertext := k.Encapsulate()
 		hs.sharedKey = append(hs.sharedKey, mlkemSharedSecret...)
 		hs.hello.serverShare.data = append(hs.hello.serverShare.data, ciphertext...)
-	case X25519Kyber768Draft00, CurveP256Kyber768Draft00:
+	case X25519Kyber768Draft00, SecP256r1Kyber768Draft00:
 		publicKeySize := publicKeySizeForHybrid(selectedGroup)
 		if len(clientKeyShare.data) != publicKeySize+mlkem.EncapsulationKeySize768 {
 			c.sendAlert(alertIllegalParameter)
