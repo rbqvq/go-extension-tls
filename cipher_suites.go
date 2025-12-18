@@ -21,8 +21,8 @@ import (
 	"golang.org/x/sys/cpu"
 
 	"github.com/RyuaNerin/go-krypto/aria"
+	"github.com/dgryski/go-camellia"
 	"github.com/emmansun/gmsm/sm4"
-	"github.com/pedroalbanese/camellia"
 	ccm "gitlab.com/go-extension/aes-ccm"
 	ehash "gitlab.com/go-extension/hash"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -673,7 +673,7 @@ func cipherARIA(key, iv []byte, isRead bool) any {
 }
 
 func cipherCAMELLIA(key, iv []byte, isRead bool) any {
-	block, _ := camellia.NewCipher(key)
+	block, _ := camellia.New(key)
 	if isRead {
 		return cipher.NewCBCDecrypter(block, iv)
 	}
@@ -844,7 +844,7 @@ func aeadCAMELLIAGCM(key, noncePrefix []byte) aead {
 	if len(noncePrefix) != noncePrefixLength {
 		panic("tls: internal error: wrong nonce length")
 	}
-	aes, err := camellia.NewCipher(key)
+	aes, err := camellia.New(key)
 	if err != nil {
 		panic(err)
 	}
