@@ -1529,7 +1529,7 @@ func (c *Conn) sendSessionTicket(maxEarlyData uint32, extra [][]byte) error {
 	// zero because we only ever send one ticket per connection.
 	m.nonce = nil
 
-	m.maxEarlyData = maxEarlyData
+	m.maxEarlyData = state.maxEarlyData
 
 	if _, err := c.writeHandshakeRecord(m, nil); err != nil {
 		return err
