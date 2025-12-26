@@ -333,6 +333,9 @@ func (c *Conn) ReadFrom(r io.Reader) (int64, error) {
 // FreeBSD does not implement WriteTo.
 // Record type are discarded on read calls instead of returning an error like on Linux.
 // This can cause control and data messages to be mixed up.
+func (c *Conn) WriteTo(w io.Writer) (int64, error) {
+	return c.writeTo(w)
+}
 
 //go:linkname recvmsg golang.org/x/sys/unix.recvmsg
 func recvmsg(fd int, msg *unix.Msghdr, flags int) (n int, err error)

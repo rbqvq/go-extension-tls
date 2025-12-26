@@ -425,7 +425,7 @@ func (c *Conn) WriteTo(w io.Writer) (int64, error) {
 
 	if !c.in.usingKernel() {
 		c.in.Unlock()
-		n, err := io.Copy(w, &wrappedConn{c})
+		n, err := c.writeTo(w)
 		c.in.Lock()
 		return n, err
 	}

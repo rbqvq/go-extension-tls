@@ -1798,6 +1798,53 @@ func (c *Conn) Read(b []byte) (int, error) {
 	return n, nil
 }
 
+// writeTo reads data from the connection and directly write to writer.
+func (c *Conn) writeTo(w io.Writer) (int64, error) {
+	if err := c.Handshake(); err != nil {
+		return 0, err
+	}
+
+	if c.handshakeState.Load() == handshakeEarly {
+		if err := c.waitEarlyHandshake(); err != nil {
+			return 0, err
+		}
+	}
+
+	c.in.Lock()
+	defer c.in.Unlock()
+
+	var written int64
+	if c.earlyData.Len() > 0 {
+		n, err := c.earlyData.WriteTo(w)
+		written += n
+
+		if c.earlyData.Len() == 0 {
+			c.earlyData.Reset()
+		}
+
+		if err != nil {
+			return written, err
+		}
+	}
+
+	for {
+		n, err := c.input.WriteTo(w)
+		written += n
+		if err != nil {
+			return written, err
+		}
+
+		if err := c.readRecord(); err != nil {
+			return written, err
+		}
+		for c.hand.Len() > 0 {
+			if err := c.handlePostHandshakeMessage(); err != nil {
+				return written, err
+			}
+		}
+	}
+}
+
 // Close closes the connection.
 func (c *Conn) Close() error {
 	// Interlock with Conn.Write above.

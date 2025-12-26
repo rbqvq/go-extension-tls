@@ -6,6 +6,8 @@
 
 package tls
 
+import "io"
+
 type platform struct{}
 
 func (c *Conn) setup() error {
@@ -26,4 +28,8 @@ func (c *Conn) readKernelRecord(handshakeState uint32) (typ recordType, data []b
 
 func (c *Conn) writeKernelRecord(typ recordType, data []byte) (n int, err error) {
 	panic("not implement")
+}
+
+func (c *Conn) WriteTo(w io.Writer) (int64, error) {
+	return c.writeTo(w)
 }
