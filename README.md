@@ -1,6 +1,6 @@
 # Transport Layer Security (TLS)
 
-This repository is an extension of the golang standard library [crypto/go](https://pkg.go.dev/crypto/go)
+This repository is an extension of the golang standard library [crypto/tls](https://pkg.go.dev/crypto/tls)
 
 # Features
 
