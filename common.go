@@ -753,9 +753,6 @@ type Config struct {
 	// rawCerts may be empty on the server if ClientAuth is RequestClientCert or
 	// VerifyClientCertIfGiven.
 	//
-	// This callback is not invoked on resumed connections, as certificates are
-	// not re-verified on resumption.
-	//
 	// verifiedChains and its contents should not be modified.
 	VerifyPeerCertificate func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error
 

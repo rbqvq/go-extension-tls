@@ -671,25 +671,7 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 		// PSK connections don't re-establish client certificates, but carry
 		// them over in the session ticket. Ensure the presence of client certs
 		// in the ticket is consistent with the configured requirements.
-		sessionHasClientCerts := len(sessionState.peerCertificates) != 0
-		needClientCerts := requiresClientCert(c.config.ClientAuth)
-		if needClientCerts && !sessionHasClientCerts {
-			continue
-		}
-		if sessionHasClientCerts && c.config.ClientAuth == NoClientCert {
-			continue
-		}
-		if sessionHasClientCerts && c.config.time().After(sessionState.peerCertificates[0].NotAfter) {
-			continue
-		}
-		if sessionHasClientCerts && c.config.ClientAuth >= VerifyClientCertIfGiven &&
-			len(sessionState.verifiedChains) == 0 {
-			continue
-		}
-		if sessionState.verifiedDC != nil && !sessionHasClientCerts {
-			continue
-		}
-		if sessionState.verifiedDC != nil && c.config.time().After(sessionState.peerCertificates[0].NotBefore.Add(sessionState.verifiedDC.Credential.ValidTime)) {
+		if !c.checkCertsFromClientResumption(sessionState) {
 			continue
 		}
 
@@ -720,11 +702,6 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 		}
 
 		c.didResume = true
-		c.peerCertificates = sessionState.peerCertificates
-		c.ocspResponse = sessionState.ocspResponse
-		c.scts = sessionState.scts
-		c.verifiedChains = sessionState.verifiedChains
-
 		hs.hello.selectedIdentityPresent = true
 		hs.hello.selectedIdentity = uint16(i)
 		hs.usingPSK = true
@@ -759,11 +736,11 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 			return err
 		}
 		earlyTrafficSecret := hs.suite.deriveSecret(hs.earlySecret, clientEarlyTrafficLabel, transcript)
-		if c.quic == nil {
-			c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelEarly, earlyTrafficSecret, maxPlaintext+1)
-		} else {
-			c.quicSetReadSecret(QUICEncryptionLevelEarly, hs.suite.id, earlyTrafficSecret)
+		err = c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelEarly, earlyTrafficSecret, maxPlaintext+1)
+		if err != nil {
+			return err
 		}
+
 		err = c.config.writeKeyLog(keyLogLabelClientEarly, hs.clientHello.random, earlyTrafficSecret)
 		if err != nil {
 			c.sendAlert(alertInternalError)
@@ -782,7 +759,9 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 func (hs *serverHandshakeStateTLS13) doFullHandshake() error {
 	c := hs.c
 
-	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.clientHandshakeSecret, hs.maxRecvLimit)
+	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.clientHandshakeSecret, hs.maxRecvLimit); err != nil {
+		return err
+	}
 
 	if err := hs.readClientEarlyData(); err != nil {
 		return err
@@ -807,7 +786,9 @@ func (hs *serverHandshakeStateTLS13) doFullHandshake() error {
 func (hs *serverHandshakeStateTLS13) doEarlyHandshake() error {
 	c := hs.c
 
-	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.clientHandshakeSecret, hs.maxRecvLimit)
+	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.clientHandshakeSecret, hs.maxRecvLimit); err != nil {
+		return err
+	}
 
 	if err := hs.readClientFinished(); err != nil {
 		return err
@@ -926,6 +907,14 @@ func (hs *serverHandshakeStateTLS13) sendDummyChangeCipherSpec() error {
 
 func (hs *serverHandshakeStateTLS13) doHelloRetryRequest(selectedGroup CurveID) (*keyShare, error) {
 	c := hs.c
+
+	// Make sure the client didn't send extra handshake messages alongside
+	// their initial client_hello. If they sent two client_hello messages,
+	// we will consume the second before they respond to the server_hello.
+	if c.hand.Len() != 0 {
+		c.sendAlert(alertUnexpectedMessage)
+		return nil, errors.New("tls: handshake buffer not empty before HelloRetryRequest")
+	}
 
 	// The first ClientHello gets double-hashed into the transcript upon a
 	// HelloRetryRequest. See RFC 8446, Section 4.4.1.
@@ -1181,20 +1170,12 @@ func (hs *serverHandshakeStateTLS13) sendServerParameters() error {
 	hs.handshakeSecret = hs.suite.extract(hs.sharedKey,
 		hs.suite.deriveSecret(earlySecret, "derived", nil))
 
+	serverSecret := hs.suite.deriveSecret(hs.handshakeSecret,
+		serverHandshakeTrafficLabel, hs.transcript)
+	c.setWriteTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret, hs.maxSentLimit)
 	clientSecret := hs.suite.deriveSecret(hs.handshakeSecret,
 		clientHandshakeTrafficLabel, hs.transcript)
 	hs.clientHandshakeSecret = clientSecret
-	serverSecret := hs.suite.deriveSecret(hs.handshakeSecret,
-		serverHandshakeTrafficLabel, hs.transcript)
-	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret, hs.maxSentLimit)
-
-	if c.quic != nil {
-		if c.hand.Len() != 0 {
-			c.sendAlert(alertUnexpectedMessage)
-		}
-		c.quicSetWriteSecret(QUICEncryptionLevelHandshake, hs.suite.id, serverSecret)
-		c.quicSetReadSecret(QUICEncryptionLevelHandshake, hs.suite.id, clientSecret)
-	}
 
 	err := c.config.writeKeyLog(keyLogLabelClientHandshake, hs.clientHello.random, clientSecret)
 	if err != nil {
@@ -1396,15 +1377,7 @@ func (hs *serverHandshakeStateTLS13) sendServerFinished() error {
 		clientApplicationTrafficLabel, hs.transcript)
 	serverSecret := hs.suite.deriveSecret(hs.masterSecret,
 		serverApplicationTrafficLabel, hs.transcript)
-	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, serverSecret, hs.maxSentLimit)
-
-	if c.quic != nil {
-		if c.hand.Len() != 0 {
-			// TODO: Handle this in setTrafficSecret?
-			c.sendAlert(alertUnexpectedMessage)
-		}
-		c.quicSetWriteSecret(QUICEncryptionLevelApplication, hs.suite.id, serverSecret)
-	}
+	c.setWriteTrafficSecret(hs.suite, QUICEncryptionLevelApplication, serverSecret, hs.maxSentLimit)
 
 	err := c.config.writeKeyLog(keyLogLabelClientTraffic, hs.clientHello.random, hs.trafficSecret)
 	if err != nil {
@@ -1682,6 +1655,12 @@ func (hs *serverHandshakeStateTLS13) verifyClientDelegatedCredential(delegatedCr
 func (hs *serverHandshakeStateTLS13) readClientCertificate() error {
 	c := hs.c
 
+	if hs.usingPSK {
+		// VerifyConnection is already being processed by checkCertsFromClientResumption from
+		// checkForResumption.
+		return nil
+	}
+
 	if !hs.requestClientCert() {
 		// Make sure the connection is still being verified whether or not
 		// the server requested a client certificate.
@@ -1837,7 +1816,9 @@ func (hs *serverHandshakeStateTLS13) readClientFinished() error {
 		return errors.New("tls: invalid client finished hash")
 	}
 
-	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret, hs.maxSentLimit)
+	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret, hs.maxSentLimit); err != nil {
+		return err
+	}
 
 	if hs.sendTicketOnCompleted {
 		err := c.sendSessionTicket(c.config.maxEarlyData(), nil)

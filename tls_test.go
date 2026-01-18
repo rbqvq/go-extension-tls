@@ -2071,8 +2071,9 @@ func testVerifyCertificates(t *testing.T, version uint16) {
 				t.Error("expected resumption")
 			}
 
-			if serverVerifyPeerCertificates {
-				t.Error("VerifyPeerCertificates got called on the server on resumption")
+			if serverVerifyPeerCertificates != want {
+				t.Errorf("VerifyPeerCertificates on the server on resumption: got %v, want %v",
+					serverVerifyPeerCertificates, want)
 			}
 			if clientVerifyPeerCertificates {
 				t.Error("VerifyPeerCertificates got called on the client on resumption")

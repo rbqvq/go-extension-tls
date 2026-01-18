@@ -174,12 +174,6 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 	if err := hs.readServerParameters(); err != nil {
 		return err
 	}
-	if err := hs.readServerCertificate(); err != nil {
-		return err
-	}
-	if err := hs.readServerFinished(); err != nil {
-		return err
-	}
 	if !hs.earlyData {
 		if err := hs.doFullHandshake(); err != nil {
 			return err
@@ -213,10 +207,17 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 }
 
 func (hs *clientHandshakeStateTLS13) doFullHandshake() error {
-	c := hs.c
+	// Server rejected 0-RTT, switching keys.
+	if hs.hello.earlyData {
+		hs.c.setWriteTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret, hs.maxSentLimit)
+	}
 
-	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret, hs.maxSentLimit)
-
+	if err := hs.readServerCertificate(); err != nil {
+		return err
+	}
+	if err := hs.readServerFinished(); err != nil {
+		return err
+	}
 	if err := hs.sendClientParameters(); err != nil {
 		return err
 	}
@@ -228,13 +229,17 @@ func (hs *clientHandshakeStateTLS13) doFullHandshake() error {
 }
 
 func (hs *clientHandshakeStateTLS13) doEarlyHandshake() error {
-	c := hs.c
-
+	if err := hs.readServerCertificate(); err != nil {
+		return err
+	}
+	if err := hs.readServerFinished(); err != nil {
+		return err
+	}
 	if err := hs.sendClientEndOfEarly(); err != nil {
 		return err
 	}
 
-	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret, hs.maxSentLimit)
+	hs.c.setWriteTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret, hs.maxSentLimit)
 
 	return nil
 }
@@ -723,6 +728,7 @@ func (hs *clientHandshakeStateTLS13) processServerHello() error {
 	c.didResume = true
 	c.peerCertificates = hs.session.peerCertificates
 	c.verifiedChains = hs.session.verifiedChains
+	c.verifiedDC = hs.session.verifiedDC
 	c.ocspResponse = hs.session.ocspResponse
 	c.scts = hs.session.scts
 	return nil
@@ -985,17 +991,14 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 	clientSecret := hs.suite.deriveSecret(handshakeSecret,
 		clientHandshakeTrafficLabel, hs.transcript)
 	hs.handshakeSecret = clientSecret
+	if !hs.hello.earlyData {
+		// Ensure we are encrypted if we disabled 0-RTT.
+		c.setWriteTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret, maxPlaintext+1)
+	}
 	serverSecret := hs.suite.deriveSecret(handshakeSecret,
 		serverHandshakeTrafficLabel, hs.transcript)
-
-	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret, maxPlaintext+1)
-
-	if c.quic != nil {
-		if c.hand.Len() != 0 {
-			c.sendAlert(alertUnexpectedMessage)
-		}
-		c.quicSetWriteSecret(QUICEncryptionLevelHandshake, hs.suite.id, clientSecret)
-		c.quicSetReadSecret(QUICEncryptionLevelHandshake, hs.suite.id, serverSecret)
+	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret, maxPlaintext+1); err != nil {
+		return err
 	}
 
 	err := c.config.writeKeyLog(keyLogLabelClientHandshake, hs.hello.random, clientSecret)
@@ -1003,6 +1006,7 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 		c.sendAlert(alertInternalError)
 		return err
 	}
+
 	err = c.config.writeKeyLog(keyLogLabelServerHandshake, hs.hello.random, serverSecret)
 	if err != nil {
 		c.sendAlert(alertInternalError)
@@ -1117,9 +1121,6 @@ func (hs *clientHandshakeStateTLS13) readServerParameters() error {
 		c.clientProtocolSetting = hs.session.alpnClientSetting
 		c.serverProtocolSetting = hs.session.alpnServerSetting
 		hs.earlyData = true
-	}
-	if c.quic == nil && !hs.earlyData {
-		c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.handshakeSecret, hs.maxSentLimit)
 	}
 
 	if encryptedExtensions.alps {
@@ -1372,7 +1373,9 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 		clientApplicationTrafficLabel, hs.transcript)
 	serverSecret := hs.suite.deriveSecret(hs.masterSecret,
 		serverApplicationTrafficLabel, hs.transcript)
-	c.in.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, serverSecret, hs.maxRecvLimit)
+	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelApplication, serverSecret, hs.maxRecvLimit); err != nil {
+		return err
+	}
 
 	err = c.config.writeKeyLog(keyLogLabelClientTraffic, hs.hello.random, hs.trafficSecret)
 	if err != nil {
@@ -1583,20 +1586,12 @@ func (hs *clientHandshakeStateTLS13) sendClientFinished() error {
 		return err
 	}
 
-	c.out.setTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret, hs.maxSentLimit)
+	c.setWriteTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret, hs.maxSentLimit)
 
 	if !c.config.SessionTicketsDisabled && c.config.ClientSessionCache != nil {
 		c.resumptionSecret = hs.suite.deriveSecret(hs.masterSecret,
 			resumptionLabel, hs.transcript)
 	}
-
-	if c.quic != nil {
-		if c.hand.Len() != 0 {
-			c.sendAlert(alertUnexpectedMessage)
-		}
-		c.quicSetWriteSecret(QUICEncryptionLevelApplication, hs.suite.id, hs.trafficSecret)
-	}
-
 	return nil
 }
 

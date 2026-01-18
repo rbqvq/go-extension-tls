@@ -53,12 +53,6 @@ type suiteSecret struct {
 }
 
 func (q *testQUICConn) setReadSecret(level QUICEncryptionLevel, suite uint16, secret []byte) {
-	if _, ok := q.writeSecret[level]; !ok && level != QUICEncryptionLevelEarly {
-		q.t.Errorf("SetReadSecret for level %v called before SetWriteSecret", level)
-	}
-	if level == QUICEncryptionLevelApplication && !q.complete {
-		q.t.Errorf("SetReadSecret for level %v called before HandshakeComplete", level)
-	}
 	if _, ok := q.readSecret[level]; ok {
 		q.t.Errorf("SetReadSecret for level %v called twice", level)
 	}

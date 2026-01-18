@@ -630,10 +630,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		}
 
 		earlyTrafficSecret := suite.deriveSecret(earlySecret, clientEarlyTrafficLabel, transcript)
-		c.out.setTrafficSecret(suite, QUICEncryptionLevelEarly, earlyTrafficSecret, maxPlaintext+1)
-		if c.quic != nil {
-			c.quicSetWriteSecret(QUICEncryptionLevelEarly, suite.id, earlyTrafficSecret)
-		}
+		c.setWriteTrafficSecret(suite, QUICEncryptionLevelEarly, earlyTrafficSecret, maxPlaintext+1)
 
 		err = c.config.writeKeyLog(keyLogLabelClientEarly, transcriptHello.random, earlyTrafficSecret)
 		if err != nil {

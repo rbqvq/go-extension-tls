@@ -2,7 +2,7 @@
 
 This repository is an extension of the golang standard library [crypto/go](https://pkg.go.dev/crypto/go)
 
-# Currently implements more TLS functions than the standard library
+# Features
 
 - AES CCM cipher
 - ARIA cipher
@@ -14,12 +14,13 @@ This repository is an extension of the golang standard library [crypto/go](https
 - TLS 1.3 FFDHE Key Exchange (RFC 7919)
 - TLS 1.3 Delegated Credential (RFC 9345)
 - Compressed certificate
+- Record Size Limit
 - Application-Layer Protocol Settings (ALPS)
 - GREASE
 - Custom extension
 - Custom fingerprint via [tlsfinger](https://gitlab.com/go-extension/tlsfinger)
 
-# Special thanks
+# Credits
 
 - [uTLS](https://github.com/refraction-networking/utls)
 - [Cloudflare tls-tris](https://github.com/cloudflare/tls-tris)

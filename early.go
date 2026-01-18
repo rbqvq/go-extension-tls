@@ -241,3 +241,59 @@ func (c *Conn) rejectedEarlyData() {
 	c.earlyData.done = true
 	c.out.cipher = nil
 }
+
+// ConfirmHandshake waits for the handshake to reach a point at which
+// the connection is certainly not replayed. That is, after receiving
+// the Client Finished.
+//
+// If ConfirmHandshake returns an error and until ConfirmHandshake
+// returns, the 0-RTT data should not be trusted not to be replayed.
+//
+// This is only meaningful in TLS 1.3 when Allow0RTT is true and the
+// client sent valid 0-RTT data. In any other case it's equivalent to
+// calling Handshake.
+func (c *Conn) ConfirmHandshake() error {
+	if err := c.Handshake(); err != nil {
+		return err
+	}
+
+	if c.isClient || c.vers < VersionTLS13 || c.handshakeState.Load() != handshakeEarly {
+		return c.handshakeErr
+	}
+
+	c.handshakeMutex.Lock()
+	defer c.handshakeMutex.Unlock()
+
+	if c.handshakeState.Load() != handshakeEarly {
+		return c.handshakeErr
+	}
+
+	c.in.Lock()
+	defer c.in.Unlock()
+
+	c.earlyData.data = earlyDataPool.Get().(*bytes.Buffer)
+	handshakeFn := func() error {
+		for c.handshakeState.Load() == handshakeEarly {
+			if err := c.readRecord(); err != nil {
+				return err
+			}
+
+			if c.input.Len() > 0 {
+				c.input.WriteTo(&c.earlyData)
+			}
+
+			for c.hand.Len() > 0 {
+				if err := c.handlePostHandshakeMessage(); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := handshakeFn(); err != nil {
+		c.earlyData.Reset()
+		return err
+	}
+
+	return nil
+}

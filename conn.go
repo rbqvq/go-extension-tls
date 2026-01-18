@@ -278,6 +278,9 @@ func (hc *halfConn) changeCipherSpec() error {
 	return nil
 }
 
+// setTrafficSecret sets the traffic secret for the given encryption level. setTrafficSecret
+// should not be called directly, but rather through the Conn setWriteTrafficSecret and
+// setReadTrafficSecret wrapper methods.
 func (hc *halfConn) setTrafficSecret(suite *cipherSuiteTLS13, level QUICEncryptionLevel, secret []byte, limit uint16) {
 	hc.limit = limit
 	hc.trafficSecret = secret
@@ -1308,11 +1311,6 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 			return 0, errors.New("tls: internal error: sending non-handshake message to QUIC transport")
 		}
 		c.quicWriteCryptoData(c.out.level, data)
-		if !c.buffering {
-			if _, err := c.flush(); err != nil {
-				return 0, err
-			}
-		}
 		return len(data), nil
 	}
 
@@ -1690,15 +1688,6 @@ func (c *Conn) handleKeyUpdate(keyUpdate *keyUpdateMsg) error {
 		return c.in.setErrorLocked(c.sendAlert(alertInternalError))
 	}
 
-	newSecret := cipherSuite.nextTrafficSecret(c.in.trafficSecret)
-	c.in.setTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret, c.in.limit)
-
-	err := c.resetupRX()
-	if err != nil {
-		c.sendAlert(alertInternalError)
-		return c.in.setErrorLocked(fmt.Errorf("tls: resetupRX failed: %w", err))
-	}
-
 	if keyUpdate.updateRequested {
 		c.out.Lock()
 		defer c.out.Unlock()
@@ -1722,12 +1711,24 @@ func (c *Conn) handleKeyUpdate(keyUpdate *keyUpdateMsg) error {
 		}
 
 		newSecret := cipherSuite.nextTrafficSecret(c.out.trafficSecret)
-		c.out.setTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret, c.out.limit)
+		c.setWriteTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret, c.out.limit)
 
 		err = resetup()
 		if err != nil {
 			return c.out.setErrorLocked(fmt.Errorf("tls: resetupTX failed: %w", err))
 		}
+	}
+
+	newSecret := cipherSuite.nextTrafficSecret(c.in.trafficSecret)
+	err := c.setReadTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret, c.in.limit)
+	if err != nil {
+		return err
+	}
+
+	err = c.resetupRX()
+	if err != nil {
+		c.sendAlert(alertInternalError)
+		return c.in.setErrorLocked(fmt.Errorf("tls: resetupRX failed: %w", err))
 	}
 
 	return nil
@@ -2025,10 +2026,6 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
 	if c.quic != nil {
 		if c.handshakeErr == nil {
 			c.quicHandshakeComplete()
-			// Provide the 1-RTT read secret now that the handshake is complete.
-			// The QUIC layer MUST NOT decrypt 1-RTT packets prior to completing
-			// the handshake (RFC 9001, Section 5.7).
-			c.quicSetReadSecret(QUICEncryptionLevelApplication, c.cipherSuite, c.in.trafficSecret)
 		} else {
 			var a alert
 			c.out.Lock()
@@ -2123,58 +2120,30 @@ func (c *Conn) VerifyHostname(host string) error {
 	return c.peerCertificates[0].VerifyHostname(host)
 }
 
-// ConfirmHandshake waits for the handshake to reach a point at which
-// the connection is certainly not replayed. That is, after receiving
-// the Client Finished.
-//
-// If ConfirmHandshake returns an error and until ConfirmHandshake
-// returns, the 0-RTT data should not be trusted not to be replayed.
-//
-// This is only meaningful in TLS 1.3 when Allow0RTT is true and the
-// client sent valid 0-RTT data. In any other case it's equivalent to
-// calling Handshake.
-func (c *Conn) ConfirmHandshake() error {
-	if err := c.Handshake(); err != nil {
-		return err
+// setReadTrafficSecret sets the read traffic secret for the given encryption level. If
+// being called at the same time as setWriteTrafficSecret, the caller must ensure the call
+// to setWriteTrafficSecret happens first so any alerts are sent at the write level.
+func (c *Conn) setReadTrafficSecret(suite *cipherSuiteTLS13, level QUICEncryptionLevel, secret []byte, limit uint16) error {
+	// Ensure that there are no buffered handshake messages before changing the
+	// read keys, since that can cause messages to be parsed that were encrypted
+	// using old keys which are no longer appropriate.
+	if c.hand.Len() != 0 {
+		c.sendAlert(alertUnexpectedMessage)
+		return errors.New("tls: handshake buffer not empty before setting read traffic secret")
 	}
-
-	if c.isClient || c.vers < VersionTLS13 || c.handshakeState.Load() != handshakeEarly {
-		return c.handshakeErr
+	c.in.setTrafficSecret(suite, level, secret, limit)
+	if c.quic != nil {
+		c.quicSetReadSecret(level, suite.id, secret)
 	}
-
-	c.handshakeMutex.Lock()
-	defer c.handshakeMutex.Unlock()
-
-	if c.handshakeState.Load() != handshakeEarly {
-		return c.handshakeErr
-	}
-
-	c.in.Lock()
-	defer c.in.Unlock()
-
-	c.earlyData.data = earlyDataPool.Get().(*bytes.Buffer)
-	handshakeFn := func() error {
-		for c.handshakeState.Load() == handshakeEarly {
-			if err := c.readRecord(); err != nil {
-				return err
-			}
-
-			if c.input.Len() > 0 {
-				c.input.WriteTo(&c.earlyData)
-			}
-
-			for c.hand.Len() > 0 {
-				if err := c.handlePostHandshakeMessage(); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	if err := handshakeFn(); err != nil {
-		c.earlyData.Reset()
-		return err
-	}
-
 	return nil
+}
+
+// setWriteTrafficSecret sets the write traffic secret for the given encryption level. If
+// being called at the same time as setReadTrafficSecret, the caller must ensure the call
+// to setWriteTrafficSecret happens first so any alerts are sent at the write level.
+func (c *Conn) setWriteTrafficSecret(suite *cipherSuiteTLS13, level QUICEncryptionLevel, secret []byte, limit uint16) {
+	c.out.setTrafficSecret(suite, level, secret, limit)
+	if c.quic != nil {
+		c.quicSetWriteSecret(level, suite.id, secret)
+	}
 }
