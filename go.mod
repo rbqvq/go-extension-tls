@@ -2,20 +2,20 @@ module gitlab.com/go-extension/tls
 
 go 1.25.0
 
-require golang.org/x/crypto v0.46.0
+require golang.org/x/crypto v0.47.0
 
 require (
 	github.com/andybalholm/brotli v1.2.0
 	github.com/blang/semver/v4 v4.0.0
-	github.com/klauspost/compress v1.18.2
+	github.com/klauspost/compress v1.18.3
 	github.com/rogpeppe/go-internal v1.14.1
-	golang.org/x/sys v0.39.0
+	golang.org/x/sys v0.40.0
 )
 
 require (
 	github.com/RyuaNerin/go-krypto v1.3.0
 	github.com/dgryski/go-camellia v0.0.0-20191119043421-69a8a13fb23d
-	github.com/emmansun/gmsm v0.40.0
+	github.com/emmansun/gmsm v0.40.1
 	github.com/pmorjan/kmod v1.1.1
 	gitlab.com/go-extension/aes-ccm v0.0.0-20230221065045-e58665ef23c7
 	gitlab.com/go-extension/ffdh v0.0.0-20251208192952-367b797915cb
