@@ -48,7 +48,7 @@ type serverHandshakeStateTLS13 struct {
 	clientHello                     *clientHelloMsg
 	hello                           *serverHelloMsg
 	sentDummyCCS                    bool
-	usingPSK                        bool
+	sessionState                    *SessionState
 	usingALPS                       bool
 	earlyData                       bool
 	suite                           *cipherSuiteTLS13
@@ -704,7 +704,10 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 		c.didResume = true
 		hs.hello.selectedIdentityPresent = true
 		hs.hello.selectedIdentity = uint16(i)
-		hs.usingPSK = true
+		hs.sessionState = sessionState
+		if c.quic != nil {
+			c.quic.sessionState = sessionState
+		}
 
 		if !hs.clientHello.earlyData || i != 0 {
 			return nil
@@ -856,7 +859,7 @@ func (hs *serverHandshakeStateTLS13) pickCertificate() error {
 	c := hs.c
 
 	// Only one of PSK and certificates are used at a time.
-	if hs.usingPSK {
+	if hs.sessionState != nil {
 		return nil
 	}
 
@@ -1254,19 +1257,15 @@ func (config *Config) negotiateALPS(selectedProto string, clientProtos []string)
 	return protoSetting, ok
 }
 
-func (hs *serverHandshakeStateTLS13) requestClientCert() bool {
-	return hs.c.config.ClientAuth >= RequestClientCert && !hs.usingPSK
-}
-
 func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 	c := hs.c
 
 	// Only one of PSK and certificates are used at a time.
-	if hs.usingPSK {
+	if hs.sessionState != nil {
 		return nil
 	}
 
-	if hs.requestClientCert() {
+	if c.config.ClientAuth != NoClientCert {
 		// Request a client certificate
 		certReq := new(certificateRequestMsgTLS13)
 		certReq.ocspStapling = true
@@ -1395,7 +1394,7 @@ func (hs *serverHandshakeStateTLS13) sendServerFinished() error {
 	// If we did not request client certificates and encrypted extensions, at this point we can
 	// precompute the client finished and roll the transcript forward to send
 	// session tickets in our first flight.
-	if !hs.requestClientCert() && !hs.usingALPS {
+	if (hs.c.config.ClientAuth == NoClientCert || hs.sessionState != nil) && !hs.usingALPS {
 		if err := hs.sendSessionTickets(); err != nil {
 			return err
 		}
@@ -1448,10 +1447,10 @@ func (hs *serverHandshakeStateTLS13) sendSessionTickets() error {
 		hs.sendTicketOnCompleted = true
 		return nil
 	}
-	return c.sendSessionTicket(c.config.maxEarlyData(), nil)
+	return c.sendSessionTicket(hs.sessionState, c.config.maxEarlyData(), nil)
 }
 
-func (c *Conn) sendSessionTicket(maxEarlyData uint32, extra [][]byte) error {
+func (c *Conn) sendSessionTicket(sessionState *SessionState, maxEarlyData uint32, extra [][]byte) error {
 	suite := cipherSuiteTLS13ByID(c.cipherSuite)
 	if suite == nil {
 		return errors.New("tls: internal error: unknown cipher suite")
@@ -1464,6 +1463,11 @@ func (c *Conn) sendSessionTicket(maxEarlyData uint32, extra [][]byte) error {
 	m := new(newSessionTicketMsgTLS13)
 
 	state := c.sessionState()
+	if c.config.ClientAuth != NoClientCert && sessionState != nil {
+		// If this is re-wrapping an old auth, then keep
+		// the original time it was created.
+		state.createdAt = sessionState.createdAt
+	}
 	state.secret = psk
 	state.Extra = extra
 
@@ -1595,7 +1599,7 @@ func (hs *serverHandshakeStateTLS13) readClientParameters() error {
 	// If we did not request client certificates, at this point we can
 	// precompute the client finished and roll the transcript forward to send
 	// session tickets in our first flight.
-	if !hs.requestClientCert() {
+	if hs.c.config.ClientAuth == NoClientCert || hs.sessionState != nil {
 		if err := hs.sendSessionTickets(); err != nil {
 			return err
 		}
@@ -1655,13 +1659,13 @@ func (hs *serverHandshakeStateTLS13) verifyClientDelegatedCredential(delegatedCr
 func (hs *serverHandshakeStateTLS13) readClientCertificate() error {
 	c := hs.c
 
-	if hs.usingPSK {
+	if hs.sessionState != nil {
 		// VerifyConnection is already being processed by checkCertsFromClientResumption from
 		// checkForResumption.
 		return nil
 	}
 
-	if !hs.requestClientCert() {
+	if c.config.ClientAuth == NoClientCert {
 		// Make sure the connection is still being verified whether or not
 		// the server requested a client certificate.
 		if c.config.VerifyConnection != nil {
@@ -1821,7 +1825,7 @@ func (hs *serverHandshakeStateTLS13) readClientFinished() error {
 	}
 
 	if hs.sendTicketOnCompleted {
-		err := c.sendSessionTicket(c.config.maxEarlyData(), nil)
+		err := c.sendSessionTicket(hs.sessionState, c.config.maxEarlyData(), nil)
 		if err != nil {
 			return err
 		}

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 )
 
 // QUICEncryptionLevel represents a QUIC encryption level used to transmit
@@ -47,7 +48,7 @@ const (
 type QUICConn struct {
 	conn *Conn
 
-	sessionTicketSent bool
+	sessionTicketSent atomic.Bool
 }
 
 // A QUICConfig configures a [QUICConn].
@@ -170,6 +171,8 @@ type quicState struct {
 	transportParams []byte // to send to the peer
 
 	enableSessionEvents bool
+
+	sessionState *SessionState
 }
 
 // QUICClient returns a new TLS client side connection using QUICTransport as the
@@ -312,16 +315,19 @@ func (q *QUICConn) SendSessionTicket(opts QUICSessionTicketOptions) error {
 	if c.isClient {
 		return quicError(errors.New("tls: SendSessionTicket called on the client"))
 	}
-	if q.sessionTicketSent {
+	if !q.sessionTicketSent.CompareAndSwap(false, true) {
 		return quicError(errors.New("tls: SendSessionTicket called multiple times"))
 	}
-	q.sessionTicketSent = true
+
+	sessionState := q.conn.quic.sessionState
+	q.conn.quic.sessionState = nil
 
 	var maxEarlyData uint32
 	if opts.EarlyData {
 		maxEarlyData = quicMaxEarlyData
 	}
-	return quicError(c.sendSessionTicket(maxEarlyData, opts.Extra))
+
+	return quicError(c.sendSessionTicket(sessionState, maxEarlyData, opts.Extra))
 }
 
 // StoreSession stores a session previously received in a QUICStoreSession event
