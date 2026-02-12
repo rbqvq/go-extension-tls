@@ -415,3 +415,13 @@ func (cert *Certificate) DelegatedCredentialKeyPair(dcPEMBlock, keyPEMBlock []by
 
 	return delegatedCredential, nil
 }
+
+func (c *Conn) checkDelegatedCredential(cert *x509.Certificate, verifiedDC *DelegatedCredential) bool {
+	if verifiedDC == nil {
+		return true
+	}
+
+	now := c.config.time()
+	notAfter := cert.NotBefore.Add(verifiedDC.Credential.ValidTime)
+	return !now.After(notAfter)
+}

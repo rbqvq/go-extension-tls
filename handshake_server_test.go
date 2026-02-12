@@ -2124,7 +2124,7 @@ func TestHandshakeContextHierarchy(t *testing.T) {
 	}
 }
 
-func TestHandshakeChainExpiryResumptionTLS12(t *testing.T) {
+func TestHandshakeChainExpiryResumption(t *testing.T) {
 	t.Run("TLS1.2", func(t *testing.T) {
 		testHandshakeChainExpiryResumption(t, VersionTLS12)
 	})
@@ -2135,10 +2135,11 @@ func TestHandshakeChainExpiryResumptionTLS12(t *testing.T) {
 
 func testHandshakeChainExpiryResumption(t *testing.T, version uint16) {
 	now := time.Now()
-	createChain := func(leafNotAfter, rootNotAfter time.Time) (certDER []byte, root *x509.Certificate) {
+
+	createChain := func(leafNotAfter, intermediateNotAfter, rootNotAfter time.Time) (leafDER []byte, intermediate, root *x509.Certificate) {
 		tmpl := &x509.Certificate{
 			Subject:               pkix.Name{CommonName: "root"},
-			NotBefore:             rootNotAfter.Add(-time.Hour * 24),
+			NotBefore:             now.Add(-time.Hour * 24),
 			NotAfter:              rootNotAfter,
 			IsCA:                  true,
 			BasicConstraintsValid: true,
@@ -2153,45 +2154,215 @@ func testHandshakeChainExpiryResumption(t *testing.T, version uint16) {
 		}
 
 		tmpl = &x509.Certificate{
+			Subject:               pkix.Name{CommonName: "intermediate"},
+			NotBefore:             now.Add(-time.Hour * 24),
+			NotAfter:              intermediateNotAfter,
+			IsCA:                  true,
+			BasicConstraintsValid: true,
+		}
+		intermediateDER, err := x509.CreateCertificate(rand.Reader, tmpl, root, &testECDSAPrivateKey.PublicKey, testECDSAPrivateKey)
+		if err != nil {
+			t.Fatalf("CreateCertificate: %v", err)
+		}
+		intermediate, err = x509.ParseCertificate(intermediateDER)
+		if err != nil {
+			t.Fatalf("ParseCertificate: %v", err)
+		}
+
+		tmpl = &x509.Certificate{
 			Subject:   pkix.Name{},
 			DNSNames:  []string{"expired-resume.example.com"},
-			NotBefore: leafNotAfter.Add(-time.Hour * 24),
+			NotBefore: now.Add(-time.Hour * 24),
 			NotAfter:  leafNotAfter,
 			KeyUsage:  x509.KeyUsageDigitalSignature,
 		}
-		certDER, err = x509.CreateCertificate(rand.Reader, tmpl, root, &testECDSAPrivateKey.PublicKey, testECDSAPrivateKey)
+		leafCertDER, err := x509.CreateCertificate(rand.Reader, tmpl, intermediate, &testECDSAPrivateKey.PublicKey, testECDSAPrivateKey)
 		if err != nil {
 			t.Fatalf("CreateCertificate: %v", err)
 		}
 
-		return certDER, root
+		return leafCertDER, intermediate, root
+	}
+	testExpiration := func(name string, expireIntermediate bool) {
+		t.Run(name, func(t *testing.T) {
+			leafNotAfter := now.Add(3 * time.Hour)
+			intermediateNotAfter := now.Add(4 * time.Hour)
+			rootNotAfter := now.Add(time.Hour)
+
+			expiredRoot := rootNotAfter.Add(time.Minute)
+			expiredNow := leafNotAfter.Add(time.Minute)
+			if expireIntermediate {
+				intermediateNotAfter = now.Add(2 * time.Hour)
+				expiredNow = intermediateNotAfter.Add(time.Minute)
+			}
+
+			initialLeafDER, intermediateRoot, initialRoot := createChain(leafNotAfter, intermediateNotAfter, rootNotAfter)
+
+			serverConfig := testConfig.Clone()
+			serverConfig.MaxVersion = version
+			serverConfig.Certificates = []Certificate{{
+				Certificate: [][]byte{initialLeafDER, intermediateRoot.Raw},
+				PrivateKey:  testECDSAPrivateKey,
+			}}
+			serverConfig.ClientCAs = x509.NewCertPool()
+			serverConfig.ClientCAs.AddCert(initialRoot)
+			serverConfig.ClientCAs.AddCert(intermediateRoot)
+			serverConfig.ClientAuth = RequireAndVerifyClientCert
+			serverConfig.Time = func() time.Time {
+				return now
+			}
+			serverConfig.InsecureSkipVerify = false
+			serverConfig.ServerName = "expired-resume.example.com"
+
+			clientConfig := testConfig.Clone()
+			clientConfig.MaxVersion = version
+			clientConfig.Certificates = []Certificate{{
+				Certificate: [][]byte{initialLeafDER, intermediateRoot.Raw},
+				PrivateKey:  testECDSAPrivateKey,
+			}}
+			clientConfig.RootCAs = x509.NewCertPool()
+			clientConfig.RootCAs.AddCert(initialRoot)
+			clientConfig.RootCAs.AddCert(intermediateRoot)
+			clientConfig.ServerName = "expired-resume.example.com"
+			clientConfig.ClientSessionCache = NewLRUClientSessionCache(32)
+			clientConfig.InsecureSkipVerify = false
+			clientConfig.ServerName = "expired-resume.example.com"
+			clientConfig.Time = func() time.Time {
+				return now
+			}
+
+			testResume := func(t *testing.T, sc, cc *Config, expectResume bool) {
+				t.Helper()
+				ss, cs, err := testHandshake(t, cc, sc)
+				if err != nil {
+					t.Fatalf("handshake: %v", err)
+				}
+				if cs.DidResume != expectResume {
+					t.Fatalf("DidResume = %v; want %v", cs.DidResume, expectResume)
+				}
+				if ss.DidResume != expectResume {
+					t.Fatalf("DidResume = %v; want %v", cs.DidResume, expectResume)
+				}
+			}
+
+			testResume(t, serverConfig, clientConfig, false)
+			testResume(t, serverConfig, clientConfig, true)
+
+			serverConfig.Time = func() time.Time {
+				return expiredRoot
+			}
+			testResume(t, serverConfig, clientConfig, true)
+
+			freshLeafDER, freshIntermediateRoot, freshRoot := createChain(expiredNow.Add(time.Hour), expiredNow.Add(time.Hour), expiredNow.Add(time.Hour))
+			clientConfig.Certificates = []Certificate{{
+				Certificate: [][]byte{freshLeafDER, freshIntermediateRoot.Raw},
+				PrivateKey:  testECDSAPrivateKey,
+			}}
+			serverConfig.Time = func() time.Time {
+				return expiredNow
+			}
+			serverConfig.ClientCAs = x509.NewCertPool()
+			serverConfig.ClientCAs.AddCert(freshRoot)
+			serverConfig.ClientCAs.AddCert(freshIntermediateRoot)
+
+			testResume(t, serverConfig, clientConfig, false)
+		})
 	}
 
-	initialLeafDER, initialRoot := createChain(now.Add(time.Hour), now.Add(2*time.Hour))
+	testExpiration("LeafExpiresBeforeRoot", false)
+	testExpiration("LeafExpiresAfterRoot", true)
+}
+
+func TestHandshakeGetConfigForClientDifferentClientCAs(t *testing.T) {
+	t.Run("TLS1.2", func(t *testing.T) {
+		testHandshakeGetConfigForClientDifferentClientCAs(t, VersionTLS12)
+	})
+	t.Run("TLS1.3", func(t *testing.T) {
+		testHandshakeGetConfigForClientDifferentClientCAs(t, VersionTLS13)
+	})
+}
+
+func testHandshakeGetConfigForClientDifferentClientCAs(t *testing.T, version uint16) {
+	now := time.Now()
+	tmpl := &x509.Certificate{
+		Subject:               pkix.Name{CommonName: "root"},
+		NotBefore:             now.Add(-time.Hour * 24),
+		NotAfter:              now.Add(time.Hour * 24),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+	}
+	rootDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &testECDSAPrivateKey.PublicKey, testECDSAPrivateKey)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	rootA, err := x509.ParseCertificate(rootDER)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+	rootDER, err = x509.CreateCertificate(rand.Reader, tmpl, tmpl, &testRSA2048PrivateKey.PublicKey, testRSA2048PrivateKey)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	rootB, err := x509.ParseCertificate(rootDER)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+
+	tmpl = &x509.Certificate{
+		Subject:   pkix.Name{},
+		DNSNames:  []string{"example.com"},
+		NotBefore: now.Add(-time.Hour * 24),
+		NotAfter:  now.Add(time.Hour * 24),
+		KeyUsage:  x509.KeyUsageDigitalSignature,
+	}
+	certA, err := x509.CreateCertificate(rand.Reader, tmpl, rootA, &testECDSAPrivateKey.PublicKey, testECDSAPrivateKey)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	certB, err := x509.CreateCertificate(rand.Reader, tmpl, rootB, &testECDSAPrivateKey.PublicKey, testRSA2048PrivateKey)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
 
 	serverConfig := testConfig.Clone()
 	serverConfig.MaxVersion = version
 	serverConfig.Certificates = []Certificate{{
-		Certificate: [][]byte{initialLeafDER},
+		Certificate: [][]byte{certA},
 		PrivateKey:  testECDSAPrivateKey,
 	}}
-	serverConfig.ClientCAs = x509.NewCertPool()
-	serverConfig.ClientCAs.AddCert(initialRoot)
-	serverConfig.ClientAuth = RequireAndVerifyClientCert
 	serverConfig.Time = func() time.Time {
 		return now
 	}
+	serverConfig.ClientCAs = x509.NewCertPool()
+	serverConfig.ClientCAs.AddCert(rootA)
+	serverConfig.ClientAuth = RequireAndVerifyClientCert
+	switchConfig := false
+	serverConfig.GetConfigForClient = func(clientHello *ClientHelloInfo) (*Config, error) {
+		if !switchConfig {
+			return nil, nil
+		}
+		cfg := serverConfig.Clone()
+		cfg.ClientCAs = x509.NewCertPool()
+		cfg.ClientCAs.AddCert(rootB)
+		return cfg, nil
+	}
+	serverConfig.InsecureSkipVerify = false
+	serverConfig.ServerName = "example.com"
 
 	clientConfig := testConfig.Clone()
 	clientConfig.MaxVersion = version
 	clientConfig.Certificates = []Certificate{{
-		Certificate: [][]byte{initialLeafDER},
+		Certificate: [][]byte{certA},
 		PrivateKey:  testECDSAPrivateKey,
 	}}
-	clientConfig.RootCAs = x509.NewCertPool()
-	clientConfig.RootCAs.AddCert(initialRoot)
-	clientConfig.ServerName = "expired-resume.example.com"
 	clientConfig.ClientSessionCache = NewLRUClientSessionCache(32)
+	clientConfig.RootCAs = x509.NewCertPool()
+	clientConfig.RootCAs.AddCert(rootA)
+	clientConfig.Time = func() time.Time {
+		return now
+	}
+	clientConfig.InsecureSkipVerify = false
+	clientConfig.ServerName = "example.com"
 
 	testResume := func(t *testing.T, sc, cc *Config, expectResume bool) {
 		t.Helper()
@@ -2210,16 +2381,120 @@ func testHandshakeChainExpiryResumption(t *testing.T, version uint16) {
 	testResume(t, serverConfig, clientConfig, false)
 	testResume(t, serverConfig, clientConfig, true)
 
-	freshLeafDER, freshRoot := createChain(now.Add(2*time.Hour), now.Add(3*time.Hour))
-	clientConfig.Certificates = []Certificate{{
-		Certificate: [][]byte{freshLeafDER},
+	clientConfig.Certificates[0].Certificate = [][]byte{certB}
+
+	// Cause GetConfigForClient to return a config cloned from the base config,
+	// but with a different ClientCAs pool. This should cause resumption to fail.
+	switchConfig = true
+
+	testResume(t, serverConfig, clientConfig, false)
+	testResume(t, serverConfig, clientConfig, true)
+}
+
+func TestHandshakeChangeRootCAsResumption(t *testing.T) {
+	t.Run("TLS1.2", func(t *testing.T) {
+		testHandshakeChangeRootCAsResumption(t, VersionTLS12)
+	})
+	t.Run("TLS1.3", func(t *testing.T) {
+		testHandshakeChangeRootCAsResumption(t, VersionTLS13)
+	})
+}
+
+func testHandshakeChangeRootCAsResumption(t *testing.T, version uint16) {
+	now := time.Now()
+	tmpl := &x509.Certificate{
+		Subject:               pkix.Name{CommonName: "root"},
+		NotBefore:             now.Add(-time.Hour * 24),
+		NotAfter:              now.Add(time.Hour * 24),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+	}
+	rootDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &testECDSAPrivateKey.PublicKey, testECDSAPrivateKey)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	rootA, err := x509.ParseCertificate(rootDER)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+	rootDER, err = x509.CreateCertificate(rand.Reader, tmpl, tmpl, &testRSA2048PrivateKey.PublicKey, testRSA2048PrivateKey)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	rootB, err := x509.ParseCertificate(rootDER)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+
+	tmpl = &x509.Certificate{
+		Subject:   pkix.Name{},
+		DNSNames:  []string{"example.com"},
+		NotBefore: now.Add(-time.Hour * 24),
+		NotAfter:  now.Add(time.Hour * 24),
+		KeyUsage:  x509.KeyUsageDigitalSignature,
+	}
+	certA, err := x509.CreateCertificate(rand.Reader, tmpl, rootA, &testECDSAPrivateKey.PublicKey, testECDSAPrivateKey)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	certB, err := x509.CreateCertificate(rand.Reader, tmpl, rootB, &testECDSAPrivateKey.PublicKey, testRSA2048PrivateKey)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+
+	serverConfig := testConfig.Clone()
+	serverConfig.MaxVersion = version
+	serverConfig.Certificates = []Certificate{{
+		Certificate: [][]byte{certA},
 		PrivateKey:  testECDSAPrivateKey,
 	}}
 	serverConfig.Time = func() time.Time {
-		return now.Add(1*time.Hour + 30*time.Minute)
+		return now
 	}
 	serverConfig.ClientCAs = x509.NewCertPool()
-	serverConfig.ClientCAs.AddCert(freshRoot)
+	serverConfig.ClientCAs.AddCert(rootA)
+	serverConfig.ClientAuth = RequireAndVerifyClientCert
+	serverConfig.InsecureSkipVerify = false
+	serverConfig.ServerName = "example.com"
+
+	clientConfig := testConfig.Clone()
+	clientConfig.MaxVersion = version
+	clientConfig.Certificates = []Certificate{{
+		Certificate: [][]byte{certA},
+		PrivateKey:  testECDSAPrivateKey,
+	}}
+	clientConfig.ClientSessionCache = NewLRUClientSessionCache(32)
+	clientConfig.RootCAs = x509.NewCertPool()
+	clientConfig.RootCAs.AddCert(rootA)
+	clientConfig.Time = func() time.Time {
+		return now
+	}
+	clientConfig.InsecureSkipVerify = false
+	clientConfig.ServerName = "example.com"
+
+	testResume := func(t *testing.T, sc, cc *Config, expectResume bool) {
+		t.Helper()
+		ss, cs, err := testHandshake(t, cc, sc)
+		if err != nil {
+			t.Fatalf("handshake: %v", err)
+		}
+		if cs.DidResume != expectResume {
+			t.Fatalf("DidResume = %v; want %v", cs.DidResume, expectResume)
+		}
+		if ss.DidResume != expectResume {
+			t.Fatalf("DidResume = %v; want %v", cs.DidResume, expectResume)
+		}
+	}
 
 	testResume(t, serverConfig, clientConfig, false)
+	testResume(t, serverConfig, clientConfig, true)
+
+	clientConfig = clientConfig.Clone()
+	clientConfig.RootCAs = x509.NewCertPool()
+	clientConfig.RootCAs.AddCert(rootB)
+
+	serverConfig.Certificates[0].Certificate = [][]byte{certB}
+
+	testResume(t, serverConfig, clientConfig, false)
+	testResume(t, serverConfig, clientConfig, true)
 }

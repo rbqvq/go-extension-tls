@@ -1036,17 +1036,6 @@ func (c *Conn) processCertsFromClient(certificate Certificate) error {
 	return nil
 }
 
-// processDelegatedCredentialFromClientResumption verifies a chain of client certificates.
-func (c *Conn) processDelegatedCredentialFromClientResumption(cert *x509.Certificate, verifiedDC *DelegatedCredential) bool {
-	if verifiedDC == nil {
-		return true
-	}
-
-	now := c.config.time()
-	notAfter := cert.NotBefore.Add(verifiedDC.Credential.ValidTime)
-	return !now.After(notAfter)
-}
-
 // processCertsFromClientResumption verifies a chain of client certificates.
 func (c *Conn) processCertsFromClientResumption(certs []*x509.Certificate, verifiedChains [][]*x509.Certificate) ([][]*x509.Certificate, error) {
 	// We do not require client certificate verification, skip this step.
@@ -1065,31 +1054,24 @@ func (c *Conn) processCertsFromClientResumption(certs []*x509.Certificate, verif
 		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 
-	// If we have already verified the certificate chain.
-	if len(verifiedChains) > 0 {
-		// Check the validity period of the full-chain certificate (exclude the RootCA).
-		for _, c := range certs {
-			if opts.CurrentTime.Before(c.NotBefore) {
-				return nil, x509.CertificateInvalidError{
-					Cert:   c,
-					Reason: x509.Expired,
-					Detail: fmt.Sprintf("current time %s is before %s", opts.CurrentTime.Format(time.RFC3339), c.NotBefore.Format(time.RFC3339)),
-				}
-			}
-
-			if opts.CurrentTime.After(c.NotAfter) {
-				return nil, x509.CertificateInvalidError{
-					Cert:   c,
-					Reason: x509.Expired,
-					Detail: fmt.Sprintf("current time %s is after %s", opts.CurrentTime.Format(time.RFC3339), c.NotAfter.Format(time.RFC3339)),
-				}
-			}
-		}
-
+	// If we already validated the chain, we only care that it is rooted
+	// in a CA in opts.Roots. On platforms where we control chain validation
+	// (e.g. not Windows or macOS) this is a simple lookup in the CertPool
+	// internal hash map, which we can simulate by running Verify on the
+	// root. On other platforms, we have to do full verification again,
+	// because EKU handling might differ. We will want to replace this with
+	// CertPool.Contains if/once that is available. See go.dev/issue/77376.
+	if len(verifiedChains) > 0 && isRootOnlyVerifyAllowed(opts.Roots) {
 		reverifiedChains := make([][]*x509.Certificate, 0, len(verifiedChains))
 		for _, verifiedChain := range verifiedChains {
-			// If verifiedChain are empty, Skip it
 			if len(verifiedChain) == 0 {
+				continue
+			}
+
+			// Check the validity period of the verifiedChain.
+			if slices.ContainsFunc(verifiedChain, func(cert *x509.Certificate) bool {
+				return opts.CurrentTime.Before(cert.NotBefore) || opts.CurrentTime.After(cert.NotAfter)
+			}) {
 				continue
 			}
 
@@ -1106,6 +1088,10 @@ func (c *Conn) processCertsFromClientResumption(certs []*x509.Certificate, verif
 		// If we have the valid chains, use it directly.
 		if len(reverifiedChains) > 0 {
 			return reverifiedChains, nil
+		}
+
+		if !isPlatformVerifier(opts.Roots) {
+			return nil, errors.New("tls: client session didn't provide any valid chains")
 		}
 	}
 
@@ -1157,7 +1143,11 @@ func (c *Conn) checkCertsFromClientResumption(sessionState *SessionState) bool {
 			return false
 		}
 
-		if !c.processDelegatedCredentialFromClientResumption(certs[0], sessionState.verifiedDC) {
+		if now := c.config.time(); now.Before(certs[0].NotBefore) || now.After(certs[0].NotAfter) {
+			return false
+		}
+
+		if !c.checkDelegatedCredential(certs[0], sessionState.verifiedDC) {
 			return false
 		}
 	}

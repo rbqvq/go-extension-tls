@@ -718,28 +718,8 @@ func (c *Conn) loadSession(outer *clientHelloMsg, ech *echClientContext) (
 		return nil, nil, nil, nil
 	}
 
-	// Check that the cached server certificate is not expired, and that it's
-	// valid for the ServerName. This should be ensured by the cache key, but
-	// protect the application from a faulty ClientSessionCache implementation.
-	if c.config.time().After(session.peerCertificates[0].NotAfter) {
-		// Expired certificate, delete the entry.
-		c.config.ClientSessionCache.Put(cacheKey, nil)
+	if !c.checkServerCertificate(cacheKey, session) {
 		return nil, nil, nil, nil
-	}
-	// Check that the cached server delegated credential is not expired
-	if session.verifiedDC != nil && c.config.time().After(session.peerCertificates[0].NotBefore.Add(session.verifiedDC.Credential.ValidTime)) {
-		// Expired delegated credential, delete the entry.
-		c.config.ClientSessionCache.Put(cacheKey, nil)
-		return nil, nil, nil, nil
-	}
-	if !c.config.InsecureSkipVerify {
-		if len(session.verifiedChains) == 0 {
-			// The original connection had InsecureSkipVerify, while this doesn't.
-			return nil, nil, nil, nil
-		}
-		if err := session.peerCertificates[0].VerifyHostname(c.config.ServerName); err != nil {
-			return nil, nil, nil, nil
-		}
 	}
 
 	if session.version != VersionTLS13 {
@@ -1512,6 +1492,129 @@ func (c *Conn) verifyServerCertificate(certificates [][]byte) error {
 	}
 
 	return nil
+}
+
+// checkServerVerifiedChain reports if at least one of the chains in verifiedChains
+// is valid, as indicated by none of the certificates being expired and the root
+// being in opts.Roots (or in the system root pool if opts.Roots is nil). If
+// verifiedChains is empty, it returns false.
+func (c *Conn) checkServerVerifiedChain(certs []*x509.Certificate, verifiedChains [][]*x509.Certificate) bool {
+	if len(certs) == 0 || len(verifiedChains) == 0 {
+		return false
+	}
+
+	opts := x509.VerifyOptions{
+		Roots:       c.config.RootCAs,
+		CurrentTime: c.config.time(),
+		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+
+	// Since we already validated the chain, we only care that it is rooted
+	// in a CA in opts.Roots. On platforms where we control chain validation
+	// (e.g. not Windows or macOS) this is a simple lookup in the CertPool
+	// internal hash map, which we can simulate by running Verify on the
+	// root. On other platforms, we have to do full verification again,
+	// because EKU handling might differ. We will want to replace this with
+	// CertPool.Contains if/once that is available. See go.dev/issue/77376.
+	if isRootOnlyVerifyAllowed(opts.Roots) {
+		for _, verifiedChain := range verifiedChains {
+			lengthOfChain := len(verifiedChain)
+			if lengthOfChain == 0 {
+				continue
+			}
+
+			// Check the validity period of the verifiedChain.
+			if slices.ContainsFunc(verifiedChain, func(cert *x509.Certificate) bool {
+				return opts.CurrentTime.Before(cert.NotBefore) || opts.CurrentTime.After(cert.NotAfter)
+			}) {
+				continue
+			}
+
+			// Check the root certificate's validity period and whether it is still trusted by us.
+			rootCA := verifiedChain[lengthOfChain-1]
+			_, err := rootCA.Verify(opts)
+			if err != nil {
+				continue
+			}
+
+			return true
+		}
+
+		if !isPlatformVerifier(opts.Roots) {
+			return false
+		}
+	}
+
+	// If no valid verified chain exists, re-execute full-chain certificate verification.
+	for _, cert := range certs {
+		if cert.PublicKeyAlgorithm == x509.RSA {
+			n := cert.PublicKey.(*rsa.PublicKey).N.BitLen()
+			if _, ok := checkKeySize(n); !ok {
+				return false
+			}
+		}
+	}
+
+	switch certs[0].PublicKey.(type) {
+	case *ecdsa.PublicKey, *rsa.PublicKey, ed25519.PublicKey:
+	default:
+		return false
+	}
+
+	opts.Intermediates = x509.NewCertPool()
+	for _, cert := range certs[1:] {
+		opts.Intermediates.AddCert(cert)
+	}
+
+	_, err := certs[0].Verify(opts)
+	return err == nil
+}
+
+// checkServerCertificate verifies the provided session is allowed for resumption.
+func (c *Conn) checkServerCertificate(cacheKey string, session *SessionState) bool {
+	certs := session.peerCertificates
+	if len(certs) == 0 {
+		// Invalid session, delete the entry.
+		c.config.ClientSessionCache.Put(cacheKey, nil)
+		return false
+	}
+
+	if now := c.config.time(); now.Before(certs[0].NotBefore) || now.After(certs[0].NotAfter) {
+		// Expired certificate, delete the entry.
+		c.config.ClientSessionCache.Put(cacheKey, nil)
+		return false
+	}
+
+	if !c.checkDelegatedCredential(certs[0], session.verifiedDC) {
+		// Expired delegated credential, delete the entry.
+		c.config.ClientSessionCache.Put(cacheKey, nil)
+		return false
+	}
+
+	// If we don't need the verify certificates right now, allow the resumption.
+	if c.config.InsecureSkipVerify {
+		return true
+	}
+
+	// This should be ensured by the cache key, but protect the
+	// application from a faulty ClientSessionCache implementation.
+	if err := certs[0].VerifyHostname(c.config.ServerName); err != nil {
+		return false
+	}
+
+	// The original connection had InsecureSkipVerify, while this doesn't.
+	verifiedChains := session.verifiedChains
+	if len(verifiedChains) == 0 {
+		return false
+	}
+
+	if !c.checkServerVerifiedChain(certs, verifiedChains) {
+		// No valid chains, delete the entry.
+		c.config.ClientSessionCache.Put(cacheKey, nil)
+		return false
+	}
+
+	return true
 }
 
 // certificateRequestInfoFromMsg generates a CertificateRequestInfo from a TLS

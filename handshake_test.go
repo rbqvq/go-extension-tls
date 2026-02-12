@@ -430,7 +430,7 @@ func runMain(m *testing.M) int {
 	}
 
 	testConfig = &Config{
-		Time:               func() time.Time { return time.Unix(0, 0) },
+		Time:               func() time.Time { return time.Date(2016, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Rand:               zeroSource{},
 		Certificates:       make([]Certificate, 2),
 		InsecureSkipVerify: true,
