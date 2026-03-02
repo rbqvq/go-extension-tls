@@ -36,6 +36,7 @@ type clientHandshakeState struct {
 	masterSecret []byte
 	session      *SessionState        // the session being resumed
 	ticket       *newSessionTicketMsg // a fresh ticket received during this handshake
+	echContext   *echClientContext
 	extensions   []Extension
 }
 
@@ -605,6 +606,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 			serverHello: serverHello,
 			hello:       hello,
 			session:     session,
+			echContext:  ech,
 			extensions:  extensions,
 		}
 		return hs.handshake()
@@ -918,6 +920,10 @@ func (hs *clientHandshakeState) handshake() error {
 		if err := hs.readFinished(c.serverFinished[:]); err != nil {
 			return err
 		}
+	}
+	if hs.echContext != nil {
+		c.sendAlert(alertInternalError)
+		return &ECHRejectionError{}
 	}
 	if err := c.setup(); err != nil {
 		return err
