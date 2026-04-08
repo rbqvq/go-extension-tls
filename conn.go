@@ -1720,7 +1720,7 @@ func (c *Conn) handleKeyUpdate(keyUpdate *keyUpdateMsg) error {
 	}
 
 	newSecret := cipherSuite.nextTrafficSecret(c.in.trafficSecret)
-	err := c.setReadTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret, c.in.limit)
+	err := c.setReadTrafficSecret(cipherSuite, QUICEncryptionLevelInitial, newSecret, c.in.limit, keyUpdate.updateRequested)
 	if err != nil {
 		return err
 	}
@@ -2123,12 +2123,16 @@ func (c *Conn) VerifyHostname(host string) error {
 // setReadTrafficSecret sets the read traffic secret for the given encryption level. If
 // being called at the same time as setWriteTrafficSecret, the caller must ensure the call
 // to setWriteTrafficSecret happens first so any alerts are sent at the write level.
-func (c *Conn) setReadTrafficSecret(suite *cipherSuiteTLS13, level QUICEncryptionLevel, secret []byte, limit uint16) error {
+func (c *Conn) setReadTrafficSecret(suite *cipherSuiteTLS13, level QUICEncryptionLevel, secret []byte, limit uint16, locked bool) error {
 	// Ensure that there are no buffered handshake messages before changing the
 	// read keys, since that can cause messages to be parsed that were encrypted
 	// using old keys which are no longer appropriate.
 	if c.hand.Len() != 0 {
-		c.sendAlert(alertUnexpectedMessage)
+		if locked {
+			c.sendAlertLocked(alertUnexpectedMessage)
+		} else {
+			c.sendAlert(alertUnexpectedMessage)
+		}
 		return errors.New("tls: handshake buffer not empty before setting read traffic secret")
 	}
 	c.in.setTrafficSecret(suite, level, secret, limit)

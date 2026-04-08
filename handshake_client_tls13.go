@@ -997,7 +997,7 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 	}
 	serverSecret := hs.suite.deriveSecret(handshakeSecret,
 		serverHandshakeTrafficLabel, hs.transcript)
-	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret, maxPlaintext+1); err != nil {
+	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, serverSecret, maxPlaintext+1, false); err != nil {
 		return err
 	}
 
@@ -1373,7 +1373,7 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 		clientApplicationTrafficLabel, hs.transcript)
 	serverSecret := hs.suite.deriveSecret(hs.masterSecret,
 		serverApplicationTrafficLabel, hs.transcript)
-	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelApplication, serverSecret, hs.maxRecvLimit); err != nil {
+	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelApplication, serverSecret, hs.maxRecvLimit, false); err != nil {
 		return err
 	}
 

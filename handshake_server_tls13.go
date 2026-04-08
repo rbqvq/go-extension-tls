@@ -739,7 +739,7 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 			return err
 		}
 		earlyTrafficSecret := hs.suite.deriveSecret(hs.earlySecret, clientEarlyTrafficLabel, transcript)
-		err = c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelEarly, earlyTrafficSecret, maxPlaintext+1)
+		err = c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelEarly, earlyTrafficSecret, maxPlaintext+1, false)
 		if err != nil {
 			return err
 		}
@@ -762,7 +762,7 @@ func (hs *serverHandshakeStateTLS13) checkForResumption() error {
 func (hs *serverHandshakeStateTLS13) doFullHandshake() error {
 	c := hs.c
 
-	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.clientHandshakeSecret, hs.maxRecvLimit); err != nil {
+	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.clientHandshakeSecret, hs.maxRecvLimit, false); err != nil {
 		return err
 	}
 
@@ -789,7 +789,7 @@ func (hs *serverHandshakeStateTLS13) doFullHandshake() error {
 func (hs *serverHandshakeStateTLS13) doEarlyHandshake() error {
 	c := hs.c
 
-	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.clientHandshakeSecret, hs.maxRecvLimit); err != nil {
+	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelHandshake, hs.clientHandshakeSecret, hs.maxRecvLimit, false); err != nil {
 		return err
 	}
 
@@ -1820,7 +1820,7 @@ func (hs *serverHandshakeStateTLS13) readClientFinished() error {
 		return errors.New("tls: invalid client finished hash")
 	}
 
-	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret, hs.maxSentLimit); err != nil {
+	if err := c.setReadTrafficSecret(hs.suite, QUICEncryptionLevelApplication, hs.trafficSecret, hs.maxSentLimit, false); err != nil {
 		return err
 	}
 
