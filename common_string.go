@@ -71,20 +71,40 @@ func _() {
 	_ = x[CurveP384-24]
 	_ = x[CurveP521-25]
 	_ = x[X25519-29]
+	_ = x[CurveSM2-41]
+	_ = x[FFDHE2048-256]
+	_ = x[FFDHE3072-257]
+	_ = x[FFDHE4096-258]
+	_ = x[FFDHE6144-259]
+	_ = x[FFDHE8192-260]
+	_ = x[MLKEM768-513]
+	_ = x[MLKEM1024-514]
 	_ = x[X25519MLKEM768-4588]
 	_ = x[SecP256r1MLKEM768-4587]
 	_ = x[SecP384r1MLKEM1024-4589]
+	_ = x[CurveSM2MLKEM768-4590]
+	_ = x[SecP384r1Kyber768OQS-12092]
+	_ = x[X25519Kyber768Draft00-25497]
+	_ = x[SecP256r1Kyber768Draft00-25498]
 }
 
 const (
 	_CurveID_name_0 = "CurveP256CurveP384CurveP521"
 	_CurveID_name_1 = "X25519"
-	_CurveID_name_2 = "SecP256r1MLKEM768X25519MLKEM768SecP384r1MLKEM1024"
+	_CurveID_name_2 = "CurveSM2"
+	_CurveID_name_3 = "FFDHE2048FFDHE3072FFDHE4096FFDHE6144FFDHE8192"
+	_CurveID_name_4 = "MLKEM768MLKEM1024"
+	_CurveID_name_5 = "SecP256r1MLKEM768X25519MLKEM768SecP384r1MLKEM1024CurveSM2MLKEM768"
+	_CurveID_name_6 = "SecP384r1Kyber768OQS"
+	_CurveID_name_7 = "X25519Kyber768Draft00SecP256r1Kyber768Draft00"
 )
 
 var (
 	_CurveID_index_0 = [...]uint8{0, 9, 18, 27}
-	_CurveID_index_2 = [...]uint8{0, 17, 31, 49}
+	_CurveID_index_3 = [...]uint8{0, 9, 18, 27, 36, 45}
+	_CurveID_index_4 = [...]uint8{0, 8, 17}
+	_CurveID_index_5 = [...]uint8{0, 17, 31, 49, 65}
+	_CurveID_index_7 = [...]uint8{0, 21, 45}
 )
 
 func (i CurveID) String() string {
@@ -94,9 +114,22 @@ func (i CurveID) String() string {
 		return _CurveID_name_0[_CurveID_index_0[i]:_CurveID_index_0[i+1]]
 	case i == 29:
 		return _CurveID_name_1
-	case 4587 <= i && i <= 4589:
+	case i == 41:
+		return _CurveID_name_2
+	case 256 <= i && i <= 260:
+		i -= 256
+		return _CurveID_name_3[_CurveID_index_3[i]:_CurveID_index_3[i+1]]
+	case 513 <= i && i <= 514:
+		i -= 513
+		return _CurveID_name_4[_CurveID_index_4[i]:_CurveID_index_4[i+1]]
+	case 4587 <= i && i <= 4590:
 		i -= 4587
-		return _CurveID_name_2[_CurveID_index_2[i]:_CurveID_index_2[i+1]]
+		return _CurveID_name_5[_CurveID_index_5[i]:_CurveID_index_5[i+1]]
+	case i == 12092:
+		return _CurveID_name_6
+	case 25497 <= i && i <= 25498:
+		i -= 25497
+		return _CurveID_name_7[_CurveID_index_7[i]:_CurveID_index_7[i+1]]
 	default:
 		return "CurveID(" + strconv.FormatInt(int64(i), 10) + ")"
 	}

@@ -11,12 +11,12 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/subtle"
-	"crypto/tls/internal/fips140tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
+	"slices"
 	"time"
 )
 
@@ -36,6 +36,7 @@ type serverHandshakeState struct {
 	finishedHash finishedHash
 	masterSecret []byte
 	cert         *Certificate
+	extensions   []Extension
 }
 
 // serverHandshake performs a TLS handshake as a server.
@@ -51,6 +52,7 @@ func (c *Conn) serverHandshake(ctx context.Context) error {
 			ctx:         ctx,
 			clientHello: clientHello,
 			echContext:  ech,
+			extensions:  clientHello.extensionList,
 		}
 		return hs.handshake()
 	}
@@ -59,6 +61,7 @@ func (c *Conn) serverHandshake(ctx context.Context) error {
 		c:           c,
 		ctx:         ctx,
 		clientHello: clientHello,
+		extensions:  clientHello.extensionList,
 	}
 	return hs.handshake()
 }
@@ -96,6 +99,9 @@ func (hs *serverHandshakeState) handshake() error {
 		if err := hs.readFinished(nil); err != nil {
 			return err
 		}
+		if err := c.setup(); err != nil {
+			return err
+		}
 	} else {
 		// The client didn't include a session ticket, or it wasn't
 		// valid so we do a full handshake.
@@ -122,10 +128,13 @@ func (hs *serverHandshakeState) handshake() error {
 		if _, err := c.flush(); err != nil {
 			return err
 		}
+		if err := c.setup(); err != nil {
+			return err
+		}
 	}
 
 	c.ekm = ekmFromMasterSecret(c.vers, hs.suite, hs.masterSecret, hs.clientHello.random, hs.hello.random)
-	c.isHandshakeComplete.Store(true)
+	c.handshakeState.Store(handshakeCompleted)
 
 	return nil
 }
@@ -208,9 +217,35 @@ func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, *echServer
 		return nil, nil, errors.New("tls: Encrypted Client Hello cannot be used pre-TLS 1.3")
 	}
 
-	if c.config.MinVersion == 0 && c.vers < VersionTLS12 {
-		tls10server.Value() // ensure godebug is initialized
-		tls10server.IncNonDefault()
+	for i, extension := range clientHello.extensionList {
+		switch extension := extension.(type) {
+		case nil:
+		case *UnimplementedExtension:
+			for _, ext := range c.config.extensions() {
+				if ext == nil {
+					continue
+				}
+
+				if ext.ExtensionId() != extension.Id {
+					continue
+				}
+
+				ext = ext.Clone()
+				ext.NegotiatedVersion(c.vers)
+
+				ok, err := ext.Unmarshal(typeClientHello, ech != nil, extension.Data, c.extensionState)
+				if !ok {
+					return nil, nil, c.sendAlert(alertDecodeError)
+				}
+				if err != nil {
+					c.sendAlert(alertIllegalParameter)
+					return nil, nil, err
+				}
+
+				clientHello.extensionList[i] = ext
+				break
+			}
+		}
 	}
 
 	return clientHello, ech, nil
@@ -221,6 +256,7 @@ func (hs *serverHandshakeState) processClientHello() error {
 
 	hs.hello = new(serverHelloMsg)
 	hs.hello.vers = c.vers
+	hs.hello.extensions = hs.extensions
 
 	foundCompression := false
 	// We only support null compression, so check that the client offered it.
@@ -259,9 +295,27 @@ func (hs *serverHandshakeState) processClientHello() error {
 		return errors.New("tls: initial handshake had non-empty renegotiation extension")
 	}
 
+	if hs.clientHello.limitSupported {
+		if hs.clientHello.recordSizeLimit < 64 {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: client sent an invalid record size limit")
+		}
+
+		if c.config.MaxRecordSize != 0 {
+			if c.config.MaxRecordSize < 64 {
+				c.sendAlert(alertInternalError)
+				return errors.New("tls: MaxRecordSize must greater than 64")
+			}
+
+			hs.hello.limitSupported = true
+			hs.hello.recordSizeLimit = min(maxPlaintext, c.config.MaxRecordSize)
+		}
+	}
+
 	hs.hello.extendedMasterSecret = hs.clientHello.extendedMasterSecret
 	hs.hello.secureRenegotiationSupported = hs.clientHello.secureRenegotiationSupported
 	hs.hello.compressionMethod = compressionNone
+	hs.hello.encryptThenMAC = hs.clientHello.encryptThenMAC && c.config.EncryptThenMAC
 	if len(hs.clientHello.serverName) > 0 {
 		c.serverName = hs.clientHello.serverName
 	}
@@ -396,7 +450,26 @@ func supportsECDHE(c *Config, version uint16, supportedCurves []CurveID, support
 func (hs *serverHandshakeState) pickCipherSuite() error {
 	c := hs.c
 
-	preferenceList := c.config.cipherSuites(isAESGCMPreferred(hs.clientHello.cipherSuites))
+	configCipherSuites := c.config.supportedCipherSuites()
+	preferenceList := make([]uint16, 0, len(configCipherSuites))
+
+	var preferenceOrder []uint16
+	switch {
+	case c.config.PreferCipherSuites:
+		preferenceOrder = configCipherSuites
+	default:
+		preferenceOrder = c.config.cipherSuites(hasAESGCMHardwareSupport && isAESGCMPreferred(hs.clientHello.cipherSuites))
+	}
+
+	for _, suiteID := range preferenceOrder {
+		if IsGREASE(suiteID) {
+			continue
+		}
+
+		if slices.Contains(configCipherSuites, suiteID) {
+			preferenceList = append(preferenceList, suiteID)
+		}
+	}
 
 	hs.suite = selectCipherSuite(preferenceList, hs.clientHello.cipherSuites, hs.cipherSuiteOk)
 	if hs.suite == nil {
@@ -405,15 +478,6 @@ func (hs *serverHandshakeState) pickCipherSuite() error {
 			hs.clientHello.cipherSuites)
 	}
 	c.cipherSuite = hs.suite.id
-
-	if c.config.CipherSuites == nil && !fips140tls.Required() && rsaKexCiphers[hs.suite.id] {
-		tlsrsakex.Value() // ensure godebug is initialized
-		tlsrsakex.IncNonDefault()
-	}
-	if c.config.CipherSuites == nil && !fips140tls.Required() && tdesCiphers[hs.suite.id] {
-		tls3des.Value() // ensure godebug is initialized
-		tls3des.IncNonDefault()
-	}
 
 	for _, id := range hs.clientHello.cipherSuites {
 		if id == TLS_FALLBACK_SCSV {
@@ -512,27 +576,6 @@ func (hs *serverHandshakeState) checkForResumption() error {
 		return nil
 	}
 
-	sessionHasClientCerts := len(sessionState.peerCertificates) != 0
-	needClientCerts := requiresClientCert(c.config.ClientAuth)
-	if needClientCerts && !sessionHasClientCerts {
-		return nil
-	}
-	if sessionHasClientCerts && c.config.ClientAuth == NoClientCert {
-		return nil
-	}
-	if sessionHasClientCerts && c.config.time().After(sessionState.peerCertificates[0].NotAfter) {
-		return nil
-	}
-	opts := x509.VerifyOptions{
-		CurrentTime: c.config.time(),
-		Roots:       c.config.ClientCAs,
-		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	if sessionHasClientCerts && c.config.ClientAuth >= VerifyClientCertIfGiven &&
-		!anyValidVerifiedChain(sessionState.verifiedChains, opts) {
-		return nil
-	}
-
 	// RFC 7627, Section 5.3
 	if !sessionState.extMasterSecret && hs.clientHello.extendedMasterSecret {
 		return nil
@@ -542,15 +585,11 @@ func (hs *serverHandshakeState) checkForResumption() error {
 		// weird downgrade in client capabilities.
 		return errors.New("tls: session supported extended_master_secret but client does not")
 	}
-	if !sessionState.extMasterSecret && fips140tls.Required() {
-		// FIPS 140-3 requires the use of Extended Master Secret.
+
+	if !c.checkCertsFromClientResumption(sessionState) {
 		return nil
 	}
 
-	c.peerCertificates = sessionState.peerCertificates
-	c.ocspResponse = sessionState.ocspResponse
-	c.scts = sessionState.scts
-	c.verifiedChains = sessionState.verifiedChains
 	c.extMasterSecret = sessionState.extMasterSecret
 	hs.sessionState = sessionState
 	hs.suite = suite
@@ -578,13 +617,6 @@ func (hs *serverHandshakeState) doResumeHandshake() error {
 	}
 	if _, err := hs.c.writeHandshakeRecord(hs.hello, &hs.finishedHash); err != nil {
 		return err
-	}
-
-	if c.config.VerifyConnection != nil {
-		if err := c.config.VerifyConnection(c.connectionStateLocked()); err != nil {
-			c.sendAlert(alertBadCertificate)
-			return err
-		}
 	}
 
 	hs.masterSecret = hs.sessionState.secret
@@ -659,7 +691,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		}
 		if c.vers >= VersionTLS12 {
 			certReq.hasSignatureAlgorithm = true
-			certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms(c.vers)
+			certReq.supportedSignatureAlgorithms = c.config.signatureAlgorithmsPreferences(c.vers)
 		}
 
 		// An empty list of certificateAuthorities signals to
@@ -738,10 +770,6 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		hs.masterSecret = extMasterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret,
 			hs.finishedHash.Sum())
 	} else {
-		if fips140tls.Required() {
-			c.sendAlert(alertHandshakeFailure)
-			return errors.New("tls: FIPS 140-3 requires the use of Extended Master Secret")
-		}
 		hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret,
 			hs.clientHello.random, hs.hello.random)
 	}
@@ -780,10 +808,6 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 			sigType, sigHash, err = typeAndHashFromSignatureScheme(certVerify.signatureAlgorithm)
 			if err != nil {
 				return c.sendAlert(alertInternalError)
-			}
-			if sigHash == crypto.SHA1 {
-				tlssha1.Value() // ensure godebug is initialized
-				tlssha1.IncNonDefault()
 			}
 			if hs.finishedHash.buffer == nil {
 				c.sendAlert(alertInternalError)
@@ -837,8 +861,13 @@ func (hs *serverHandshakeState) establishKeys() error {
 		serverCipher = hs.suite.aead(serverKey, serverIV)
 	}
 
-	c.in.prepareCipherSpec(c.vers, clientCipher, clientHash)
-	c.out.prepareCipherSpec(c.vers, serverCipher, serverHash)
+	var maxRecvLimit, maxSentLimit uint16 = maxPlaintext, maxPlaintext
+	if hs.hello.limitSupported {
+		maxRecvLimit = hs.hello.recordSizeLimit
+		maxSentLimit = min(maxSentLimit, hs.clientHello.recordSizeLimit)
+	}
+	c.in.prepareCipherSpec(c.vers, clientCipher, clientHash, clientKey, clientIV, clientMAC, hs.hello.encryptThenMAC, maxRecvLimit)
+	c.out.prepareCipherSpec(c.vers, serverCipher, serverHash, serverKey, serverIV, serverMAC, hs.hello.encryptThenMAC, maxSentLimit)
 
 	return nil
 }
@@ -964,41 +993,6 @@ func (c *Conn) processCertsFromClient(certificate Certificate) error {
 		return errors.New("tls: client didn't provide a certificate")
 	}
 
-	if c.config.ClientAuth >= VerifyClientCertIfGiven && len(certs) > 0 {
-		opts := x509.VerifyOptions{
-			Roots:         c.config.ClientCAs,
-			CurrentTime:   c.config.time(),
-			Intermediates: x509.NewCertPool(),
-			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		}
-
-		for _, cert := range certs[1:] {
-			opts.Intermediates.AddCert(cert)
-		}
-
-		chains, err := certs[0].Verify(opts)
-		if err != nil {
-			if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
-				c.sendAlert(alertUnknownCA)
-			} else if errCertificateInvalid, ok := errors.AsType[x509.CertificateInvalidError](err); ok && errCertificateInvalid.Reason == x509.Expired {
-				c.sendAlert(alertCertificateExpired)
-			} else {
-				c.sendAlert(alertBadCertificate)
-			}
-			return &CertificateVerificationError{UnverifiedCertificates: certs, Err: err}
-		}
-
-		c.verifiedChains, err = fipsAllowedChains(chains)
-		if err != nil {
-			c.sendAlert(alertBadCertificate)
-			return &CertificateVerificationError{UnverifiedCertificates: certs, Err: err}
-		}
-	}
-
-	c.peerCertificates = certs
-	c.ocspResponse = certificate.OCSPStaple
-	c.scts = certificate.SignedCertificateTimestamps
-
 	if len(certs) > 0 {
 		switch certs[0].PublicKey.(type) {
 		case *ecdsa.PublicKey, *rsa.PublicKey, ed25519.PublicKey:
@@ -1006,7 +1000,38 @@ func (c *Conn) processCertsFromClient(certificate Certificate) error {
 			c.sendAlert(alertUnsupportedCertificate)
 			return fmt.Errorf("tls: client certificate contains an unsupported public key of type %T", certs[0].PublicKey)
 		}
+
+		if c.config.ClientAuth >= VerifyClientCertIfGiven {
+			opts := x509.VerifyOptions{
+				Roots:         c.config.ClientCAs,
+				CurrentTime:   c.config.time(),
+				Intermediates: x509.NewCertPool(),
+				KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+			}
+
+			for _, cert := range certs[1:] {
+				opts.Intermediates.AddCert(cert)
+			}
+
+			chains, err := certs[0].Verify(opts)
+			if err != nil {
+				if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
+					c.sendAlert(alertUnknownCA)
+				} else if errCertificateInvalid, ok := errors.AsType[x509.CertificateInvalidError](err); ok && errCertificateInvalid.Reason == x509.Expired {
+					c.sendAlert(alertCertificateExpired)
+				} else {
+					c.sendAlert(alertBadCertificate)
+				}
+				return &CertificateVerificationError{UnverifiedCertificates: certs, Err: err}
+			}
+
+			c.verifiedChains = chains
+		}
 	}
+
+	c.peerCertificates = certs
+	c.ocspResponse = certificate.OCSPStaple
+	c.scts = certificate.SignedCertificateTimestamps
 
 	if c.config.VerifyPeerCertificate != nil {
 		if err := c.config.VerifyPeerCertificate(certificates, c.verifiedChains); err != nil {
@@ -1018,6 +1043,155 @@ func (c *Conn) processCertsFromClient(certificate Certificate) error {
 	return nil
 }
 
+// processCertsFromClientResumption verifies a chain of client certificates.
+func (c *Conn) processCertsFromClientResumption(certs []*x509.Certificate, verifiedChains [][]*x509.Certificate) ([][]*x509.Certificate, error) {
+	// We do not require client certificate verification, skip this step.
+	if c.config.ClientAuth < VerifyClientCertIfGiven {
+		return nil, nil
+	}
+
+	// The client did not provide a certificate, skip this step.
+	if len(certs) == 0 {
+		return nil, nil
+	}
+
+	opts := x509.VerifyOptions{
+		Roots:       c.config.ClientCAs,
+		CurrentTime: c.config.time(),
+		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+
+	// If we already validated the chain, we only care that it is rooted
+	// in a CA in opts.Roots. On platforms where we control chain validation
+	// (e.g. not Windows or macOS) this is a simple lookup in the CertPool
+	// internal hash map, which we can simulate by running Verify on the
+	// root. On other platforms, we have to do full verification again,
+	// because EKU handling might differ. We will want to replace this with
+	// CertPool.Contains if/once that is available. See go.dev/issue/77376.
+	if len(verifiedChains) > 0 && isRootOnlyVerifyAllowed(opts.Roots) {
+		reverifiedChains := make([][]*x509.Certificate, 0, len(verifiedChains))
+		for _, verifiedChain := range verifiedChains {
+			if len(verifiedChain) == 0 {
+				continue
+			}
+
+			// Check the validity period of the verifiedChain.
+			if slices.ContainsFunc(verifiedChain, func(cert *x509.Certificate) bool {
+				return opts.CurrentTime.Before(cert.NotBefore) || opts.CurrentTime.After(cert.NotAfter)
+			}) {
+				continue
+			}
+
+			// Check the root certificate's validity period and whether it is still trusted by us.
+			rootCA := verifiedChain[len(verifiedChain)-1]
+			_, err := rootCA.Verify(opts)
+			if err != nil {
+				continue
+			}
+
+			reverifiedChains = append(reverifiedChains, verifiedChain)
+		}
+
+		// If we have the valid chains, use it directly.
+		if len(reverifiedChains) > 0 {
+			return reverifiedChains, nil
+		}
+
+		if !isPlatformVerifier(opts.Roots) {
+			return nil, errors.New("tls: client session didn't provide any valid chains")
+		}
+	}
+
+	// If no valid verified chain exists, re-execute full-chain certificate verification.
+	opts.Intermediates = x509.NewCertPool()
+	for _, cert := range certs[1:] {
+		opts.Intermediates.AddCert(cert)
+	}
+
+	return certs[0].Verify(opts)
+}
+
+// checkCertsFromClientResumption takes a chain of client certificates either
+// from a sessionState and verifies them.
+func (c *Conn) checkCertsFromClientResumption(sessionState *SessionState) bool {
+	// If we don't need the client certificates right now, accept the resumption.
+	if c.config.ClientAuth == NoClientCert {
+		if c.config.VerifyConnection != nil {
+			connectionState := c.connectionStateLocked()
+			connectionState.DidResume = true
+			if err := c.config.VerifyConnection(connectionState); err != nil {
+				return false
+			}
+		}
+		return true
+	}
+
+	// If we request the client to provide certificates, pick up it from sessionState
+	certs := sessionState.peerCertificates
+
+	// If we require the client to provide certificates, check it.
+	if len(certs) == 0 && requiresClientCert(c.config.ClientAuth) {
+		return false
+	}
+
+	for _, cert := range certs {
+		if cert.PublicKeyAlgorithm == x509.RSA {
+			n := cert.PublicKey.(*rsa.PublicKey).N.BitLen()
+			if _, ok := checkKeySize(n); !ok {
+				return false
+			}
+		}
+	}
+
+	if len(certs) > 0 {
+		switch certs[0].PublicKey.(type) {
+		case *ecdsa.PublicKey, *rsa.PublicKey, ed25519.PublicKey:
+		default:
+			return false
+		}
+
+		if now := c.config.time(); now.Before(certs[0].NotBefore) || now.After(certs[0].NotAfter) {
+			return false
+		}
+
+		if !c.checkDelegatedCredential(certs[0], sessionState.verifiedDC) {
+			return false
+		}
+	}
+
+	verifiedChains, err := c.processCertsFromClientResumption(certs, sessionState.verifiedChains)
+	if err != nil {
+		return false
+	}
+
+	if c.config.VerifyPeerCertificate != nil {
+		certificates := certificatesToBytesSlice(certs)
+		if err := c.config.VerifyPeerCertificate(certificates, verifiedChains); err != nil {
+			return false
+		}
+	}
+
+	if c.config.VerifyConnection != nil {
+		connectionState := c.connectionStateLocked()
+		connectionState.DidResume = true
+		connectionState.SignedCertificateTimestamps = sessionState.scts
+		connectionState.OCSPResponse = sessionState.ocspResponse
+		connectionState.PeerCertificates = certs
+		connectionState.VerifiedChains = verifiedChains
+		connectionState.VerifiedDC = sessionState.verifiedDC != nil
+		if err := c.config.VerifyConnection(connectionState); err != nil {
+			return false
+		}
+	}
+
+	c.ocspResponse = sessionState.ocspResponse
+	c.scts = sessionState.scts
+	c.peerCertificates = certs
+	c.verifiedChains = verifiedChains
+	c.verifiedDC = sessionState.verifiedDC
+	return true
+}
+
 func clientHelloInfo(ctx context.Context, c *Conn, clientHello *clientHelloMsg) *ClientHelloInfo {
 	supportedVersions := clientHello.supportedVersions
 	if len(clientHello.supportedVersions) == 0 {
@@ -1025,17 +1199,20 @@ func clientHelloInfo(ctx context.Context, c *Conn, clientHello *clientHelloMsg) 
 	}
 
 	return &ClientHelloInfo{
-		CipherSuites:      clientHello.cipherSuites,
-		ServerName:        clientHello.serverName,
-		SupportedCurves:   clientHello.supportedCurves,
-		SupportedPoints:   clientHello.supportedPoints,
-		SignatureSchemes:  clientHello.supportedSignatureAlgorithms,
-		SupportedProtos:   clientHello.alpnProtocols,
-		SupportedVersions: supportedVersions,
-		Extensions:        clientHello.extensions,
-		Conn:              c.conn,
-		HelloRetryRequest: c.didHRR,
-		config:            c.config,
-		ctx:               ctx,
+		CipherSuites:         clientHello.cipherSuites,
+		ServerName:           clientHello.serverName,
+		SupportedCurves:      clientHello.supportedCurves,
+		SupportedPoints:      clientHello.supportedPoints,
+		SignatureSchemes:     clientHello.supportedSignatureAlgorithms,
+		SignatureSchemesDC:   clientHello.supportedSignatureAlgorithmsDC,
+		SupportedProtos:      clientHello.alpnProtocols,
+		SupportedVersions:    supportedVersions,
+		Extensions:           clientHello.extensions,
+		CompressedExtensions: clientHello.echOuterExts,
+		ExtensionList:        clientHello.extensionList,
+		Conn:                 c.conn,
+		HelloRetryRequest:    c.didHRR,
+		config:               c.config,
+		ctx:                  ctx,
 	}
 }

@@ -94,6 +94,9 @@ func verifyLegacyHandshakeSignature(sigType uint8, pubkey crypto.PublicKey, hash
 const (
 	serverSignatureContext = "TLS 1.3, server CertificateVerify\x00"
 	clientSignatureContext = "TLS 1.3, client CertificateVerify\x00"
+
+	serverCredentialSignatureContext = "TLS, server delegated credentials\x00"
+	clientCredentialSignatureContext = "TLS, client delegated credentials\x00"
 )
 
 var signaturePadding = []byte{
@@ -115,6 +118,15 @@ func signedMessage(context string, transcript hash.Hash) []byte {
 	b.Write(signaturePadding)
 	io.WriteString(b, context)
 	b.Write(transcript.Sum(nil))
+	return b.Bytes()
+}
+
+func signedCredential(context string, certificate, delegatedCredential []byte) []byte {
+	b := &bytes.Buffer{}
+	b.Write(signaturePadding)
+	io.WriteString(b, context)
+	b.Write(certificate)
+	b.Write(delegatedCredential)
 	return b.Bytes()
 }
 
@@ -226,6 +238,26 @@ func signatureSchemesForPublicKey(version uint16, pub crypto.PublicKey) []Signat
 	}
 }
 
+func signatureSchemesForPublicKeyDC(pub crypto.PublicKey) []SignatureScheme {
+	switch pub := pub.(type) {
+	case *ecdsa.PublicKey:
+		switch pub.Curve {
+		case elliptic.P256():
+			return []SignatureScheme{ECDSAWithP256AndSHA256}
+		case elliptic.P384():
+			return []SignatureScheme{ECDSAWithP384AndSHA384}
+		case elliptic.P521():
+			return []SignatureScheme{ECDSAWithP521AndSHA512}
+		default:
+			return nil
+		}
+	case ed25519.PublicKey:
+		return []SignatureScheme{Ed25519}
+	default:
+		return nil
+	}
+}
+
 // selectSignatureScheme picks a SignatureScheme from the peer's preference list
 // that works with the selected certificate. It's only called for protocol
 // versions that support signature algorithms, so TLS 1.2 and 1.3.
@@ -251,12 +283,10 @@ func selectSignatureScheme(vers uint16, c *Certificate, peerAlgs []SignatureSche
 	if len(peerAlgs) == 0 && vers == VersionTLS12 {
 		// For TLS 1.2, if the client didn't send signature_algorithms then we
 		// can assume that it supports SHA1. See RFC 5246, Section 7.4.1.4.1.
-		// RFC 9155 made signature_algorithms mandatory in TLS 1.2, and we gated
-		// it behind the tlssha1 GODEBUG setting.
-		if tlssha1.Value() != "1" {
-			return 0, errors.New("tls: missing signature_algorithms from TLS 1.2 peer")
-		}
-		peerAlgs = []SignatureScheme{PKCS1WithSHA1, ECDSAWithSHA1}
+		// RFC 9155 made signature_algorithms mandatory in TLS 1.2.
+		// 
+		// NOTE: SHA1 was disabled.
+		return 0, errors.New("tls: missing signature_algorithms from TLS 1.2 peer")
 	}
 	// Pick signature scheme in the peer's preference order, as our
 	// preference order is not configurable.

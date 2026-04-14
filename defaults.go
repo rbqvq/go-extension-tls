@@ -5,33 +5,16 @@
 package tls
 
 import (
-	"internal/godebug"
 	"slices"
-	_ "unsafe" // for linkname
 )
 
 // Defaults are collected in this file to allow distributions to more easily patch
 // them to apply local policies.
 
-var tlsmlkem = godebug.New("tlsmlkem")
-var tlssecpmlkem = godebug.New("tlssecpmlkem")
-
 // defaultCurvePreferences is the default set of supported key exchanges, as
 // well as the preference order.
 func defaultCurvePreferences() []CurveID {
-	switch {
-	// tlsmlkem=0 restores the pre-Go 1.24 default.
-	case tlsmlkem.Value() == "0":
-		return []CurveID{X25519, CurveP256, CurveP384, CurveP521}
-	// tlssecpmlkem=0 restores the pre-Go 1.26 default.
-	case tlssecpmlkem.Value() == "0":
-		return []CurveID{X25519MLKEM768, X25519, CurveP256, CurveP384, CurveP521}
-	default:
-		return []CurveID{
-			X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024,
-			X25519, CurveP256, CurveP384, CurveP521,
-		}
-	}
+	return []CurveID{X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519, CurveP256, CurveP384, CurveP521}
 }
 
 // defaultSupportedSignatureAlgorithms returns the signature and hash algorithms that
@@ -55,8 +38,25 @@ func defaultSupportedSignatureAlgorithms() []SignatureScheme {
 	}
 }
 
-var tlsrsakex = godebug.New("tlsrsakex")
-var tls3des = godebug.New("tls3des")
+// defaultSupportedSignatureAlgorithmsDC returns the signature and hash algorithms that
+// the code advertises as supported in a TLS 1.3 ClientHello and in a TLS 1.3
+// CertificateRequest. This excludes 'rsa_pss_rsae_' and 'rsa_pkc1s_' algorithms.
+func defaultSupportedSignatureAlgorithmsDC() []SignatureScheme {
+	return []SignatureScheme{
+		ECDSAWithP256AndSHA256,
+		Ed25519,
+		ECDSAWithP384AndSHA384,
+		ECDSAWithP521AndSHA512,
+	}
+}
+
+func defaultCertificateCompressionAlgorithms() []CertificateCompressionAlgorithm {
+	return []CertificateCompressionAlgorithm{
+		Zlib,
+		Brotli,
+		Zstd,
+	}
+}
 
 func supportedCipherSuites(aesGCMPreferred bool) []uint16 {
 	if aesGCMPreferred {
@@ -69,44 +69,103 @@ func supportedCipherSuites(aesGCMPreferred bool) []uint16 {
 func defaultCipherSuites(aesGCMPreferred bool) []uint16 {
 	cipherSuites := supportedCipherSuites(aesGCMPreferred)
 	return slices.DeleteFunc(cipherSuites, func(c uint16) bool {
-		return disabledCipherSuites[c] ||
-			tlsrsakex.Value() != "1" && rsaKexCiphers[c] ||
-			tls3des.Value() != "1" && tdesCiphers[c]
+		return extendedCipherSuites[c] ||
+			disabledCipherSuites[c] ||
+			rsaKexCiphers[c] ||
+			tdesCiphers[c]
 	})
 }
 
-// defaultCipherSuitesTLS13 is also the preference order, since there are no
-// disabled by default TLS 1.3 cipher suites. The same AES vs ChaCha20 logic as
-// cipherSuitesPreferenceOrder applies.
-//
-// defaultCipherSuitesTLS13 should be an internal detail,
-// but widely used packages access it using linkname.
-// Notable members of the hall of shame include:
-//   - github.com/quic-go/quic-go
-//   - github.com/sagernet/quic-go
-//
-// Do not remove or change the type signature.
-// See go.dev/issue/67401.
-//
-//go:linkname defaultCipherSuitesTLS13
 var defaultCipherSuitesTLS13 = []uint16{
 	TLS_AES_128_GCM_SHA256,
 	TLS_AES_256_GCM_SHA384,
+	TLS_AES_128_CCM_SHA256,
+	TLS_AES_128_CCM_8_SHA256,
 	TLS_CHACHA20_POLY1305_SHA256,
+	TLS_SM4_GCM_SM3,
+	TLS_SM4_CCM_SM3,
 }
 
-// defaultCipherSuitesTLS13NoAES should be an internal detail,
-// but widely used packages access it using linkname.
-// Notable members of the hall of shame include:
-//   - github.com/quic-go/quic-go
-//   - github.com/sagernet/quic-go
-//
-// Do not remove or change the type signature.
-// See go.dev/issue/67401.
-//
-//go:linkname defaultCipherSuitesTLS13NoAES
 var defaultCipherSuitesTLS13NoAES = []uint16{
 	TLS_CHACHA20_POLY1305_SHA256,
 	TLS_AES_128_GCM_SHA256,
 	TLS_AES_256_GCM_SHA384,
+	TLS_AES_128_CCM_SHA256,
+	TLS_AES_128_CCM_8_SHA256,
+	TLS_SM4_GCM_SM3,
+	TLS_SM4_CCM_SM3,
 }
+
+var defaultBehavior = &Behavior{
+	MaxUselessRecords: maxUselessRecords,
+}
+
+var defaultInnerExtensions = []Extension{
+	&ServerNameIndicationExtension{},
+	&SCTExtension{},
+	&EarlyDataExtension{},
+	&QUICTransportParametersExtension{},
+	&EncryptedClientHelloExtension{},
+
+	&ECHOuterExtension{},
+
+	&PreSharedKeyExtension{},
+}
+
+var defaultOuterExtensions = []Extension{
+	&ServerNameIndicationExtension{},
+	&SCTExtension{},
+	&EarlyDataExtension{},
+	&QUICTransportParametersExtension{},
+	&EncryptedClientHelloExtension{},
+
+	&StatusRequestExtension{},
+	&SupportedGroupsExtension{},
+	&SignatureAlgorithmsExtension{},
+	&SignatureAlgorithmsCertExtension{},
+	&ALPNExtension{},
+	&SupportedVersionsExtension{},
+	&CookieExtension{},
+	&KeyShareExtension{},
+	&PSKModesExtension{},
+
+	&PreSharedKeyExtension{},
+}
+
+var defaultCompressedExtensions = []Extension{
+	&StatusRequestExtension{},
+	&SupportedGroupsExtension{},
+	&SignatureAlgorithmsExtension{},
+	&SignatureAlgorithmsCertExtension{},
+	&ALPNExtension{},
+	&SupportedVersionsExtension{},
+	&CookieExtension{},
+	&KeyShareExtension{},
+	&PSKModesExtension{},
+}
+
+var defaultExtensions = []Extension{
+	&ServerNameIndicationExtension{},
+	&SupportedPointsExtension{},
+	&SessionTicketExtension{},
+	&RenegotiationInfoExtension{},
+	&ExtendedMasterSecretExtension{},
+	&SCTExtension{},
+	&EarlyDataExtension{},
+	&QUICTransportParametersExtension{},
+	&EncryptedClientHelloExtension{},
+
+	&StatusRequestExtension{},
+	&SupportedGroupsExtension{},
+	&SignatureAlgorithmsExtension{},
+	&SignatureAlgorithmsCertExtension{},
+	&ALPNExtension{},
+	&SupportedVersionsExtension{},
+	&CookieExtension{},
+	&KeyShareExtension{},
+	&PSKModesExtension{},
+
+	&PreSharedKeyExtension{},
+}
+
+var defaultEncryptedClientHelloConfig = &ECHConfig{}

@@ -207,7 +207,7 @@ func encodeInnerClientHello(inner *clientHelloMsg, maxNameLength int) ([]byte, e
 	} else {
 		paddingLen = maxNameLength + 9
 	}
-	paddingLen = 31 - ((len(h) + paddingLen - 1) % 32)
+	paddingLen += 31 - ((len(h) + paddingLen - 1) % 32)
 
 	return append(h, make([]byte, paddingLen)...), nil
 }
@@ -293,6 +293,7 @@ func decodeInnerClientHello(outer *clientHelloMsg, encoded []byte) (*clientHello
 	if err != nil {
 		return nil, err
 	}
+	echOuterExts := make([]uint16, 0, len(rawOuterExts))
 
 	recon := cryptobyte.NewBuilder(nil)
 	recon.AddUint8(typeClientHello)
@@ -345,6 +346,8 @@ func decodeInnerClientHello(outer *clientHelloMsg, encoded []byte) (*clientHello
 						recon.AddUint16LengthPrefixed(func(recon *cryptobyte.Builder) {
 							recon.AddBytes(rawOuterExts[i].data)
 						})
+
+						echOuterExts = append(echOuterExts, extType)
 					}
 				} else {
 					recon.AddUint16(extension)
@@ -364,6 +367,7 @@ func decodeInnerClientHello(outer *clientHelloMsg, encoded []byte) (*clientHello
 	if !inner.unmarshal(reconBytes) {
 		return nil, errors.New("tls: invalid reconstructed inner client hello")
 	}
+	inner.echOuterExts = echOuterExts
 
 	if !bytes.Equal(inner.encryptedClientHello, []byte{uint8(innerECHExt)}) {
 		return nil, errInvalidECHExt
@@ -376,7 +380,7 @@ func decodeInnerClientHello(outer *clientHelloMsg, encoded []byte) (*clientHello
 		// browsers like Chrome to ensure TLS implementations correctly ignore unknown values.
 		// GREASE values follow a specific pattern: 0x?A0A, where ? can be any hex digit.
 		// These values should be ignored when processing supported TLS versions.
-		if v&0x0F0F == 0x0A0A && v&0xff == v>>8 {
+		if IsGREASE(v) {
 			continue
 		}
 
@@ -412,7 +416,7 @@ func generateOuterECHExt(id uint8, kdfID, aeadID uint16, encodedKey []byte, payl
 	return b.Bytes()
 }
 
-func computeAndUpdateOuterECHExtension(outer, inner *clientHelloMsg, ech *echClientContext, useKey bool) error {
+func (c *Config) computeAndUpdateOuterECHExtension(outer, inner *clientHelloMsg, ech *echClientContext, useKey bool) error {
 	var encapKey []byte
 	if useKey {
 		encapKey = ech.encapsulatedKey
@@ -429,6 +433,7 @@ func computeAndUpdateOuterECHExtension(outer, inner *clientHelloMsg, ech *echCli
 	if err != nil {
 		return err
 	}
+	c.updateClientHelloPadding(outer, !useKey)
 	serializedOuter, err := outer.marshal()
 	if err != nil {
 		return err

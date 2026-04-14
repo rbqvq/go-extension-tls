@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 )
 
 // QUICEncryptionLevel represents a QUIC encryption level used to transmit
@@ -36,6 +37,10 @@ func (l QUICEncryptionLevel) String() string {
 	}
 }
 
+const (
+	quicMaxEarlyData = 0xffffffff
+)
+
 // A QUICConn represents a connection which uses a QUIC implementation as the underlying
 // transport as described in RFC 9001.
 //
@@ -43,7 +48,7 @@ func (l QUICEncryptionLevel) String() string {
 type QUICConn struct {
 	conn *Conn
 
-	sessionTicketSent bool
+	sessionTicketSent atomic.Bool
 }
 
 // A QUICConfig configures a [QUICConn].
@@ -176,6 +181,8 @@ type quicState struct {
 	transportParams []byte // to send to the peer
 
 	enableSessionEvents bool
+
+	sessionState *SessionState
 }
 
 // QUICClient returns a new TLS client side connection using QUICTransport as the
@@ -325,17 +332,25 @@ func (q *QUICConn) SendSessionTicket(opts QUICSessionTicketOptions) error {
 	if c.config.SessionTicketsDisabled {
 		return nil
 	}
-	if !c.isHandshakeComplete.Load() {
+	if c.handshakeState.Load() != handshakeCompleted {
 		return quicError(errors.New("tls: SendSessionTicket called before handshake completed"))
 	}
 	if c.isClient {
 		return quicError(errors.New("tls: SendSessionTicket called on the client"))
 	}
-	if q.sessionTicketSent {
+	if !q.sessionTicketSent.CompareAndSwap(false, true) {
 		return quicError(errors.New("tls: SendSessionTicket called multiple times"))
 	}
-	q.sessionTicketSent = true
-	return quicError(c.sendSessionTicket(opts.EarlyData, opts.Extra))
+
+	sessionState := q.conn.quic.sessionState
+	q.conn.quic.sessionState = nil
+
+	var maxEarlyData uint32
+	if opts.EarlyData {
+		maxEarlyData = quicMaxEarlyData
+	}
+
+	return quicError(c.sendSessionTicket(sessionState, maxEarlyData, opts.Extra))
 }
 
 // StoreSession stores a session previously received in a QUICStoreSession event
@@ -403,22 +418,13 @@ func (c *Conn) quicReadHandshakeBytes(n int) error {
 	return nil
 }
 
-func (c *Conn) quicSetReadSecret(level QUICEncryptionLevel, suite uint16, secret []byte) error {
-	// Ensure that there are no buffered handshake messages before changing the
-	// read keys, since that can cause messages to be parsed that were encrypted
-	// using old keys which are no longer appropriate.
-	// TODO(roland): we should merge this check with the similar one in setReadTrafficSecret.
-	if c.hand.Len() != 0 {
-		c.sendAlert(alertUnexpectedMessage)
-		return errors.New("tls: handshake buffer not empty before setting read traffic secret")
-	}
+func (c *Conn) quicSetReadSecret(level QUICEncryptionLevel, suite uint16, secret []byte) {
 	c.quic.events = append(c.quic.events, QUICEvent{
 		Kind:  QUICSetReadSecret,
 		Level: level,
 		Suite: suite,
 		Data:  secret,
 	})
-	return nil
 }
 
 func (c *Conn) quicSetWriteSecret(level QUICEncryptionLevel, suite uint16, secret []byte) {

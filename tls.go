@@ -7,15 +7,7 @@
 //
 // # FIPS 140-3 mode
 //
-// When the program is in [FIPS 140-3 mode], this package behaves as if only
-// SP 800-140C and SP 800-140D approved protocol versions, cipher suites,
-// signature algorithms, certificate public key types and sizes, and key
-// exchange and derivation algorithms were implemented. Others are silently
-// ignored and not negotiated, or rejected. This set may depend on the
-// algorithms supported by the FIPS 140-3 Go Cryptographic Module selected with
-// GOFIPS140, and may change across Go versions.
-//
-// [FIPS 140-3 mode]: https://go.dev/doc/security/fips140
+// NOT SUPPORTED.
 package tls
 
 // BUG(agl): The crypto/tls package only implements some countermeasures
@@ -33,7 +25,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"internal/godebug"
 	"net"
 	"os"
 	"strings"
@@ -45,8 +36,9 @@ import (
 // at least one certificate or else set GetCertificate.
 func Server(conn net.Conn, config *Config) *Conn {
 	c := &Conn{
-		conn:   conn,
-		config: config,
+		conn:           conn,
+		config:         config,
+		extensionState: new(ExtensionState),
 	}
 	c.handshakeFn = c.serverHandshake
 	return c
@@ -58,9 +50,10 @@ func Server(conn net.Conn, config *Config) *Conn {
 // InsecureSkipVerify in the config.
 func Client(conn net.Conn, config *Config) *Conn {
 	c := &Conn{
-		conn:     conn,
-		config:   config,
-		isClient: true,
+		conn:           conn,
+		config:         config,
+		extensionState: new(ExtensionState),
+		isClient:       true,
 	}
 	c.handshakeFn = c.clientHandshake
 	return c
@@ -239,10 +232,6 @@ func (d *Dialer) DialContext(ctx context.Context, network, addr string) (net.Con
 // files. The files must contain PEM encoded data. The certificate file may
 // contain intermediate certificates following the leaf certificate to form a
 // certificate chain. On successful return, Certificate.Leaf will be populated.
-//
-// Before Go 1.23 Certificate.Leaf was left nil, and the parsed certificate was
-// discarded. This behavior can be re-enabled by setting "x509keypairleaf=0"
-// in the GODEBUG environment variable.
 func LoadX509KeyPair(certFile, keyFile string) (Certificate, error) {
 	certPEMBlock, err := os.ReadFile(certFile)
 	if err != nil {
@@ -255,14 +244,8 @@ func LoadX509KeyPair(certFile, keyFile string) (Certificate, error) {
 	return X509KeyPair(certPEMBlock, keyPEMBlock)
 }
 
-var x509keypairleaf = godebug.New("x509keypairleaf")
-
 // X509KeyPair parses a public/private key pair from a pair of
 // PEM encoded data. On successful return, Certificate.Leaf will be populated.
-//
-// Before Go 1.23 Certificate.Leaf was left nil, and the parsed certificate was
-// discarded. This behavior can be re-enabled by setting "x509keypairleaf=0"
-// in the GODEBUG environment variable.
 func X509KeyPair(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
 	fail := func(err error) (Certificate, error) { return Certificate{}, err }
 
@@ -316,12 +299,7 @@ func X509KeyPair(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
 	if err != nil {
 		return fail(err)
 	}
-
-	if x509keypairleaf.Value() != "0" {
-		cert.Leaf = x509Cert
-	} else {
-		x509keypairleaf.IncNonDefault()
-	}
+	cert.Leaf = x509Cert
 
 	cert.PrivateKey, err = parsePrivateKey(keyDERBlock.Bytes)
 	if err != nil {
@@ -380,4 +358,56 @@ func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {
 	}
 
 	return nil, errors.New("tls: failed to parse private key")
+}
+
+// LoadX509Cert reads and parses a certificate from a file.
+// The file must contain PEM encoded data. The certificate file may
+// contain intermediate certificates following the leaf certificate to form a
+// certificate chain. On successful return, Certificate.Leaf will be populated.
+func LoadX509Cert(certFile string) (Certificate, error) {
+	certPEMBlock, err := os.ReadFile(certFile)
+	if err != nil {
+		return Certificate{}, err
+	}
+	return X509Cert(certPEMBlock)
+}
+
+// X509Cert parses a certificate from PEM encoded data.
+// On successful return, Certificate.Leaf will be populated.
+func X509Cert(certPEMBlock []byte) (Certificate, error) {
+	fail := func(err error) (Certificate, error) { return Certificate{}, err }
+
+	var cert Certificate
+	var skippedBlockTypes []string
+	for {
+		var certDERBlock *pem.Block
+		certDERBlock, certPEMBlock = pem.Decode(certPEMBlock)
+		if certDERBlock == nil {
+			break
+		}
+		if certDERBlock.Type == "CERTIFICATE" {
+			cert.Certificate = append(cert.Certificate, certDERBlock.Bytes)
+		} else {
+			skippedBlockTypes = append(skippedBlockTypes, certDERBlock.Type)
+		}
+	}
+
+	if len(cert.Certificate) == 0 {
+		if len(skippedBlockTypes) == 0 {
+			return fail(errors.New("tls: failed to find any PEM data in certificate input"))
+		}
+		if len(skippedBlockTypes) == 1 && strings.HasSuffix(skippedBlockTypes[0], "PRIVATE KEY") {
+			return fail(errors.New("tls: failed to find certificate PEM data in certificate input, but did find a private key; PEM inputs may have been switched"))
+		}
+		return fail(fmt.Errorf("tls: failed to find \"CERTIFICATE\" PEM block in certificate input after skipping PEM blocks of the following types: %v", skippedBlockTypes))
+	}
+
+	// We don't need to parse the public key for TLS, but we so do anyway
+	// to check that it looks sane and matches the private key.
+	x509Cert, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return fail(err)
+	}
+	cert.Leaf = x509Cert
+	return cert, nil
 }

@@ -56,12 +56,6 @@ type suiteSecret struct {
 }
 
 func (q *testQUICConn) setReadSecret(level QUICEncryptionLevel, suite uint16, secret []byte) {
-	if _, ok := q.writeSecret[level]; !ok && level != QUICEncryptionLevelEarly {
-		q.t.Errorf("SetReadSecret for level %v called before SetWriteSecret", level)
-	}
-	if level == QUICEncryptionLevelApplication && !q.complete {
-		q.t.Errorf("SetReadSecret for level %v called before HandshakeComplete", level)
-	}
 	if _, ok := q.readSecret[level]; ok {
 		q.t.Errorf("SetReadSecret for level %v called twice", level)
 	}
@@ -592,10 +586,12 @@ func TestQUICEarlyData(t *testing.T) {
 	clientConfig.TLSConfig.ClientSessionCache = NewLRUClientSessionCache(1)
 	clientConfig.TLSConfig.ServerName = "example.go.dev"
 	clientConfig.TLSConfig.NextProtos = []string{"h3"}
+	clientConfig.TLSConfig.AllowEarlyData = true
 
 	serverConfig := &QUICConfig{TLSConfig: testConfig.Clone()}
 	serverConfig.TLSConfig.MinVersion = VersionTLS13
 	serverConfig.TLSConfig.NextProtos = []string{"h3"}
+	serverConfig.TLSConfig.AllowEarlyData = true
 
 	cli := newTestQUICClient(t, clientConfig)
 	cli.conn.SetTransportParameters(nil)
@@ -655,11 +651,13 @@ func testQUICEarlyDataDeclined(t *testing.T, server bool) {
 	clientConfig.TLSConfig.ClientSessionCache = NewLRUClientSessionCache(1)
 	clientConfig.TLSConfig.ServerName = "example.go.dev"
 	clientConfig.TLSConfig.NextProtos = []string{"h3"}
+	clientConfig.TLSConfig.AllowEarlyData = true
 
 	serverConfig := &QUICConfig{TLSConfig: testConfig.Clone()}
 	serverConfig.EnableSessionEvents = true
 	serverConfig.TLSConfig.MinVersion = VersionTLS13
 	serverConfig.TLSConfig.NextProtos = []string{"h3"}
+	serverConfig.TLSConfig.AllowEarlyData = true
 
 	cli := newTestQUICClient(t, clientConfig)
 	cli.conn.SetTransportParameters(nil)
@@ -678,7 +676,7 @@ func testQUICEarlyDataDeclined(t *testing.T, server bool) {
 	srv2 := newTestQUICServer(t, serverConfig)
 	srv2.conn.SetTransportParameters(nil)
 	declineEarlyData := func(state *SessionState) {
-		state.EarlyData = false
+		state.maxEarlyData = 0
 	}
 	if server {
 		srv2.onResumeSession = declineEarlyData

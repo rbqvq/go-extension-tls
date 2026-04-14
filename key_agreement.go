@@ -157,6 +157,9 @@ type ecdheKeyAgreement struct {
 
 func (ka *ecdheKeyAgreement) generateServerKeyExchange(config *Config, cert *Certificate, clientHello *clientHelloMsg, hello *serverHelloMsg) (*serverKeyExchangeMsg, error) {
 	for _, c := range clientHello.supportedCurves {
+		if !isECDHEKeyExchange(c) {
+			continue
+		}
 		if config.supportsCurve(ka.version, c) {
 			ka.curveID = c
 			break
@@ -199,10 +202,6 @@ func (ka *ecdheKeyAgreement) generateServerKeyExchange(config *Config, cert *Cer
 		sigType, sigHash, err := typeAndHashFromSignatureScheme(ka.signatureAlgorithm)
 		if err != nil {
 			return nil, err
-		}
-		if sigHash == crypto.SHA1 {
-			tlssha1.Value() // ensure godebug is initialized
-			tlssha1.IncNonDefault()
 		}
 		signed := slices.Concat(clientHello.random, hello.random, serverECDHEParams)
 		if (sigType == signaturePKCS1v15 || sigType == signatureRSAPSS) != ka.isRSA {
@@ -339,10 +338,6 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
 		sigType, sigHash, err = typeAndHashFromSignatureScheme(ka.signatureAlgorithm)
 		if err != nil {
 			return err
-		}
-		if sigHash == crypto.SHA1 {
-			tlssha1.Value() // ensure godebug is initialized
-			tlssha1.IncNonDefault()
 		}
 		if (sigType == signaturePKCS1v15 || sigType == signatureRSAPSS) != ka.isRSA {
 			return errServerKeyExchange

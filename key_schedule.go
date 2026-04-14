@@ -8,15 +8,16 @@ import (
 	"crypto"
 	"crypto/ecdh"
 	"crypto/hmac"
-	"crypto/internal/fips140/tls13"
 	"crypto/mlkem"
 	"errors"
 	"hash"
 	"io"
-)
 
-// This file contains the functions necessary to compute the TLS 1.3 key
-// schedule. See RFC 8446, Section 7.
+	sm2ecdh "github.com/emmansun/gmsm/ecdh"
+	"gitlab.com/go-extension/ffdh"
+	"gitlab.com/go-extension/tls/internal/tls13"
+	"golang.org/x/crypto/sha3"
+)
 
 // nextTrafficSecret generates the next traffic secret, given the current one,
 // according to RFC 8446, Section 7.2.
@@ -51,8 +52,39 @@ func (c *cipherSuiteTLS13) exportKeyingMaterial(s *tls13.MasterSecret, transcrip
 }
 
 type keySharePrivateKeys struct {
-	ecdhe *ecdh.PrivateKey
-	mlkem crypto.Decapsulator
+	curveID CurveID
+	ecdhe   *ecdh.PrivateKey
+	ffdhe   *ffdh.PrivateKey
+	mlkem   crypto.Decapsulator
+	sm2     *sm2ecdh.PrivateKey
+}
+
+func kyberSharedSecret(mlkemSharedSecret, ciphertext []byte) []byte {
+	// Package mlkem768 implements ML-KEM, which compared to Kyber removed a
+	// final hashing step. Compute SHAKE-256(K || SHA3-256(c), 32) to match Kyber.
+	// See https://words.filippo.io/mlkem768/#bonus-track-using-a-ml-kem-implementation-as-kyber-v3.
+	h := sha3.NewShake256()
+	h.Write(mlkemSharedSecret)
+	ch := sha3.Sum256(ciphertext)
+	h.Write(ch[:])
+	out := make([]byte, 32)
+	h.Read(out)
+	return out
+}
+
+func curveForHybrid(id CurveID) CurveID {
+	switch id {
+	case X25519MLKEM768, X25519Kyber768Draft00:
+		return X25519
+	case SecP256r1MLKEM768, SecP256r1Kyber768Draft00:
+		return CurveP256
+	case SecP384r1MLKEM1024, SecP384r1Kyber768OQS:
+		return CurveP384
+	case CurveSM2MLKEM768:
+		return CurveSM2
+	default:
+		return id
+	}
 }
 
 // A keyExchange implements a TLS 1.3 KEM.
@@ -62,7 +94,8 @@ type keyExchange interface {
 	// The first one will match the id, the second (if present) reuses the
 	// traditional component of the requested hybrid, as allowed by
 	// draft-ietf-tls-hybrid-design-09, Section 3.2.
-	keyShares(rand io.Reader) (*keySharePrivateKeys, []keyShare, error)
+	keyShare(rand io.Reader) (*keySharePrivateKeys, keyShare, error)
+	keyShareGenerate(rand io.Reader, g keyGenerator) (*keySharePrivateKeys, keyShare, error)
 
 	// serverSharedSecret computes the shared secret and the server's key share.
 	serverSharedSecret(rand io.Reader, clientKeyShare []byte) ([]byte, keyShare, error)
@@ -73,18 +106,6 @@ type keyExchange interface {
 }
 
 func keyExchangeForCurveID(id CurveID) (keyExchange, error) {
-	newMLKEMPrivateKey768 := func(b []byte) (crypto.Decapsulator, error) {
-		return mlkem.NewDecapsulationKey768(b)
-	}
-	newMLKEMPrivateKey1024 := func(b []byte) (crypto.Decapsulator, error) {
-		return mlkem.NewDecapsulationKey1024(b)
-	}
-	newMLKEMPublicKey768 := func(b []byte) (crypto.Encapsulator, error) {
-		return mlkem.NewEncapsulationKey768(b)
-	}
-	newMLKEMPublicKey1024 := func(b []byte) (crypto.Encapsulator, error) {
-		return mlkem.NewEncapsulationKey1024(b)
-	}
 	switch id {
 	case X25519:
 		return &ecdhKeyExchange{id, ecdh.X25519()}, nil
@@ -94,21 +115,176 @@ func keyExchangeForCurveID(id CurveID) (keyExchange, error) {
 		return &ecdhKeyExchange{id, ecdh.P384()}, nil
 	case CurveP521:
 		return &ecdhKeyExchange{id, ecdh.P521()}, nil
+	case CurveSM2:
+		return &sm2KeyExchange{id, sm2ecdh.P256()}, nil
+	case FFDHE2048:
+		return &ffdhKeyExchange{id, ffdh.FFDHE2048()}, nil
+	case FFDHE3072:
+		return &ffdhKeyExchange{id, ffdh.FFDHE3072()}, nil
+	case FFDHE4096:
+		return &ffdhKeyExchange{id, ffdh.FFDHE4096()}, nil
+	case FFDHE6144:
+		return &ffdhKeyExchange{id, ffdh.FFDHE6144()}, nil
+	case FFDHE8192:
+		return &ffdhKeyExchange{id, ffdh.FFDHE8192()}, nil
+	case MLKEM768:
+		return &mlkemKeyExchange{id, newMLKEMPrivateKey768, newMLKEMPublicKey768}, nil
+	case MLKEM1024:
+		return &mlkemKeyExchange{id, newMLKEMPrivateKey1024, newMLKEMPublicKey1024}, nil
 	case X25519MLKEM768:
-		return &hybridKeyExchange{id, ecdhKeyExchange{X25519, ecdh.X25519()},
-			32, mlkem.EncapsulationKeySize768, mlkem.CiphertextSize768,
-			newMLKEMPrivateKey768, newMLKEMPublicKey768}, nil
+		return &hybridKeyExchange{id,
+			&ecdhKeyExchange{X25519, ecdh.X25519()},
+			&mlkemKeyExchange{MLKEM768, newMLKEMPrivateKey768, newMLKEMPublicKey768},
+			false, 32,
+			mlkem.EncapsulationKeySize768, mlkem.CiphertextSize768,
+		}, nil
 	case SecP256r1MLKEM768:
-		return &hybridKeyExchange{id, ecdhKeyExchange{CurveP256, ecdh.P256()},
-			65, mlkem.EncapsulationKeySize768, mlkem.CiphertextSize768,
-			newMLKEMPrivateKey768, newMLKEMPublicKey768}, nil
+		return &hybridKeyExchange{id,
+			&ecdhKeyExchange{CurveP256, ecdh.P256()},
+			&mlkemKeyExchange{MLKEM768, newMLKEMPrivateKey768, newMLKEMPublicKey768},
+			true, 65,
+			mlkem.EncapsulationKeySize768, mlkem.CiphertextSize768,
+		}, nil
 	case SecP384r1MLKEM1024:
-		return &hybridKeyExchange{id, ecdhKeyExchange{CurveP384, ecdh.P384()},
-			97, mlkem.EncapsulationKeySize1024, mlkem.CiphertextSize1024,
-			newMLKEMPrivateKey1024, newMLKEMPublicKey1024}, nil
+		return &hybridKeyExchange{id,
+			&ecdhKeyExchange{CurveP384, ecdh.P384()},
+			&mlkemKeyExchange{MLKEM1024, newMLKEMPrivateKey1024, newMLKEMPublicKey1024},
+			true, 97,
+			mlkem.EncapsulationKeySize1024, mlkem.CiphertextSize1024,
+		}, nil
+	case CurveSM2MLKEM768:
+		return &hybridKeyExchange{id,
+			&sm2KeyExchange{CurveSM2, sm2ecdh.P256()},
+			&mlkemKeyExchange{MLKEM768, newMLKEMPrivateKey768, newMLKEMPublicKey768},
+			true, 65,
+			mlkem.EncapsulationKeySize768, mlkem.CiphertextSize768,
+		}, nil
+	case X25519Kyber768Draft00:
+		return &hybridKeyExchange{id,
+			&ecdhKeyExchange{X25519, ecdh.X25519()},
+			&kyberKeyExchange{MLKEM768, newMLKEMPrivateKey768, newMLKEMPublicKey768},
+			true, 32,
+			mlkem.EncapsulationKeySize768, mlkem.CiphertextSize768,
+		}, nil
+	case SecP256r1Kyber768Draft00:
+		return &hybridKeyExchange{id,
+			&ecdhKeyExchange{CurveP256, ecdh.P256()},
+			&kyberKeyExchange{MLKEM768, newMLKEMPrivateKey768, newMLKEMPublicKey768},
+			true, 65,
+			mlkem.EncapsulationKeySize768, mlkem.CiphertextSize768,
+		}, nil
+	case SecP384r1Kyber768OQS:
+		return &hybridKeyExchange{id,
+			&ecdhKeyExchange{CurveP384, ecdh.P384()},
+			&kyberKeyExchange{MLKEM768, newMLKEMPrivateKey768, newMLKEMPublicKey768},
+			true, 97,
+			mlkem.EncapsulationKeySize768, mlkem.CiphertextSize768,
+		}, nil
 	default:
+		if IsGREASE(id) {
+			return &greaseKeyExchange{id}, nil
+		}
+
 		return nil, errors.New("tls: unsupported key exchange")
 	}
+}
+
+type greaseKeyExchange struct {
+	id CurveID
+}
+
+func (ke *greaseKeyExchange) keyShare(rand io.Reader) (*keySharePrivateKeys, keyShare, error) {
+	return &keySharePrivateKeys{curveID: ke.id}, keyShare{ke.id, []byte{0}}, nil
+}
+
+func (ke *greaseKeyExchange) keyShareGenerate(rand io.Reader, g keyGenerator) (*keySharePrivateKeys, keyShare, error) {
+	return &keySharePrivateKeys{curveID: ke.id}, keyShare{ke.id, []byte{0}}, nil
+}
+
+func (ke *greaseKeyExchange) serverSharedSecret(rand io.Reader, clientKeyShare []byte) ([]byte, keyShare, error) {
+	return nil, keyShare{}, errors.New("tls: server selected greased group")
+}
+
+func (ke *greaseKeyExchange) clientSharedSecret(priv *keySharePrivateKeys, serverKeyShare []byte) ([]byte, error) {
+	return nil, errors.New("tls: server selected greased group")
+}
+
+type mlkemKeyExchange struct {
+	id CurveID
+
+	newMLKEMPrivateKey kemPrivateKeyGenerator
+	newMLKEMPublicKey  kemPublicKeyGenerator
+}
+
+func (ke *mlkemKeyExchange) keyShare(rand io.Reader) (*keySharePrivateKeys, keyShare, error) {
+	priv, err := ke.newMLKEMPrivateKey(rand)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	return &keySharePrivateKeys{curveID: ke.id, mlkem: priv}, keyShare{ke.id, priv.Encapsulator().Bytes()}, nil
+}
+
+func (ke *mlkemKeyExchange) keyShareGenerate(rand io.Reader, g keyGenerator) (*keySharePrivateKeys, keyShare, error) {
+	priv, err := g.GenerateKeyKEM(rand, ke.id, ke.newMLKEMPrivateKey)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	return &keySharePrivateKeys{curveID: ke.id, mlkem: priv}, keyShare{ke.id, priv.Encapsulator().Bytes()}, nil
+}
+
+func (ke *mlkemKeyExchange) serverSharedSecret(rand io.Reader, clientKeyShare []byte) ([]byte, keyShare, error) {
+	peerKey, err := ke.newMLKEMPublicKey(clientKeyShare)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	sharedKey, ciphertext := peerKey.Encapsulate()
+	return sharedKey, keyShare{ke.id, ciphertext}, nil
+}
+
+func (ke *mlkemKeyExchange) clientSharedSecret(priv *keySharePrivateKeys, serverKeyShare []byte) ([]byte, error) {
+	return priv.mlkem.Decapsulate(serverKeyShare)
+}
+
+type kyberKeyExchange struct {
+	id CurveID
+
+	newMLKEMPrivateKey kemPrivateKeyGenerator
+	newMLKEMPublicKey  kemPublicKeyGenerator
+}
+
+func (ke *kyberKeyExchange) keyShare(rand io.Reader) (*keySharePrivateKeys, keyShare, error) {
+	priv, err := ke.newMLKEMPrivateKey(rand)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	return &keySharePrivateKeys{curveID: ke.id, mlkem: priv}, keyShare{ke.id, priv.Encapsulator().Bytes()}, nil
+}
+
+func (ke *kyberKeyExchange) keyShareGenerate(rand io.Reader, g keyGenerator) (*keySharePrivateKeys, keyShare, error) {
+	priv, err := g.GenerateKeyKEM(rand, ke.id, ke.newMLKEMPrivateKey)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	return &keySharePrivateKeys{curveID: ke.id, mlkem: priv}, keyShare{ke.id, priv.Encapsulator().Bytes()}, nil
+}
+
+func (ke *kyberKeyExchange) serverSharedSecret(rand io.Reader, clientKeyShare []byte) ([]byte, keyShare, error) {
+	peerKey, err := ke.newMLKEMPublicKey(clientKeyShare)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	mlkemSharedSecret, ciphertext := peerKey.Encapsulate()
+	sharedKey := kyberSharedSecret(mlkemSharedSecret, ciphertext)
+	return sharedKey, keyShare{ke.id, ciphertext}, nil
+}
+
+func (ke *kyberKeyExchange) clientSharedSecret(priv *keySharePrivateKeys, serverKeyShare []byte) ([]byte, error) {
+	mlkemSharedSecret, err := priv.mlkem.Decapsulate(serverKeyShare)
+	if err != nil {
+		return nil, err
+	}
+	sharedKey := kyberSharedSecret(mlkemSharedSecret, serverKeyShare)
+	return sharedKey, nil
 }
 
 type ecdhKeyExchange struct {
@@ -116,12 +292,20 @@ type ecdhKeyExchange struct {
 	curve ecdh.Curve
 }
 
-func (ke *ecdhKeyExchange) keyShares(rand io.Reader) (*keySharePrivateKeys, []keyShare, error) {
+func (ke *ecdhKeyExchange) keyShare(rand io.Reader) (*keySharePrivateKeys, keyShare, error) {
 	priv, err := ke.curve.GenerateKey(rand)
 	if err != nil {
-		return nil, nil, err
+		return nil, keyShare{}, err
 	}
-	return &keySharePrivateKeys{ecdhe: priv}, []keyShare{{ke.id, priv.PublicKey().Bytes()}}, nil
+	return &keySharePrivateKeys{curveID: ke.id, ecdhe: priv}, keyShare{ke.id, priv.PublicKey().Bytes()}, nil
+}
+
+func (ke *ecdhKeyExchange) keyShareGenerate(rand io.Reader, g keyGenerator) (*keySharePrivateKeys, keyShare, error) {
+	priv, err := g.GenerateKeyECDH(rand, ke.id, ke.curve)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	return &keySharePrivateKeys{curveID: ke.id, ecdhe: priv}, keyShare{ke.id, priv.PublicKey().Bytes()}, nil
 }
 
 func (ke *ecdhKeyExchange) serverSharedSecret(rand io.Reader, clientKeyShare []byte) ([]byte, keyShare, error) {
@@ -152,101 +336,228 @@ func (ke *ecdhKeyExchange) clientSharedSecret(priv *keySharePrivateKeys, serverK
 	return sharedKey, nil
 }
 
-type hybridKeyExchange struct {
-	id   CurveID
-	ecdh ecdhKeyExchange
-
-	ecdhElementSize     int
-	mlkemPublicKeySize  int
-	mlkemCiphertextSize int
-
-	newMLKEMPrivateKey func([]byte) (crypto.Decapsulator, error)
-	newMLKEMPublicKey  func([]byte) (crypto.Encapsulator, error)
+type sm2KeyExchange struct {
+	id    CurveID
+	curve sm2ecdh.Curve
 }
 
-func (ke *hybridKeyExchange) keyShares(rand io.Reader) (*keySharePrivateKeys, []keyShare, error) {
-	priv, ecdhShares, err := ke.ecdh.keyShares(rand)
+func (ke *sm2KeyExchange) keyShare(rand io.Reader) (*keySharePrivateKeys, keyShare, error) {
+	priv, err := ke.curve.GenerateKey(rand)
 	if err != nil {
-		return nil, nil, err
+		return nil, keyShare{}, err
 	}
-	seed := make([]byte, mlkem.SeedSize)
-	if _, err := io.ReadFull(rand, seed); err != nil {
-		return nil, nil, err
-	}
-	priv.mlkem, err = ke.newMLKEMPrivateKey(seed)
+	return &keySharePrivateKeys{curveID: ke.id, sm2: priv}, keyShare{ke.id, priv.PublicKey().Bytes()}, nil
+}
+
+func (ke *sm2KeyExchange) keyShareGenerate(rand io.Reader, g keyGenerator) (*keySharePrivateKeys, keyShare, error) {
+	priv, err := g.GenerateKeySM2(rand, ke.id, ke.curve)
 	if err != nil {
-		return nil, nil, err
+		return nil, keyShare{}, err
 	}
-	var shareData []byte
-	// For X25519MLKEM768, the ML-KEM-768 encapsulation key comes first.
-	// For SecP256r1MLKEM768 and SecP384r1MLKEM1024, the ECDH share comes first.
-	// See draft-ietf-tls-ecdhe-mlkem-02, Section 4.1.
-	if ke.id == X25519MLKEM768 {
-		shareData = append(priv.mlkem.Encapsulator().Bytes(), ecdhShares[0].data...)
+	return &keySharePrivateKeys{curveID: ke.id, sm2: priv}, keyShare{ke.id, priv.PublicKey().Bytes()}, nil
+}
+
+func (ke *sm2KeyExchange) serverSharedSecret(rand io.Reader, clientKeyShare []byte) ([]byte, keyShare, error) {
+	key, err := ke.curve.GenerateKey(rand)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	peerKey, err := ke.curve.NewPublicKey(clientKeyShare)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	sharedKey, err := key.ECDH(peerKey)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	return sharedKey, keyShare{ke.id, key.PublicKey().Bytes()}, nil
+}
+
+func (ke *sm2KeyExchange) clientSharedSecret(priv *keySharePrivateKeys, serverKeyShare []byte) ([]byte, error) {
+	peerKey, err := ke.curve.NewPublicKey(serverKeyShare)
+	if err != nil {
+		return nil, err
+	}
+	sharedKey, err := priv.sm2.ECDH(peerKey)
+	if err != nil {
+		return nil, err
+	}
+	return sharedKey, nil
+}
+
+type ffdhKeyExchange struct {
+	id    CurveID
+	group ffdh.Group
+}
+
+func (ke *ffdhKeyExchange) keyShare(rand io.Reader) (*keySharePrivateKeys, keyShare, error) {
+	priv, err := ke.group.GenerateKey(rand)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	return &keySharePrivateKeys{curveID: ke.id, ffdhe: priv}, keyShare{ke.id, priv.PublicKey().Bytes()}, nil
+}
+
+func (ke *ffdhKeyExchange) keyShareGenerate(rand io.Reader, g keyGenerator) (*keySharePrivateKeys, keyShare, error) {
+	priv, err := g.GenerateKeyFFDH(rand, ke.id, ke.group)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	return &keySharePrivateKeys{curveID: ke.id, ffdhe: priv}, keyShare{ke.id, priv.PublicKey().Bytes()}, nil
+}
+
+func (ke *ffdhKeyExchange) serverSharedSecret(rand io.Reader, clientKeyShare []byte) ([]byte, keyShare, error) {
+	key, err := ke.group.GenerateKey(rand)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	peerKey, err := ke.group.NewPublicKey(clientKeyShare)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	sharedKey, err := key.FFDH(peerKey)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	return sharedKey, keyShare{ke.id, key.PublicKey().Bytes()}, nil
+}
+
+func (ke *ffdhKeyExchange) clientSharedSecret(priv *keySharePrivateKeys, serverKeyShare []byte) ([]byte, error) {
+	peerKey, err := ke.group.NewPublicKey(serverKeyShare)
+	if err != nil {
+		return nil, err
+	}
+	sharedKey, err := priv.ffdhe.FFDH(peerKey)
+	if err != nil {
+		return nil, err
+	}
+	return sharedKey, nil
+}
+
+type hybridKeyExchange struct {
+	id  CurveID
+	dh  keyExchange
+	kem keyExchange
+
+	dhFirst           bool
+	dhElementSize     int
+	kemPublicKeySize  int
+	kemCiphertextSize int
+}
+
+func (ke *hybridKeyExchange) keyShare(rand io.Reader) (*keySharePrivateKeys, keyShare, error) {
+	privDH, shareDH, err := ke.dh.keyShare(rand)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	privKEM, shareKEM, err := ke.kem.keyShare(rand)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+
+	priv := &keySharePrivateKeys{
+		curveID: ke.id,
+		ecdhe:   privDH.ecdhe,
+		ffdhe:   privDH.ffdhe,
+		sm2:     privDH.sm2,
+		mlkem:   privKEM.mlkem,
+	}
+	shareData := make([]byte, 0, len(shareDH.data)+len(shareKEM.data))
+	if ke.dhFirst {
+		shareData = append(shareDH.data, shareKEM.data...)
 	} else {
-		shareData = append(ecdhShares[0].data, priv.mlkem.Encapsulator().Bytes()...)
+		shareData = append(shareKEM.data, shareDH.data...)
 	}
-	return priv, []keyShare{{ke.id, shareData}, ecdhShares[0]}, nil
+	return priv, keyShare{ke.id, shareData}, nil
+}
+
+func (ke *hybridKeyExchange) keyShareGenerate(rand io.Reader, g keyGenerator) (*keySharePrivateKeys, keyShare, error) {
+	privDH, shareDH, err := ke.dh.keyShareGenerate(rand, g)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	privKEM, shareKEM, err := ke.kem.keyShareGenerate(rand, g)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+
+	priv := &keySharePrivateKeys{
+		curveID: ke.id,
+		ecdhe:   privDH.ecdhe,
+		ffdhe:   privDH.ffdhe,
+		sm2:     privDH.sm2,
+		mlkem:   privKEM.mlkem,
+	}
+	shareData := make([]byte, 0, len(shareDH.data)+len(shareKEM.data))
+	if ke.dhFirst {
+		shareData = append(shareDH.data, shareKEM.data...)
+	} else {
+		shareData = append(shareKEM.data, shareDH.data...)
+	}
+	return priv, keyShare{ke.id, shareData}, nil
 }
 
 func (ke *hybridKeyExchange) serverSharedSecret(rand io.Reader, clientKeyShare []byte) ([]byte, keyShare, error) {
-	if len(clientKeyShare) != ke.ecdhElementSize+ke.mlkemPublicKeySize {
+	if len(clientKeyShare) != ke.dhElementSize+ke.kemPublicKeySize {
 		return nil, keyShare{}, errors.New("tls: invalid client key share length for hybrid key exchange")
 	}
-	var ecdhShareData, mlkemShareData []byte
-	if ke.id == X25519MLKEM768 {
-		mlkemShareData = clientKeyShare[:ke.mlkemPublicKeySize]
-		ecdhShareData = clientKeyShare[ke.mlkemPublicKeySize:]
+
+	var shareDataDH, shareDataKEM []byte
+	if ke.dhFirst {
+		shareDataDH = clientKeyShare[:ke.dhElementSize]
+		shareDataKEM = clientKeyShare[ke.dhElementSize:]
 	} else {
-		ecdhShareData = clientKeyShare[:ke.ecdhElementSize]
-		mlkemShareData = clientKeyShare[ke.ecdhElementSize:]
+		shareDataKEM = clientKeyShare[:ke.kemPublicKeySize]
+		shareDataDH = clientKeyShare[ke.kemPublicKeySize:]
 	}
-	ecdhSharedSecret, ks, err := ke.ecdh.serverSharedSecret(rand, ecdhShareData)
+	sharedSecretDH, shareDH, err := ke.dh.serverSharedSecret(rand, shareDataDH)
 	if err != nil {
 		return nil, keyShare{}, err
 	}
-	mlkemPeerKey, err := ke.newMLKEMPublicKey(mlkemShareData)
+	sharedSecretKEM, shareKEM, err := ke.kem.serverSharedSecret(rand, shareDataKEM)
 	if err != nil {
 		return nil, keyShare{}, err
 	}
-	mlkemSharedSecret, mlkemKeyShare := mlkemPeerKey.Encapsulate()
-	var sharedKey []byte
-	if ke.id == X25519MLKEM768 {
-		sharedKey = append(mlkemSharedSecret, ecdhSharedSecret...)
-		ks.data = append(mlkemKeyShare, ks.data...)
+
+	sharedKey := make([]byte, 0, len(sharedSecretDH)+len(sharedSecretKEM))
+	shareData := make([]byte, 0, len(shareDataDH)+len(shareDataKEM))
+	if ke.dhFirst {
+		sharedKey = append(sharedSecretDH, sharedSecretKEM...)
+		shareData = append(shareDH.data, shareKEM.data...)
 	} else {
-		sharedKey = append(ecdhSharedSecret, mlkemSharedSecret...)
-		ks.data = append(ks.data, mlkemKeyShare...)
+		sharedKey = append(sharedSecretKEM, sharedSecretDH...)
+		shareData = append(shareKEM.data, shareDH.data...)
 	}
-	ks.group = ke.id
-	return sharedKey, ks, nil
+	return sharedKey, keyShare{ke.id, shareData}, nil
 }
 
 func (ke *hybridKeyExchange) clientSharedSecret(priv *keySharePrivateKeys, serverKeyShare []byte) ([]byte, error) {
-	if len(serverKeyShare) != ke.ecdhElementSize+ke.mlkemCiphertextSize {
+	if len(serverKeyShare) != ke.dhElementSize+ke.kemCiphertextSize {
 		return nil, errors.New("tls: invalid server key share length for hybrid key exchange")
 	}
-	var ecdhShareData, mlkemShareData []byte
-	if ke.id == X25519MLKEM768 {
-		mlkemShareData = serverKeyShare[:ke.mlkemCiphertextSize]
-		ecdhShareData = serverKeyShare[ke.mlkemCiphertextSize:]
+
+	var shareDataDH, shareDataKEM []byte
+	if ke.dhFirst {
+		shareDataDH = serverKeyShare[:ke.dhElementSize]
+		shareDataKEM = serverKeyShare[ke.dhElementSize:]
 	} else {
-		ecdhShareData = serverKeyShare[:ke.ecdhElementSize]
-		mlkemShareData = serverKeyShare[ke.ecdhElementSize:]
+		shareDataKEM = serverKeyShare[:ke.kemCiphertextSize]
+		shareDataDH = serverKeyShare[ke.kemCiphertextSize:]
 	}
-	ecdhSharedSecret, err := ke.ecdh.clientSharedSecret(priv, ecdhShareData)
+	sharedSecretDH, err := ke.dh.clientSharedSecret(priv, shareDataDH)
 	if err != nil {
 		return nil, err
 	}
-	mlkemSharedSecret, err := priv.mlkem.Decapsulate(mlkemShareData)
+	sharedSecretKEM, err := ke.kem.clientSharedSecret(priv, shareDataKEM)
 	if err != nil {
 		return nil, err
 	}
-	var sharedKey []byte
-	if ke.id == X25519MLKEM768 {
-		sharedKey = append(mlkemSharedSecret, ecdhSharedSecret...)
+
+	sharedKey := make([]byte, 0, len(sharedSecretDH)+len(sharedSecretKEM))
+	if ke.dhFirst {
+		sharedKey = append(sharedSecretDH, sharedSecretKEM...)
 	} else {
-		sharedKey = append(ecdhSharedSecret, mlkemSharedSecret...)
+		sharedKey = append(sharedSecretKEM, sharedSecretDH...)
 	}
 	return sharedKey, nil
 }

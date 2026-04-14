@@ -43,19 +43,11 @@ import (
 // reference connection will always change.
 
 var (
-	update       = flag.Bool("update", false, "update golden files on failure")
-	keyFile      = flag.String("keylog", "", "destination file for KeyLogWriter")
-	bogoMode     = flag.Bool("bogo-mode", false, "Enabled bogo shim mode, ignore everything else")
-	bogoFilter   = flag.String("bogo-filter", "", "BoGo test filter")
-	bogoLocalDir = flag.String("bogo-local-dir", "",
-		"If not-present, checkout BoGo into this dir, or otherwise use it as a pre-existing checkout")
-	bogoReport = flag.String("bogo-html-report", "", "File path to render an HTML report with BoGo results")
+	update  = flag.Bool("update", false, "update golden files on failure")
+	keyFile = flag.String("keylog", "", "destination file for KeyLogWriter")
 )
 
 func runTestAndUpdateIfNeeded(t *testing.T, name string, run func(t *testing.T, update bool), wait bool) {
-	// FIPS mode is non-deterministic and so isn't suited for testing against static test transcripts.
-	skipFIPS(t)
-
 	success := t.Run(name, func(t *testing.T) {
 		if !*update && !wait {
 			t.Parallel()
@@ -396,9 +388,12 @@ func (zeroSource) Read(b []byte) (n int, err error) {
 }
 
 func allCipherSuites() []uint16 {
-	ids := make([]uint16, len(cipherSuites))
-	for i, suite := range cipherSuites {
-		ids[i] = suite.id
+	ids := make([]uint16, 0, len(cipherSuitesTLS13)+len(cipherSuites))
+	for _, suite := range cipherSuitesTLS13 {
+		ids = append(ids, suite.id)
+	}
+	for _, suite := range cipherSuites {
+		ids = append(ids, suite.id)
 	}
 
 	return ids
@@ -407,21 +402,6 @@ func allCipherSuites() []uint16 {
 var testConfig *Config
 
 func TestMain(m *testing.M) {
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args)
-		flag.PrintDefaults()
-		if *bogoMode {
-			os.Exit(89)
-		}
-	}
-
-	flag.Parse()
-
-	if *bogoMode {
-		bogoShim()
-		os.Exit(0)
-	}
-
 	os.Exit(runMain(m))
 }
 
@@ -454,7 +434,7 @@ func runMain(m *testing.M) int {
 	os.Setenv("GODEBUG", "cryptocustomrand=1,"+os.Getenv("GODEBUG"))
 
 	testConfig = &Config{
-		Time:               func() time.Time { return time.Unix(0, 0) },
+		Time:               func() time.Time { return time.Date(2016, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Rand:               zeroSource{},
 		Certificates:       make([]Certificate, 2),
 		InsecureSkipVerify: true,
@@ -660,6 +640,7 @@ func TestServerHelloTrailingMessage(t *testing.T) {
 			c:           srv,
 			ctx:         ctx,
 			clientHello: clientHello,
+			extensions:  clientHello.extensionList,
 		}
 		if err := hs.processClientHello(); err != nil {
 			testFatal(t, err)

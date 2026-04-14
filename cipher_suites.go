@@ -10,18 +10,21 @@ import (
 	"crypto/cipher"
 	"crypto/des"
 	"crypto/hmac"
-	"crypto/internal/boring"
-	fipsaes "crypto/internal/fips140/aes"
-	"crypto/internal/fips140/aes/gcm"
 	"crypto/rc4"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/sha512"
 	"fmt"
 	"hash"
-	"internal/cpu"
 	"runtime"
-	_ "unsafe" // for linkname
 
+	"golang.org/x/sys/cpu"
+
+	"github.com/RyuaNerin/go-krypto/aria"
+	"github.com/dgryski/go-camellia"
+	"github.com/emmansun/gmsm/sm4"
+	ccm "gitlab.com/go-extension/aes-ccm"
+	ehash "gitlab.com/go-extension/hash"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -55,9 +58,13 @@ var (
 // and might not match those returned by this function.
 func CipherSuites() []*CipherSuite {
 	return []*CipherSuite{
+		{TLS_SM4_GCM_SM3, "TLS_SM4_GCM_SM3", supportedOnlyTLS13, false},
+		{TLS_SM4_CCM_SM3, "TLS_SM4_CCM_SM3", supportedOnlyTLS13, false},
 		{TLS_AES_128_GCM_SHA256, "TLS_AES_128_GCM_SHA256", supportedOnlyTLS13, false},
 		{TLS_AES_256_GCM_SHA384, "TLS_AES_256_GCM_SHA384", supportedOnlyTLS13, false},
 		{TLS_CHACHA20_POLY1305_SHA256, "TLS_CHACHA20_POLY1305_SHA256", supportedOnlyTLS13, false},
+		{TLS_AES_128_CCM_SHA256, "TLS_AES_128_CCM_SHA256", supportedOnlyTLS13, false},
+		{TLS_AES_128_CCM_8_SHA256, "TLS_AES_128_CCM_8_SHA256", supportedOnlyTLS13, false},
 
 		{TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA", supportedUpToTLS12, false},
 		{TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA, "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA", supportedUpToTLS12, false},
@@ -67,6 +74,22 @@ func CipherSuites() []*CipherSuite {
 		{TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", supportedOnlyTLS12, false},
 		{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", supportedOnlyTLS12, false},
 		{TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384", supportedOnlyTLS12, false},
+
+		{TLS_ECDHE_ECDSA_WITH_ARIA_128_GCM_SHA256, "TLS_ECDHE_ECDSA_WITH_ARIA_128_GCM_SHA256", supportedOnlyTLS12, false},
+		{TLS_ECDHE_ECDSA_WITH_ARIA_256_GCM_SHA384, "TLS_ECDHE_ECDSA_WITH_ARIA_256_GCM_SHA384", supportedOnlyTLS12, false},
+		{TLS_ECDHE_RSA_WITH_ARIA_128_GCM_SHA256, "TLS_ECDHE_RSA_WITH_ARIA_128_GCM_SHA256", supportedOnlyTLS12, false},
+		{TLS_ECDHE_RSA_WITH_ARIA_256_GCM_SHA384, "TLS_ECDHE_RSA_WITH_ARIA_256_GCM_SHA384", supportedOnlyTLS12, false},
+
+		{TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_GCM_SHA256, "TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_GCM_SHA256", supportedOnlyTLS12, false},
+		{TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_GCM_SHA384, "TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_GCM_SHA384", supportedOnlyTLS12, false},
+		{TLS_ECDHE_RSA_WITH_CAMELLIA_128_GCM_SHA256, "TLS_ECDHE_RSA_WITH_CAMELLIA_128_GCM_SHA256", supportedOnlyTLS12, false},
+		{TLS_ECDHE_RSA_WITH_CAMELLIA_256_GCM_SHA384, "TLS_ECDHE_RSA_WITH_CAMELLIA_256_GCM_SHA384", supportedOnlyTLS12, false},
+
+		{TLS_ECDHE_ECDSA_WITH_AES_128_CCM_SHA256, "TLS_ECDHE_ECDSA_WITH_AES_128_CCM_SHA256", supportedOnlyTLS12, false},
+		{TLS_ECDHE_ECDSA_WITH_AES_256_CCM_SHA256, "TLS_ECDHE_ECDSA_WITH_AES_256_CCM_SHA256", supportedOnlyTLS12, false},
+		{TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8_SHA256, "TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8_SHA256", supportedOnlyTLS12, false},
+		{TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8_SHA256, "TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8_SHA256", supportedOnlyTLS12, false},
+
 		{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256", supportedOnlyTLS12, false},
 		{TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256", supportedOnlyTLS12, false},
 	}
@@ -89,10 +112,31 @@ func InsecureCipherSuites() []*CipherSuite {
 		{TLS_RSA_WITH_AES_128_GCM_SHA256, "TLS_RSA_WITH_AES_128_GCM_SHA256", supportedOnlyTLS12, true},
 		{TLS_RSA_WITH_AES_256_GCM_SHA384, "TLS_RSA_WITH_AES_256_GCM_SHA384", supportedOnlyTLS12, true},
 		{TLS_ECDHE_ECDSA_WITH_RC4_128_SHA, "TLS_ECDHE_ECDSA_WITH_RC4_128_SHA", supportedUpToTLS12, true},
+		{TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA, "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA", supportedUpToTLS12, true},
 		{TLS_ECDHE_RSA_WITH_RC4_128_SHA, "TLS_ECDHE_RSA_WITH_RC4_128_SHA", supportedUpToTLS12, true},
 		{TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA", supportedUpToTLS12, true},
 		{TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256, "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256", supportedOnlyTLS12, true},
+		{TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384, "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384", supportedOnlyTLS12, true},
 		{TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256, "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256", supportedOnlyTLS12, true},
+		{TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384, "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384", supportedOnlyTLS12, true},
+		{TLS_RSA_WITH_ARIA_128_CBC_SHA256, "TLS_RSA_WITH_ARIA_128_CBC_SHA256", supportedUpToTLS12, true},
+		{TLS_RSA_WITH_ARIA_256_CBC_SHA384, "TLS_RSA_WITH_ARIA_256_CBC_SHA384", supportedUpToTLS12, true},
+		{TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256, "TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256", supportedUpToTLS12, true},
+		{TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384, "TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384", supportedUpToTLS12, true},
+		{TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256, "TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256", supportedUpToTLS12, true},
+		{TLS_ECDHE_RSA_WITH_ARIA_256_CBC_SHA384, "TLS_ECDHE_RSA_WITH_ARIA_256_CBC_SHA384", supportedUpToTLS12, true},
+		{TLS_RSA_WITH_ARIA_128_GCM_SHA256, "TLS_RSA_WITH_ARIA_128_GCM_SHA256", supportedOnlyTLS12, true},
+		{TLS_RSA_WITH_ARIA_256_GCM_SHA384, "TLS_RSA_WITH_ARIA_256_GCM_SHA384", supportedOnlyTLS12, true},
+		{TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256, "TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256", supportedOnlyTLS12, true},
+		{TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384, "TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384", supportedOnlyTLS12, true},
+		{TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256, "TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256", supportedOnlyTLS12, true},
+		{TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384, "TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384", supportedOnlyTLS12, true},
+		{TLS_RSA_WITH_CAMELLIA_128_GCM_SHA256, "TLS_RSA_WITH_CAMELLIA_128_GCM_SHA256", supportedOnlyTLS12, true},
+		{TLS_RSA_WITH_CAMELLIA_256_GCM_SHA384, "TLS_RSA_WITH_CAMELLIA_256_GCM_SHA384", supportedOnlyTLS12, true},
+		{TLS_RSA_WITH_AES_128_CCM_SHA256, "TLS_RSA_WITH_AES_128_CCM_SHA256", supportedOnlyTLS12, true},
+		{TLS_RSA_WITH_AES_256_CCM_SHA256, "TLS_RSA_WITH_AES_256_CCM_SHA256", supportedOnlyTLS12, true},
+		{TLS_RSA_WITH_AES_128_CCM_8_SHA256, "TLS_RSA_WITH_AES_128_CCM_8_SHA256", supportedOnlyTLS12, true},
+		{TLS_RSA_WITH_AES_256_CCM_8_SHA256, "TLS_RSA_WITH_AES_256_CCM_8_SHA256", supportedOnlyTLS12, true},
 	}
 }
 
@@ -149,6 +193,10 @@ type cipherSuite struct {
 }
 
 var cipherSuites = []*cipherSuite{ // TODO: replace with a map, since the order doesn't matter.
+	{TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8_SHA256, 16, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12, nil, nil, aeadAESCCM8},
+	{TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8_SHA256, 32, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12, nil, nil, aeadAESCCM8},
+	{TLS_ECDHE_ECDSA_WITH_AES_128_CCM_SHA256, 16, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12, nil, nil, aeadAESCCM},
+	{TLS_ECDHE_ECDSA_WITH_AES_256_CCM_SHA256, 32, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12, nil, nil, aeadAESCCM},
 	{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, 32, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
 	{TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, 32, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
 	{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadAESGCM},
@@ -161,11 +209,40 @@ var cipherSuites = []*cipherSuite{ // TODO: replace with a map, since the order 
 	{TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, 16, 20, 16, ecdheECDSAKA, suiteECDHE | suiteECSign, cipherAES, macSHA1, nil},
 	{TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA, 32, 20, 16, ecdheRSAKA, suiteECDHE, cipherAES, macSHA1, nil},
 	{TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA, 32, 20, 16, ecdheECDSAKA, suiteECDHE | suiteECSign, cipherAES, macSHA1, nil},
+	{TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384, 32, 48, 16, ecdheECDSAKA, suiteECDHE | suiteTLS12 | suiteSHA384, cipherAES, macSHA384, nil},
+	{TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384, 32, 48, 16, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12 | suiteSHA384, cipherAES, macSHA384, nil},
+	{TLS_ECDHE_ECDSA_WITH_ARIA_128_GCM_SHA256, 16, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12, nil, nil, aeadARIAGCM},
+	{TLS_ECDHE_ECDSA_WITH_ARIA_256_GCM_SHA384, 32, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12 | suiteSHA384, nil, nil, aeadARIAGCM},
+	{TLS_ECDHE_RSA_WITH_ARIA_128_GCM_SHA256, 16, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadARIAGCM},
+	{TLS_ECDHE_RSA_WITH_ARIA_256_GCM_SHA384, 32, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12 | suiteSHA384, nil, nil, aeadARIAGCM},
+	{TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256, 16, 32, 16, ecdheECDSAKA, suiteECDHE | suiteECSign, cipherARIA, macSHA256, nil},
+	{TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384, 32, 48, 16, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteSHA384, cipherARIA, macSHA384, nil},
+	{TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256, 16, 32, 16, ecdheRSAKA, suiteECDHE, cipherARIA, macSHA256, nil},
+	{TLS_ECDHE_RSA_WITH_ARIA_256_CBC_SHA384, 32, 48, 16, ecdheRSAKA, suiteECDHE | suiteSHA384, cipherARIA, macSHA384, nil},
+	{TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_GCM_SHA256, 16, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12, nil, nil, aeadCAMELLIAGCM},
+	{TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_GCM_SHA384, 32, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12 | suiteSHA384, nil, nil, aeadCAMELLIAGCM},
+	{TLS_ECDHE_RSA_WITH_CAMELLIA_128_GCM_SHA256, 16, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadCAMELLIAGCM},
+	{TLS_ECDHE_RSA_WITH_CAMELLIA_256_GCM_SHA384, 32, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12 | suiteSHA384, nil, nil, aeadCAMELLIAGCM},
+	{TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256, 16, 32, 16, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12, cipherCAMELLIA, macSHA256, nil},
+	{TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384, 32, 48, 16, ecdheECDSAKA, suiteECDHE | suiteECSign | suiteTLS12 | suiteSHA384, cipherCAMELLIA, macSHA384, nil},
+	{TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256, 16, 32, 16, ecdheRSAKA, suiteECDHE | suiteTLS12, cipherCAMELLIA, macSHA256, nil},
+	{TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384, 32, 48, 16, ecdheRSAKA, suiteECDHE | suiteTLS12 | suiteSHA384, cipherCAMELLIA, macSHA384, nil},
+	{TLS_RSA_WITH_ARIA_128_GCM_SHA256, 16, 0, 4, rsaKA, suiteTLS12, nil, nil, aeadARIAGCM},
+	{TLS_RSA_WITH_ARIA_256_GCM_SHA384, 32, 0, 4, rsaKA, suiteTLS12 | suiteSHA384, nil, nil, aeadARIAGCM},
+	{TLS_RSA_WITH_ARIA_128_CBC_SHA256, 16, 32, 16, rsaKA, 0, cipherARIA, macSHA256, nil},
+	{TLS_RSA_WITH_ARIA_256_CBC_SHA384, 32, 48, 16, rsaKA, suiteSHA384, cipherARIA, macSHA384, nil},
+	{TLS_RSA_WITH_CAMELLIA_128_GCM_SHA256, 16, 0, 4, rsaKA, suiteTLS12, nil, nil, aeadCAMELLIAGCM},
+	{TLS_RSA_WITH_CAMELLIA_256_GCM_SHA384, 32, 0, 4, rsaKA, suiteTLS12 | suiteSHA384, nil, nil, aeadCAMELLIAGCM},
 	{TLS_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, rsaKA, suiteTLS12, nil, nil, aeadAESGCM},
 	{TLS_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 4, rsaKA, suiteTLS12 | suiteSHA384, nil, nil, aeadAESGCM},
+	{TLS_RSA_WITH_AES_128_CCM_SHA256, 16, 0, 4, rsaKA, suiteTLS12, nil, nil, aeadAESCCM},
+	{TLS_RSA_WITH_AES_256_CCM_SHA256, 32, 0, 4, rsaKA, suiteTLS12, nil, nil, aeadAESCCM},
+	{TLS_RSA_WITH_AES_128_CCM_8_SHA256, 16, 0, 4, rsaKA, suiteTLS12, nil, nil, aeadAESCCM8},
+	{TLS_RSA_WITH_AES_256_CCM_8_SHA256, 32, 0, 4, rsaKA, suiteTLS12, nil, nil, aeadAESCCM8},
 	{TLS_RSA_WITH_AES_128_CBC_SHA256, 16, 32, 16, rsaKA, suiteTLS12, cipherAES, macSHA256, nil},
 	{TLS_RSA_WITH_AES_128_CBC_SHA, 16, 20, 16, rsaKA, 0, cipherAES, macSHA1, nil},
 	{TLS_RSA_WITH_AES_256_CBC_SHA, 32, 20, 16, rsaKA, 0, cipherAES, macSHA1, nil},
+	{TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA, 24, 20, 8, ecdheECDSAKA, suiteECDHE | suiteECSign, cipher3DES, macSHA1, nil},
 	{TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, 24, 20, 8, ecdheRSAKA, suiteECDHE, cipher3DES, macSHA1, nil},
 	{TLS_RSA_WITH_3DES_EDE_CBC_SHA, 24, 20, 8, rsaKA, 0, cipher3DES, macSHA1, nil},
 	{TLS_RSA_WITH_RC4_128_SHA, 16, 20, 0, rsaKA, 0, cipherRC4, macSHA1, nil},
@@ -197,23 +274,17 @@ type cipherSuiteTLS13 struct {
 	id     uint16
 	keyLen int
 	aead   func(key, fixedNonce []byte) aead
-	hash   crypto.Hash
+	hash   ehash.Hasher
 }
 
-// cipherSuitesTLS13 should be an internal detail,
-// but widely used packages access it using linkname.
-// Notable members of the hall of shame include:
-//   - github.com/quic-go/quic-go
-//   - github.com/sagernet/quic-go
-//
-// Do not remove or change the type signature.
-// See go.dev/issue/67401.
-//
-//go:linkname cipherSuitesTLS13
 var cipherSuitesTLS13 = []*cipherSuiteTLS13{ // TODO: replace with a map.
 	{TLS_AES_128_GCM_SHA256, 16, aeadAESGCMTLS13, crypto.SHA256},
+	{TLS_AES_128_CCM_SHA256, 16, aeadAESCCMTLS13, crypto.SHA256},
+	{TLS_AES_128_CCM_8_SHA256, 16, aeadAESCCM8TLS13, crypto.SHA256},
 	{TLS_CHACHA20_POLY1305_SHA256, 32, aeadChaCha20Poly1305, crypto.SHA256},
 	{TLS_AES_256_GCM_SHA384, 32, aeadAESGCMTLS13, crypto.SHA384},
+	{TLS_SM4_GCM_SM3, 16, aeadSM4GCMTLS13, ehash.SM3},
+	{TLS_SM4_CCM_SM3, 16, aeadSM4CCMTLS13, ehash.SM3},
 }
 
 // cipherSuitesPreferenceOrder is the order in which we'll select (on the
@@ -228,13 +299,17 @@ var cipherSuitesTLS13 = []*cipherSuiteTLS13{ // TODO: replace with a map.
 // The list is sorted by applying the following priority rules, stopping at the
 // first (most important) applicable one:
 //
+//   - Anything else comes before TLS 1.3
+//
+//     In crypto/tls, the TLS 1.3 suites is appended at the end
+//
 //   - Anything else comes before RC4
 //
 //     RC4 has practically exploitable biases. See https://www.rc4nomore.com.
 //
-//   - Anything else comes before CBC_SHA256
+//   - Anything else comes before CBC_SHA384/CBC_SHA256
 //
-//     SHA-256 variants of the CBC ciphersuites don't implement any Lucky13
+//     SHA-384/SHA-256 variants of the CBC ciphersuites don't implement any Lucky13
 //     countermeasures. See https://www.isg.rhul.ac.uk/tls/Lucky13.html and
 //     https://www.imperialviolet.org/2013/02/04/luckythirteen.html.
 //
@@ -269,12 +344,29 @@ var cipherSuitesTLS13 = []*cipherSuiteTLS13{ // TODO: replace with a map.
 //     We use this list if we think both peers have AES hardware, and
 //     cipherSuitesPreferenceOrderNoAES otherwise.
 //
-//   - AES-128 comes before AES-256
+//   - AES/ChaCha20 comes SM4/ARIA/CAMELLIA
 //
-//     The only potential advantages of AES-256 are better multi-target
+//     SM4/ARIA/CAMELLIA doesn't implement hardware acceleration and is one or more of the following: much
+//     slower, way more complex, and less safe (because it's not constant time)
+//     than AES/ChaCha20Poly1305.
+//
+//   - GCM comes before CCM
+//
+//     The main advantages of GCM are performance and hardware support.
+//     GCM supports parallel processing (both encryption via CTR mode
+//     and authentication via GHASH), making it significantly faster
+//     on modern CPUs. It is also widely accelerated in hardware.
+//
+//   - *-128 comes before *-256
+//
+//     The only potential advantages of *-128 are better multi-target
 //     margins, and hypothetical post-quantum properties. Neither apply to
-//     TLS, and AES-256 is slower due to its four extra rounds (which don't
+//     TLS, and *-256 is slower due to its four extra rounds (which don't
 //     contribute to the advantages above).
+//
+//   - AES-CCM is better than AES-CCM-8
+//
+//     A 16-byte (128-bit) tag is more secure than an 8-byte (64-bit) tag.
 //
 //   - ECDSA comes before RSA
 //
@@ -284,7 +376,13 @@ var cipherSuitesPreferenceOrder = []uint16{
 	// AEADs w/ ECDHE
 	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	TLS_ECDHE_ECDSA_WITH_AES_128_CCM_SHA256, TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8_SHA256,
+	TLS_ECDHE_ECDSA_WITH_AES_256_CCM_SHA256, TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8_SHA256,
 	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+	TLS_ECDHE_ECDSA_WITH_ARIA_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_ARIA_128_GCM_SHA256,
+	TLS_ECDHE_ECDSA_WITH_ARIA_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_ARIA_256_GCM_SHA384,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_CAMELLIA_128_GCM_SHA256,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_CAMELLIA_256_GCM_SHA384,
 
 	// CBC w/ ECDHE
 	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
@@ -293,22 +391,46 @@ var cipherSuitesPreferenceOrder = []uint16{
 	// AEADs w/o ECDHE
 	TLS_RSA_WITH_AES_128_GCM_SHA256,
 	TLS_RSA_WITH_AES_256_GCM_SHA384,
+	TLS_RSA_WITH_AES_128_CCM_SHA256,
+	TLS_RSA_WITH_AES_128_CCM_8_SHA256,
+	TLS_RSA_WITH_AES_256_CCM_SHA256,
+	TLS_RSA_WITH_AES_256_CCM_8_SHA256,
+	TLS_RSA_WITH_ARIA_128_GCM_SHA256,
+	TLS_RSA_WITH_ARIA_256_GCM_SHA384,
+	TLS_RSA_WITH_CAMELLIA_128_GCM_SHA256,
+	TLS_RSA_WITH_CAMELLIA_256_GCM_SHA384,
 
 	// CBC w/o ECDHE
 	TLS_RSA_WITH_AES_128_CBC_SHA,
 	TLS_RSA_WITH_AES_256_CBC_SHA,
 
 	// 3DES
+	TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA,
 	TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
 	TLS_RSA_WITH_3DES_EDE_CBC_SHA,
 
 	// CBC_SHA256
 	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256, TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
+	TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256, TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256, TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256,
 	TLS_RSA_WITH_AES_128_CBC_SHA256,
+	TLS_RSA_WITH_ARIA_128_CBC_SHA256,
+
+	// CBC_SHA384
+	TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384, TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384,
+	TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384, TLS_ECDHE_RSA_WITH_ARIA_256_CBC_SHA384,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384, TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384,
+	TLS_RSA_WITH_ARIA_256_CBC_SHA384,
 
 	// RC4
 	TLS_ECDHE_ECDSA_WITH_RC4_128_SHA, TLS_ECDHE_RSA_WITH_RC4_128_SHA,
 	TLS_RSA_WITH_RC4_128_SHA,
+
+	// TLS 1.3
+	TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384,
+	TLS_AES_128_CCM_SHA256, TLS_AES_128_CCM_8_SHA256,
+	TLS_CHACHA20_POLY1305_SHA256,
+	TLS_SM4_GCM_SM3, TLS_SM4_CCM_SM3,
 }
 
 var cipherSuitesPreferenceOrderNoAES = []uint16{
@@ -319,27 +441,134 @@ var cipherSuitesPreferenceOrderNoAES = []uint16{
 	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 
+	// AES-CCM w/ ECDHE
+	TLS_ECDHE_ECDSA_WITH_AES_128_CCM_SHA256, TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8_SHA256,
+	TLS_ECDHE_ECDSA_WITH_AES_256_CCM_SHA256, TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8_SHA256,
+
+	// ARIA-GCM w/ ECDHE
+	TLS_ECDHE_ECDSA_WITH_ARIA_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_ARIA_128_GCM_SHA256,
+	TLS_ECDHE_ECDSA_WITH_ARIA_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_ARIA_256_GCM_SHA384,
+
+	// CAMELLIA-GCM w/ ECDHE
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_GCM_SHA256, TLS_ECDHE_RSA_WITH_CAMELLIA_128_GCM_SHA256,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_CAMELLIA_256_GCM_SHA384,
+
 	// The rest of cipherSuitesPreferenceOrder.
 	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
 	TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA, TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
 	TLS_RSA_WITH_AES_128_GCM_SHA256,
 	TLS_RSA_WITH_AES_256_GCM_SHA384,
+	TLS_RSA_WITH_AES_128_CCM_SHA256,
+	TLS_RSA_WITH_AES_128_CCM_8_SHA256,
+	TLS_RSA_WITH_AES_256_CCM_SHA256,
+	TLS_RSA_WITH_AES_256_CCM_8_SHA256,
+	TLS_RSA_WITH_ARIA_128_GCM_SHA256,
+	TLS_RSA_WITH_ARIA_256_GCM_SHA384,
+	TLS_RSA_WITH_CAMELLIA_128_GCM_SHA256,
+	TLS_RSA_WITH_CAMELLIA_256_GCM_SHA384,
 	TLS_RSA_WITH_AES_128_CBC_SHA,
 	TLS_RSA_WITH_AES_256_CBC_SHA,
+	TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA,
 	TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
 	TLS_RSA_WITH_3DES_EDE_CBC_SHA,
+
+	// CBC_SHA256
 	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256, TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
+	TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256, TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256, TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256,
 	TLS_RSA_WITH_AES_128_CBC_SHA256,
+	TLS_RSA_WITH_ARIA_128_CBC_SHA256,
+
+	// CBC_SHA384
+	TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384, TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384,
+	TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384, TLS_ECDHE_RSA_WITH_ARIA_256_CBC_SHA384,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384, TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384,
+	TLS_RSA_WITH_ARIA_256_CBC_SHA384,
+
+	// RC4
 	TLS_ECDHE_ECDSA_WITH_RC4_128_SHA, TLS_ECDHE_RSA_WITH_RC4_128_SHA,
 	TLS_RSA_WITH_RC4_128_SHA,
+
+	// TLS 1.3
+	TLS_CHACHA20_POLY1305_SHA256,
+	TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384,
+	TLS_AES_128_CCM_SHA256, TLS_AES_128_CCM_8_SHA256,
+	TLS_SM4_GCM_SM3, TLS_SM4_CCM_SM3,
+}
+
+var extendedCipherSuites = map[uint16]bool{
+	// SM4
+	TLS_SM4_GCM_SM3: true,
+	TLS_SM4_CCM_SM3: true,
+
+	// AES CCM
+	TLS_AES_128_CCM_SHA256:                  true,
+	TLS_ECDHE_ECDSA_WITH_AES_128_CCM_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_AES_256_CCM_SHA256: true,
+	TLS_RSA_WITH_AES_128_CCM_SHA256:         true,
+	TLS_RSA_WITH_AES_256_CCM_SHA256:         true,
+
+	// AES CCM 8
+	TLS_AES_128_CCM_8_SHA256:                  true,
+	TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8_SHA256: true,
+	TLS_RSA_WITH_AES_128_CCM_8_SHA256:         true,
+	TLS_RSA_WITH_AES_256_CCM_8_SHA256:         true,
+
+	// ARIA
+	TLS_ECDHE_ECDSA_WITH_ARIA_128_GCM_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_ARIA_256_GCM_SHA384: true,
+	TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384: true,
+	TLS_ECDHE_RSA_WITH_ARIA_128_GCM_SHA256:   true,
+	TLS_ECDHE_RSA_WITH_ARIA_256_GCM_SHA384:   true,
+	TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256:   true,
+	TLS_ECDHE_RSA_WITH_ARIA_256_CBC_SHA384:   true,
+	TLS_RSA_WITH_ARIA_128_GCM_SHA256:         true,
+	TLS_RSA_WITH_ARIA_256_GCM_SHA384:         true,
+	TLS_RSA_WITH_ARIA_128_CBC_SHA256:         true,
+	TLS_RSA_WITH_ARIA_256_CBC_SHA384:         true,
+
+	// CAMELLIA
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_GCM_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_GCM_SHA384: true,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256: true,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384: true,
+	TLS_ECDHE_RSA_WITH_CAMELLIA_128_GCM_SHA256:   true,
+	TLS_ECDHE_RSA_WITH_CAMELLIA_256_GCM_SHA384:   true,
+	TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256:   true,
+	TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384:   true,
+	TLS_RSA_WITH_CAMELLIA_128_GCM_SHA256:         true,
+	TLS_RSA_WITH_CAMELLIA_256_GCM_SHA384:         true,
+
+	// 3DES
+	TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA: true,
+
+	// CBC_SHA384
+	TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384: true,
+	TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384:   true,
 }
 
 // disabledCipherSuites are not used unless explicitly listed in Config.CipherSuites.
 var disabledCipherSuites = map[uint16]bool{
 	// CBC_SHA256
-	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256: true,
-	TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:   true,
-	TLS_RSA_WITH_AES_128_CBC_SHA256:         true,
+	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256:      true,
+	TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:        true,
+	TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256:     true,
+	TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256:       true,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256: true,
+	TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256:   true,
+	TLS_RSA_WITH_AES_128_CBC_SHA256:              true,
+	TLS_RSA_WITH_ARIA_128_CBC_SHA256:             true,
+
+	// CBC_SHA384
+	TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384:     true,
+	TLS_ECDHE_RSA_WITH_ARIA_256_CBC_SHA384:       true,
+	TLS_RSA_WITH_ARIA_256_CBC_SHA384:             true,
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384: true,
+	TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384:   true,
+	TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384:      true,
+	TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384:        true,
 
 	// RC4
 	TLS_ECDHE_ECDSA_WITH_RC4_128_SHA: true,
@@ -347,23 +576,32 @@ var disabledCipherSuites = map[uint16]bool{
 	TLS_RSA_WITH_RC4_128_SHA:         true,
 }
 
-// rsaKexCiphers contains the ciphers which use RSA based key exchange,
-// which we also disable by default unless a GODEBUG is set.
+// rsaKexCiphers contains the ciphers which use RSA based key exchange.
 var rsaKexCiphers = map[uint16]bool{
-	TLS_RSA_WITH_RC4_128_SHA:        true,
-	TLS_RSA_WITH_3DES_EDE_CBC_SHA:   true,
-	TLS_RSA_WITH_AES_128_CBC_SHA:    true,
-	TLS_RSA_WITH_AES_256_CBC_SHA:    true,
-	TLS_RSA_WITH_AES_128_CBC_SHA256: true,
-	TLS_RSA_WITH_AES_128_GCM_SHA256: true,
-	TLS_RSA_WITH_AES_256_GCM_SHA384: true,
+	TLS_RSA_WITH_RC4_128_SHA:             true,
+	TLS_RSA_WITH_3DES_EDE_CBC_SHA:        true,
+	TLS_RSA_WITH_AES_128_CBC_SHA:         true,
+	TLS_RSA_WITH_AES_256_CBC_SHA:         true,
+	TLS_RSA_WITH_AES_128_CBC_SHA256:      true,
+	TLS_RSA_WITH_ARIA_128_CBC_SHA256:     true,
+	TLS_RSA_WITH_ARIA_256_CBC_SHA384:     true,
+	TLS_RSA_WITH_AES_128_GCM_SHA256:      true,
+	TLS_RSA_WITH_AES_256_GCM_SHA384:      true,
+	TLS_RSA_WITH_AES_128_CCM_SHA256:      true,
+	TLS_RSA_WITH_AES_256_CCM_SHA256:      true,
+	TLS_RSA_WITH_AES_128_CCM_8_SHA256:    true,
+	TLS_RSA_WITH_AES_256_CCM_8_SHA256:    true,
+	TLS_RSA_WITH_ARIA_128_GCM_SHA256:     true,
+	TLS_RSA_WITH_ARIA_256_GCM_SHA384:     true,
+	TLS_RSA_WITH_CAMELLIA_128_GCM_SHA256: true,
+	TLS_RSA_WITH_CAMELLIA_256_GCM_SHA384: true,
 }
 
 // tdesCiphers contains 3DES ciphers,
-// which we also disable by default unless a GODEBUG is set.
 var tdesCiphers = map[uint16]bool{
-	TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA: true,
-	TLS_RSA_WITH_3DES_EDE_CBC_SHA:       true,
+	TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA: true,
+	TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA:   true,
+	TLS_RSA_WITH_3DES_EDE_CBC_SHA:         true,
 }
 
 var (
@@ -426,21 +664,37 @@ func cipherAES(key, iv []byte, isRead bool) any {
 	return cipher.NewCBCEncrypter(block, iv)
 }
 
+func cipherARIA(key, iv []byte, isRead bool) any {
+	block, _ := aria.NewCipher(key)
+	if isRead {
+		return cipher.NewCBCDecrypter(block, iv)
+	}
+	return cipher.NewCBCEncrypter(block, iv)
+}
+
+func cipherCAMELLIA(key, iv []byte, isRead bool) any {
+	block, _ := camellia.New(key)
+	if isRead {
+		return cipher.NewCBCDecrypter(block, iv)
+	}
+	return cipher.NewCBCEncrypter(block, iv)
+}
+
 // macSHA1 returns a SHA-1 based constant time MAC.
 func macSHA1(key []byte) hash.Hash {
-	h := sha1.New
-	// The BoringCrypto SHA1 does not have a constant-time
-	// checksum function, so don't try to use it.
-	if !boring.Enabled {
-		h = newConstantTimeHash(h)
-	}
-	return hmac.New(h, key)
+	return hmac.New(newConstantTimeHash(sha1.New), key)
 }
 
 // macSHA256 returns a SHA-256 based MAC. This is only supported in TLS 1.2 and
 // is currently only used in disabled-by-default cipher suites.
 func macSHA256(key []byte) hash.Hash {
 	return hmac.New(sha256.New, key)
+}
+
+// macSHA384 returns a SHA384 based MAC. This is only supported in TLS 1.2 and
+// is currently only used in disabled-by-default cipher suites.
+func macSHA384(key []byte) hash.Hash {
+	return hmac.New(sha512.New384, key)
 }
 
 type aead interface {
@@ -522,13 +776,7 @@ func aeadAESGCM(key, noncePrefix []byte) aead {
 	if err != nil {
 		panic(err)
 	}
-	var aead cipher.AEAD
-	if boring.Enabled {
-		aead, err = boring.NewGCMTLS(aes)
-	} else {
-		boring.Unreachable()
-		aead, err = gcm.NewGCMForTLS12(aes.(*fipsaes.Block))
-	}
+	aead, err := cipher.NewGCM(aes)
 	if err != nil {
 		panic(err)
 	}
@@ -538,16 +786,78 @@ func aeadAESGCM(key, noncePrefix []byte) aead {
 	return ret
 }
 
-// aeadAESGCMTLS13 should be an internal detail,
-// but widely used packages access it using linkname.
-// Notable members of the hall of shame include:
-//   - github.com/xtls/xray-core
-//   - github.com/v2fly/v2ray-core
-//
-// Do not remove or change the type signature.
-// See go.dev/issue/67401.
-//
-//go:linkname aeadAESGCMTLS13
+func aeadAESCCM(key, noncePrefix []byte) aead {
+	if len(noncePrefix) != noncePrefixLength {
+		panic("tls: internal error: wrong nonce length")
+	}
+	aes, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	aead, err := ccm.NewCCM(aes)
+	if err != nil {
+		panic(err)
+	}
+
+	ret := &prefixNonceAEAD{aead: aead}
+	copy(ret.nonce[:], noncePrefix)
+	return ret
+}
+
+func aeadAESCCM8(key, noncePrefix []byte) aead {
+	if len(noncePrefix) != noncePrefixLength {
+		panic("tls: internal error: wrong nonce length")
+	}
+	aes, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	aead, err := ccm.NewCCMWithTagSize(aes, 8)
+	if err != nil {
+		panic(err)
+	}
+
+	ret := &prefixNonceAEAD{aead: aead}
+	copy(ret.nonce[:], noncePrefix)
+	return ret
+}
+
+func aeadARIAGCM(key, noncePrefix []byte) aead {
+	if len(noncePrefix) != noncePrefixLength {
+		panic("tls: internal error: wrong nonce length")
+	}
+	aes, err := aria.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	aead, err := cipher.NewGCM(aes)
+	if err != nil {
+		panic(err)
+	}
+
+	ret := &prefixNonceAEAD{aead: aead}
+	copy(ret.nonce[:], noncePrefix)
+	return ret
+}
+
+func aeadCAMELLIAGCM(key, noncePrefix []byte) aead {
+	if len(noncePrefix) != noncePrefixLength {
+		panic("tls: internal error: wrong nonce length")
+	}
+	aes, err := camellia.New(key)
+	if err != nil {
+		panic(err)
+	}
+	aead, err := cipher.NewGCM(aes)
+	if err != nil {
+		panic(err)
+	}
+
+	ret := &prefixNonceAEAD{aead: aead}
+	copy(ret.nonce[:], noncePrefix)
+	return ret
+}
+
 func aeadAESGCMTLS13(key, nonceMask []byte) aead {
 	if len(nonceMask) != aeadNonceLength {
 		panic("tls: internal error: wrong nonce length")
@@ -556,13 +866,7 @@ func aeadAESGCMTLS13(key, nonceMask []byte) aead {
 	if err != nil {
 		panic(err)
 	}
-	var aead cipher.AEAD
-	if boring.Enabled {
-		aead, err = boring.NewGCMTLS13(aes)
-	} else {
-		boring.Unreachable()
-		aead, err = gcm.NewGCMForTLS13(aes.(*fipsaes.Block))
-	}
+	aead, err := cipher.NewGCM(aes)
 	if err != nil {
 		panic(err)
 	}
@@ -577,6 +881,78 @@ func aeadChaCha20Poly1305(key, nonceMask []byte) aead {
 		panic("tls: internal error: wrong nonce length")
 	}
 	aead, err := chacha20poly1305.New(key)
+	if err != nil {
+		panic(err)
+	}
+
+	ret := &xorNonceAEAD{aead: aead}
+	copy(ret.nonceMask[:], nonceMask)
+	return ret
+}
+
+func aeadAESCCMTLS13(key, nonceMask []byte) aead {
+	if len(nonceMask) != aeadNonceLength {
+		panic("tls: internal error: wrong nonce length")
+	}
+	aes, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	aead, err := ccm.NewCCM(aes)
+	if err != nil {
+		panic(err)
+	}
+
+	ret := &xorNonceAEAD{aead: aead}
+	copy(ret.nonceMask[:], nonceMask)
+	return ret
+}
+
+func aeadAESCCM8TLS13(key, nonceMask []byte) aead {
+	if len(nonceMask) != aeadNonceLength {
+		panic("tls: internal error: wrong nonce length")
+	}
+	aes, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	aead, err := ccm.NewCCMWithTagSize(aes, 8)
+	if err != nil {
+		panic(err)
+	}
+
+	ret := &xorNonceAEAD{aead: aead}
+	copy(ret.nonceMask[:], nonceMask)
+	return ret
+}
+
+func aeadSM4GCMTLS13(key, nonceMask []byte) aead {
+	if len(nonceMask) != aeadNonceLength {
+		panic("tls: internal error: wrong nonce length")
+	}
+	sm4, err := sm4.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	aead, err := cipher.NewGCM(sm4)
+	if err != nil {
+		panic(err)
+	}
+
+	ret := &xorNonceAEAD{aead: aead}
+	copy(ret.nonceMask[:], nonceMask)
+	return ret
+}
+
+func aeadSM4CCMTLS13(key, nonceMask []byte) aead {
+	if len(nonceMask) != aeadNonceLength {
+		panic("tls: internal error: wrong nonce length")
+	}
+	sm4, err := sm4.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	aead, err := ccm.NewCCM(sm4)
 	if err != nil {
 		panic(err)
 	}
@@ -604,7 +980,6 @@ func (c *cthWrapper) Write(p []byte) (int, error) { return c.h.Write(p) }
 func (c *cthWrapper) Sum(b []byte) []byte         { return c.h.ConstantTimeSum(b) }
 
 func newConstantTimeHash(h func() hash.Hash) func() hash.Hash {
-	boring.Unreachable()
 	return func() hash.Hash {
 		return &cthWrapper{h().(constantTimeHash)}
 	}
@@ -690,28 +1065,65 @@ const (
 	TLS_RSA_WITH_AES_128_CBC_SHA                  uint16 = 0x002f
 	TLS_RSA_WITH_AES_256_CBC_SHA                  uint16 = 0x0035
 	TLS_RSA_WITH_AES_128_CBC_SHA256               uint16 = 0x003c
+	TLS_RSA_WITH_ARIA_128_CBC_SHA256              uint16 = 0xc03c
+	TLS_RSA_WITH_ARIA_256_CBC_SHA384              uint16 = 0xc03d
 	TLS_RSA_WITH_AES_128_GCM_SHA256               uint16 = 0x009c
 	TLS_RSA_WITH_AES_256_GCM_SHA384               uint16 = 0x009d
+	TLS_RSA_WITH_AES_128_CCM_SHA256               uint16 = 0xc09c
+	TLS_RSA_WITH_AES_256_CCM_SHA256               uint16 = 0xc09d
+	TLS_RSA_WITH_AES_128_CCM_8_SHA256             uint16 = 0xc0a0
+	TLS_RSA_WITH_AES_256_CCM_8_SHA256             uint16 = 0xc0a1
+	TLS_RSA_WITH_ARIA_128_GCM_SHA256              uint16 = 0xc050
+	TLS_RSA_WITH_ARIA_256_GCM_SHA384              uint16 = 0xc051
+	TLS_RSA_WITH_CAMELLIA_128_GCM_SHA256          uint16 = 0xc07a
+	TLS_RSA_WITH_CAMELLIA_256_GCM_SHA384          uint16 = 0xc07b
 	TLS_ECDHE_ECDSA_WITH_RC4_128_SHA              uint16 = 0xc007
-	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA          uint16 = 0xc009
-	TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA          uint16 = 0xc00a
 	TLS_ECDHE_RSA_WITH_RC4_128_SHA                uint16 = 0xc011
-	TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA           uint16 = 0xc012
+	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA          uint16 = 0xc009
 	TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA            uint16 = 0xc013
+	TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA          uint16 = 0xc00a
 	TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA            uint16 = 0xc014
+	TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA         uint16 = 0xc008
+	TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA           uint16 = 0xc012
 	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256       uint16 = 0xc023
 	TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256         uint16 = 0xc027
-	TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256         uint16 = 0xc02f
+	TLS_ECDHE_ECDSA_WITH_ARIA_128_CBC_SHA256      uint16 = 0xc048
+	TLS_ECDHE_RSA_WITH_ARIA_128_CBC_SHA256        uint16 = 0xc04c
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256  uint16 = 0xc072
+	TLS_ECDHE_RSA_WITH_CAMELLIA_128_CBC_SHA256    uint16 = 0xc076
+	TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384       uint16 = 0xc024
+	TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384         uint16 = 0xc028
+	TLS_ECDHE_ECDSA_WITH_ARIA_256_CBC_SHA384      uint16 = 0xc049
+	TLS_ECDHE_RSA_WITH_ARIA_256_CBC_SHA384        uint16 = 0xc04d
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_CBC_SHA384  uint16 = 0xc073
+	TLS_ECDHE_RSA_WITH_CAMELLIA_256_CBC_SHA384    uint16 = 0xc077
 	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256       uint16 = 0xc02b
-	TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384         uint16 = 0xc030
+	TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256         uint16 = 0xc02f
 	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384       uint16 = 0xc02c
-	TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256   uint16 = 0xcca8
+	TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384         uint16 = 0xc030
+	TLS_ECDHE_ECDSA_WITH_AES_128_CCM_SHA256       uint16 = 0xc0ac
+	TLS_ECDHE_ECDSA_WITH_AES_256_CCM_SHA256       uint16 = 0xc0ad
+	TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8_SHA256     uint16 = 0xc0ae
+	TLS_ECDHE_ECDSA_WITH_AES_256_CCM_8_SHA256     uint16 = 0xc0af
 	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 uint16 = 0xcca9
+	TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256   uint16 = 0xcca8
+	TLS_ECDHE_ECDSA_WITH_ARIA_128_GCM_SHA256      uint16 = 0xc05c
+	TLS_ECDHE_RSA_WITH_ARIA_128_GCM_SHA256        uint16 = 0xc060
+	TLS_ECDHE_ECDSA_WITH_ARIA_256_GCM_SHA384      uint16 = 0xc05d
+	TLS_ECDHE_RSA_WITH_ARIA_256_GCM_SHA384        uint16 = 0xc061
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_GCM_SHA256  uint16 = 0xc086
+	TLS_ECDHE_RSA_WITH_CAMELLIA_128_GCM_SHA256    uint16 = 0xc08a
+	TLS_ECDHE_RSA_WITH_CAMELLIA_256_GCM_SHA384    uint16 = 0xc08b
+	TLS_ECDHE_ECDSA_WITH_CAMELLIA_256_GCM_SHA384  uint16 = 0xc087
 
 	// TLS 1.3 cipher suites.
 	TLS_AES_128_GCM_SHA256       uint16 = 0x1301
 	TLS_AES_256_GCM_SHA384       uint16 = 0x1302
 	TLS_CHACHA20_POLY1305_SHA256 uint16 = 0x1303
+	TLS_AES_128_CCM_SHA256       uint16 = 0x1304
+	TLS_AES_128_CCM_8_SHA256     uint16 = 0x1305
+	TLS_SM4_GCM_SM3              uint16 = 0x00c6
+	TLS_SM4_CCM_SM3              uint16 = 0x00c7
 
 	// TLS_FALLBACK_SCSV isn't a standard cipher suite but an indicator
 	// that the client is doing version fallback. See RFC 7507.

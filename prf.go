@@ -7,7 +7,6 @@ package tls
 import (
 	"crypto"
 	"crypto/hmac"
-	"crypto/internal/fips140/tls12"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -15,6 +14,8 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+
+	"gitlab.com/go-extension/tls/internal/tls12"
 )
 
 type prfFunc func(secret []byte, label string, seed []byte, keyLen int) []byte
@@ -119,13 +120,7 @@ func masterFromPreMasterSecret(version uint16, suite *cipherSuite, preMasterSecr
 // extMasterFromPreMasterSecret generates the extended master secret from the
 // pre-master secret. See RFC 7627.
 func extMasterFromPreMasterSecret(version uint16, suite *cipherSuite, preMasterSecret, transcript []byte) []byte {
-	prf, hash := prfAndHashForVersion(version, suite)
-	if version == VersionTLS12 {
-		// Use the FIPS 140-3 module only for TLS 1.2 with EMS, which is the
-		// only TLS 1.0-1.2 approved mode per IG D.Q.
-		return tls12.MasterSecret(hash.New, preMasterSecret, transcript)
-	}
-	return prf(preMasterSecret, extendedMasterSecretLabel, transcript, masterSecretLength)
+	return prfForVersion(version, suite)(preMasterSecret, extendedMasterSecretLabel, transcript, masterSecretLength)
 }
 
 // keysFromMasterSecret generates the connection keys from the master
@@ -248,7 +243,7 @@ func noEKMBecauseRenegotiation(label string, context []byte, length int) ([]byte
 // Master Secret is not negotiated and thus we wish to fail all key-material
 // export requests.
 func noEKMBecauseNoEMS(label string, context []byte, length int) ([]byte, error) {
-	return nil, errors.New("crypto/tls: ExportKeyingMaterial is unavailable when neither TLS 1.3 nor Extended Master Secret are negotiated; override with GODEBUG=tlsunsafeekm=1")
+	return nil, errors.New("crypto/tls: ExportKeyingMaterial is unavailable when neither TLS 1.3 nor Extended Master Secret are negotiated")
 }
 
 // ekmFromMasterSecret generates exported keying material as defined in RFC 5705.
