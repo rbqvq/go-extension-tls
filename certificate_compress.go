@@ -47,6 +47,10 @@ func (m *certificateMsgTLS13) compress(algorithm CertificateCompressionAlgorithm
 }
 
 func (m *compressedCertificateMsg) decompress() (*certificateMsgTLS13, error) {
+	if m.uncompressedLength+4 > maxHandshakeCertificateMsg {
+		return nil, fmt.Errorf("tls: uncompressed certificate message of length %d bytes exceeds maximum of %d bytes", m.uncompressedLength, maxHandshakeCertificateMsg)
+	}
+
 	compressed := bytes.NewReader(m.compressedCertificateMessage)
 
 	var decompressed io.Reader
@@ -82,7 +86,13 @@ func (m *compressedCertificateMsg) decompress() (*certificateMsgTLS13, error) {
 
 	_, err := io.ReadFull(decompressed, rawMsg[4:])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tls: failed to decompress certificate message: %w", err)
+	}
+
+	var tmp [1]byte
+	n, err := decompressed.Read(tmp[:])
+	if n > 0 || err != io.EOF {
+		return nil, fmt.Errorf("tls: decompressed certificate message longer than %d bytes", m.uncompressedLength)
 	}
 
 	certMsg := new(certificateMsgTLS13)

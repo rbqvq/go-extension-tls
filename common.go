@@ -1597,7 +1597,7 @@ func (c *Config) certificateCompressionPreferences() []CertificateCompressionAlg
 		return c.CertificateCompressionPreferences
 	}
 
-	return defaultCertificateCompressionAlgorithms()
+	return supportedCertificateCompressionAlgorithms()
 }
 
 func (c *Config) signatureAlgorithmsPreferences(minVers uint16) []SignatureScheme {
@@ -1626,10 +1626,6 @@ func (c *Config) delegatedCredentialPreferences() []SignatureScheme {
 	}
 
 	return supportedSignatureAlgorithmsDC()
-}
-
-func (c *Config) supportsCertificateCompression(algorithm CertificateCompressionAlgorithm) bool {
-	return slices.Contains(c.certificateCompressionPreferences(), algorithm)
 }
 
 // mutualVersion returns the protocol version to use given the advertised
@@ -2143,6 +2139,16 @@ func defaultConfig() *Config {
 
 func unexpectedMessageError(wanted, got any) error {
 	return fmt.Errorf("tls: received unexpected handshake message of type %T when waiting for %T", got, wanted)
+}
+
+// supportedCertificateCompressionAlgorithms returns the supported compression algorithms for
+// the certificate, to advertise in ClientHello and CertificateRequest messages.
+func supportedCertificateCompressionAlgorithms() []CertificateCompressionAlgorithm {
+	return defaultCertificateCompressionAlgorithms()
+}
+
+func isSupportedCertificateCompressionAlgorithms(algorithm CertificateCompressionAlgorithm, supportedAlgorithms []CertificateCompressionAlgorithm) bool {
+	return slices.Contains(supportedAlgorithms, algorithm)
 }
 
 var testingOnlySupportedSignatureAlgorithms []SignatureScheme

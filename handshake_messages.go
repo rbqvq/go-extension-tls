@@ -2001,12 +2001,13 @@ func (m *newSessionTicketMsgTLS13) unmarshal(data []byte) bool {
 }
 
 type certificateRequestMsgTLS13 struct {
-	ocspStapling                     bool
-	scts                             bool
-	supportedSignatureAlgorithms     []SignatureScheme
-	supportedSignatureAlgorithmsCert []SignatureScheme
-	supportedSignatureAlgorithmsDC   []SignatureScheme
-	certificateAuthorities           [][]byte
+	ocspStapling                              bool
+	scts                                      bool
+	supportedCertificateCompressionAlgorithms []CertificateCompressionAlgorithm
+	supportedSignatureAlgorithms              []SignatureScheme
+	supportedSignatureAlgorithmsCert          []SignatureScheme
+	supportedSignatureAlgorithmsDC            []SignatureScheme
+	certificateAuthorities                    [][]byte
 }
 
 func (m *certificateRequestMsgTLS13) marshal() ([]byte, error) {
@@ -2030,6 +2031,16 @@ func (m *certificateRequestMsgTLS13) marshal() ([]byte, error) {
 				// from the server." and it appears in the table in Section 4.2.
 				b.AddUint16(extensionSCT)
 				b.AddUint16(0) // empty extension_data
+			}
+			if len(m.supportedCertificateCompressionAlgorithms) > 0 {
+				b.AddUint16(extensionCompressCertificate)
+				b.AddUint16LengthPrefixed(func(exts *cryptobyte.Builder) {
+					exts.AddUint8LengthPrefixed(func(exts *cryptobyte.Builder) {
+						for _, algorithm := range m.supportedCertificateCompressionAlgorithms {
+							exts.AddUint16(uint16(algorithm))
+						}
+					})
+				})
 			}
 			if len(m.supportedSignatureAlgorithms) > 0 {
 				b.AddUint16(extensionSignatureAlgorithms)
@@ -2104,6 +2115,18 @@ func (m *certificateRequestMsgTLS13) unmarshal(data []byte) bool {
 			m.ocspStapling = true
 		case extensionSCT:
 			m.scts = true
+		case extensionCompressCertificate:
+			var compressionList cryptobyte.String
+			if !extData.ReadUint8LengthPrefixed(&compressionList) || compressionList.Empty() {
+				return false
+			}
+			for !compressionList.Empty() {
+				var compression uint16
+				if !compressionList.ReadUint16(&compression) {
+					return false
+				}
+				m.supportedCertificateCompressionAlgorithms = append(m.supportedCertificateCompressionAlgorithms, CertificateCompressionAlgorithm(compression))
+			}
 		case extensionSignatureAlgorithms:
 			var sigAndAlgs cryptobyte.String
 			if !extData.ReadUint16LengthPrefixed(&sigAndAlgs) || sigAndAlgs.Empty() {

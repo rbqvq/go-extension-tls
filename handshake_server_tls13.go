@@ -330,13 +330,10 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 		}
 	}
 
-CertificateCompressionAlgorithmSelection:
-	for _, preferredAlgorithm := range c.config.certificateCompressionPreferences() {
-		for _, algorithm := range hs.clientHello.supportedCertificateCompressionAlgorithms {
-			if algorithm == preferredAlgorithm {
-				hs.certificateCompressionAlgorithm = algorithm
-				break CertificateCompressionAlgorithmSelection
-			}
+	for _, algorithm := range c.config.certificateCompressionPreferences() {
+		if slices.Contains(hs.clientHello.supportedCertificateCompressionAlgorithms, algorithm) {
+			hs.certificateCompressionAlgorithm = algorithm
+			break
 		}
 	}
 
@@ -1020,6 +1017,8 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 		certReq.ocspStapling = true
 		certReq.scts = true
 
+		certReq.supportedCertificateCompressionAlgorithms = c.config.certificateCompressionPreferences()
+
 		supportedSignatureAlgorithms := slices.DeleteFunc(c.config.signatureAlgorithmsPreferences(c.vers), func(s SignatureScheme) bool { return isDisabledSignatureAlgorithm(VersionTLS13, s, false) })
 		certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms
 
@@ -1435,7 +1434,7 @@ func (hs *serverHandshakeStateTLS13) readClientCertificate() error {
 	case *certificateMsgTLS13:
 		certMsg = msg
 	case *compressedCertificateMsg:
-		if !c.config.supportsCertificateCompression(msg.algorithm) {
+		if !isSupportedCertificateCompressionAlgorithms(msg.algorithm, hs.certReq.supportedCertificateCompressionAlgorithms) {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: server selected unsupported algorithm")
 		}
