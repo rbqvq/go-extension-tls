@@ -10,8 +10,8 @@ github.com/cronokirby/saferith v0.33.1-0.20250226174546-1f11f94ce488 h1:tLWBZgPg
 github.com/cronokirby/saferith v0.33.1-0.20250226174546-1f11f94ce488/go.mod h1:QKJhjoqUtBsXCAVEjw38mFqoi7DebT7kthcD7UzbnoA=
 github.com/dgryski/go-camellia v0.0.0-20191119043421-69a8a13fb23d h1:CPqTNIigGweVPT4CYb+OO2E6XyRKFOmvTHwWRLgCAlE=
 github.com/dgryski/go-camellia v0.0.0-20191119043421-69a8a13fb23d/go.mod h1:QX5ZVULjAfZJux/W62Y91HvCh9hyW6enAwcrrv/sLj0=
-github.com/emmansun/gmsm v0.41.1 h1:mD1MqmaXTEqt+9UVmDpRYvcEMIa5vuslFEnw7IWp6/w=
-github.com/emmansun/gmsm v0.41.1/go.mod h1:FD1EQk4XcSMkahZFzNwFoI/uXzAlODB9JVsJ9G5N7Do=
+github.com/emmansun/gmsm v0.42.0 h1:4lKCm4uay1ZjzJmdOzxCZHa4WvIbz64Z3NEJn9itMHg=
+github.com/emmansun/gmsm v0.42.0/go.mod h1:FD1EQk4XcSMkahZFzNwFoI/uXzAlODB9JVsJ9G5N7Do=
 github.com/klauspost/compress v1.18.5 h1:/h1gH5Ce+VWNLSWqPzOVn6XBO+vJbCNGvjoaGBFW2IE=
 github.com/klauspost/compress v1.18.5/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
 github.com/pmorjan/kmod v1.1.1 h1:Vfw6bMaOg/sYSBCqJPT9TbqHHf5zK00GbaL5JQLO4r0=
@@ -26,8 +26,6 @@ gitlab.com/go-extension/ffdh v0.0.0-20251208192952-367b797915cb h1:ASbVB14sRJ47X
 gitlab.com/go-extension/ffdh v0.0.0-20251208192952-367b797915cb/go.mod h1:FIPqR8oVxs5FdpfbELmomLlweLihoAJ9P/+EMTsindY=
 gitlab.com/go-extension/hash v0.0.0-20250912170447-263d1d8375e4 h1:SMsGMMkGS9WBYrlbVsGyvky2InkWVhyPLRBwynzmxvI=
 gitlab.com/go-extension/hash v0.0.0-20250912170447-263d1d8375e4/go.mod h1:fgbJOB/r2jzfdhIdj6N0Hz6hahFqzSdU5TH1Hpoqq7c=
-gitlab.com/go-extension/hpke v0.0.0-20250903154322-ae11394c5e06 h1:Oq3ZLQwNdKzo9Td2reMCa/U5j4r48eKOjhJ+H8+Z5g8=
-gitlab.com/go-extension/hpke v0.0.0-20250903154322-ae11394c5e06/go.mod h1:em5FZ5PLgyAGGNIqhsJrl7Dgyg0uAI4SJvR3nzIHhQM=
 gitlab.com/go-extension/rand v0.0.0-20240303103951-707937a049b5 h1:xQA0rfVPqW3G6dnb4qtgBdxr9XLu9vzDfdqKfLqGFXA=
 gitlab.com/go-extension/rand v0.0.0-20240303103951-707937a049b5/go.mod h1:nRmjyZOSF6N/6yuRl7ui9wKb1DjMX9ELGzOwELwWVSU=
 gitlab.com/go-extension/utils v0.0.0-20251006173700-b62b19cda891 h1:b45Hl2gyHbV6GANcg/7BSZ0A0JUjq/gBEq+OeJlAuM0=
