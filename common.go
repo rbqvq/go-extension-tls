@@ -654,7 +654,6 @@ type Defaults struct {
 	//
 	// For server:
 	// If features was enabled and offered by client, the extension will be sent.
-	// So this option
 	AllSupportedExtensions bool
 }
 
