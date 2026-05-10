@@ -456,7 +456,6 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 		c.rejectedEarlyData()
 	}
 
-	echConf := c.config.echConfig()
 	if len(hello.pskIdentities) > 0 {
 		pskSuite := cipherSuiteTLS13ByID(hs.session.cipherSuite)
 		if pskSuite == nil {
@@ -474,7 +473,9 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 				return err
 			}
 
-			setupInnerClientHelloCompress(echConf, hs.hello, hello)
+			if err := c.config.setupInnerClientHelloCompress(hs.hello, hello); err != nil {
+				return err
+			}
 			c.config.updateClientHelloPadding(hello, true)
 
 			if err := computeAndUpdatePSK(hello, hs.binderKey, transcript, hs.suite.finishedHash); err != nil {
@@ -484,11 +485,15 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 			// Server selected a cipher suite incompatible with the PSK.
 			hello.pskIdentities = nil
 			hello.pskBinders = nil
-			setupInnerClientHelloCompress(echConf, hs.hello, hello)
+			if err := c.config.setupInnerClientHelloCompress(hs.hello, hello); err != nil {
+				return err
+			}
 			c.config.updateClientHelloPadding(hello, true)
 		}
 	} else {
-		setupInnerClientHelloCompress(echConf, hs.hello, hello)
+		if err := c.config.setupInnerClientHelloCompress(hs.hello, hello); err != nil {
+			return err
+		}
 		c.config.updateClientHelloPadding(hello, true)
 	}
 
@@ -601,7 +606,7 @@ func (hs *clientHandshakeStateTLS13) processServerHello() error {
 		return nil
 	}
 
-	if int(hs.serverHello.selectedIdentity) >= len(hs.hello.pskIdentities) {
+	if int(hs.serverHello.selectedIdentity) >= len(hs.hello.pskIdentities) || (hs.echContext!= nil && hs.echContext.echRejected) {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: server selected an invalid PSK")
 	}

@@ -380,7 +380,9 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 	if session == nil {
 		hello := hello
 		if ech != nil {
-			setupInnerClientHelloCompress(c.config.echConfig(), hello, ech.innerHello)
+			if err := c.config.setupInnerClientHelloCompress(hello, ech.innerHello); err != nil {
+				return err
+			}
 			hello = ech.innerHello
 		}
 
@@ -402,10 +404,6 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 	}
 
 	if ech != nil {
-		// Any extensions which have changed in hello, but are mirrored in the
-		// outer hello and compressed, need to be copied to the outer hello, so
-		// they can be properly decompressed by the server.
-		hello.pskBinders = ech.innerHello.pskBinders
 		// Overwrite the server name in the outer hello with the public facing
 		// name.
 		hello.serverName = string(ech.config.PublicName)
@@ -415,10 +413,6 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		if err != nil {
 			return errors.New("tls: short read from Rand: " + err.Error())
 		}
-
-		// NOTE: we don't do PSK GREASE, in line with boringssl, it's meant to
-		// work around _possibly_ broken middleboxes, but there is little-to-no
-		// evidence that this is actually a problem.
 
 		if err := c.config.computeAndUpdateOuterECHExtension(hello, ech.innerHello, ech, true); err != nil {
 			return err
@@ -704,7 +698,9 @@ func (c *Conn) loadSession(outer *clientHelloMsg, ech *echClientContext) (
 	binderKey = earlySecret.ResumptionBinderKey()
 	transcript := cipherSuite.hash.New()
 
-	setupInnerClientHelloCompress(c.config.echConfig(), outer, hello)
+	if err := c.config.setupInnerClientHelloCompress(outer, hello); err != nil {
+		return nil, nil, nil, err
+	}
 	c.config.updateClientHelloPadding(hello, false)
 
 	if err := computeAndUpdatePSK(hello, binderKey, transcript, cipherSuite.finishedHash); err != nil {
