@@ -75,7 +75,7 @@ type kernelCryptoInfo struct {
 	cipher_type kernelCryptoCipherType
 }
 
-var _ kernelCrypto = &kernelCryptoAES128GCM{}
+var _ kernelCrypto = (*kernelCryptoAES128GCM)(nil)
 
 type kernelCryptoAES128GCM struct {
 	kernelCryptoInfo
@@ -90,7 +90,7 @@ func (crypto *kernelCryptoAES128GCM) String() string {
 	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
 }
 
-var _ kernelCrypto = &kernelCryptoAES256GCM{}
+var _ kernelCrypto = (*kernelCryptoAES256GCM)(nil)
 
 type kernelCryptoAES256GCM struct {
 	kernelCryptoInfo
@@ -105,7 +105,7 @@ func (crypto *kernelCryptoAES256GCM) String() string {
 	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
 }
 
-var _ kernelCrypto = &kernelCryptoAES128CCM{}
+var _ kernelCrypto = (*kernelCryptoAES128CCM)(nil)
 
 type kernelCryptoAES128CCM struct {
 	kernelCryptoInfo
@@ -120,7 +120,7 @@ func (crypto *kernelCryptoAES128CCM) String() string {
 	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
 }
 
-var _ kernelCrypto = &kernelCryptoChacha20Poly1035{}
+var _ kernelCrypto = (*kernelCryptoChacha20Poly1035)(nil)
 
 type kernelCryptoChacha20Poly1035 struct {
 	kernelCryptoInfo
@@ -135,7 +135,7 @@ func (crypto *kernelCryptoChacha20Poly1035) String() string {
 	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
 }
 
-var _ kernelCrypto = &kernelCryptoSM4GCM{}
+var _ kernelCrypto = (*kernelCryptoSM4GCM)(nil)
 
 type kernelCryptoSM4GCM struct {
 	kernelCryptoInfo
@@ -150,7 +150,7 @@ func (crypto *kernelCryptoSM4GCM) String() string {
 	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
 }
 
-var _ kernelCrypto = &kernelCryptoSM4CCM{}
+var _ kernelCrypto = (*kernelCryptoSM4CCM)(nil)
 
 type kernelCryptoSM4CCM struct {
 	kernelCryptoInfo
@@ -165,7 +165,7 @@ func (crypto *kernelCryptoSM4CCM) String() string {
 	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
 }
 
-var _ kernelCrypto = &kernelCryptoARIA128GCM{}
+var _ kernelCrypto = (*kernelCryptoARIA128GCM)(nil)
 
 type kernelCryptoARIA128GCM struct {
 	kernelCryptoInfo
@@ -180,7 +180,7 @@ func (crypto *kernelCryptoARIA128GCM) String() string {
 	return string((*[unsafe.Sizeof(*crypto)]byte)(unsafe.Pointer(crypto))[:])
 }
 
-var _ kernelCrypto = &kernelCryptoARIA256GCM{}
+var _ kernelCrypto = (*kernelCryptoARIA256GCM)(nil)
 
 type kernelCryptoARIA256GCM struct {
 	kernelCryptoInfo

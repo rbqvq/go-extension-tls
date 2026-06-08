@@ -39,7 +39,7 @@ func hasExtension[T Extension](extensions []Extension) bool {
 	})
 }
 
-var _ Extension = &implementedExtension{}
+var _ Extension = (*implementedExtension)(nil)
 
 type implementedExtension struct{}
 
@@ -328,7 +328,7 @@ func (*PreSharedKeyExtension) Clone() Extension {
 	return &PreSharedKeyExtension{}
 }
 
-var _ Extension = &UnimplementedExtension{}
+var _ Extension = (*UnimplementedExtension)(nil)
 
 type UnimplementedExtension struct {
 	Id   uint16

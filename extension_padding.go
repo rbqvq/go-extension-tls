@@ -13,7 +13,7 @@ type PaddingRequest struct {
 	QUIC              bool
 }
 
-var _ Extension = &PaddingExtension{}
+var _ Extension = (*PaddingExtension)(nil)
 
 type PaddingExtension struct {
 	Length uint16

@@ -11,7 +11,7 @@ import (
 	"golang.org/x/crypto/cryptobyte"
 )
 
-var _ Extension = &GREASEExtension{}
+var _ Extension = (*GREASEExtension)(nil)
 
 type GREASEExtension struct {
 	Id   uint16

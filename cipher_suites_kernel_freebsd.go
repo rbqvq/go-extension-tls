@@ -28,7 +28,7 @@ type kernelCrypto interface {
 	String() string
 }
 
-var _ kernelCrypto = &kernelCryptoInfo{}
+var _ kernelCrypto = (*kernelCryptoInfo)(nil)
 
 type kernelCryptoInfo struct {
 	cipher_key       uintptr                     // const uint8_t *cipher_key
