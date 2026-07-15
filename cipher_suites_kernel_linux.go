@@ -206,7 +206,7 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
-		if hc.limit < maxPlaintext {
+		if hc.limit < maxPlaintext && !kernel.TLS_TX_MAX_PAYLOAD {
 			return nil
 		}
 
@@ -219,7 +219,7 @@ func (hc *halfConn) kernelCipher(cipherSuite uint16, isRX bool) kernelCrypto {
 			return nil
 		}
 
-		if hc.limit < maxPlaintext+1 {
+		if hc.limit < maxPlaintext+1 && !kernel.TLS_TX_MAX_PAYLOAD {
 			return nil
 		}
 	default:

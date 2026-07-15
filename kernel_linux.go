@@ -23,10 +23,11 @@ type platform struct {
 }
 
 const (
-	_TLS_TX               = 1
-	_TLS_RX               = 2
-	_TLS_TX_ZEROCOPY_RO   = 3
-	_TLS_RX_EXPECT_NO_PAD = 4
+	_TLS_TX                 = 1
+	_TLS_RX                 = 2
+	_TLS_TX_ZEROCOPY_RO     = 3
+	_TLS_RX_EXPECT_NO_PAD   = 4
+	_TLS_TX_MAX_PAYLOAD_LEN = 5
 
 	_TLS_SET_RECORD_TYPE = 1
 	_TLS_GET_RECORD_TYPE = 2
@@ -42,8 +43,9 @@ type kernelInfo struct {
 	TLS, TLS_RX                     bool
 	TLS_Version13, TLS_Version13_RX bool
 
-	TLS_TX_ZEROCOPY  bool
-	TLS_RX_NOPADDING bool
+	TLS_TX_ZEROCOPY    bool
+	TLS_RX_NOPADDING   bool
+	TLS_TX_MAX_PAYLOAD bool
 
 	TLS_AES_256_GCM       bool
 	TLS_AES_128_CCM       bool
@@ -91,6 +93,8 @@ func init() {
 	kernelVersion.Build = nil
 
 	switch {
+	case kernelVersion.GTE(semver.Version{Major: 6, Minor: 19}):
+		kernel.TLS_TX_MAX_PAYLOAD = true
 	case kernelVersion.GTE(semver.Version{Major: 6, Minor: 14}):
 		kernel.TLS_Version13_KeyUpdate = true
 		fallthrough
@@ -236,6 +240,15 @@ func (c *Conn) setupTX(fd uintptr, crypto kernelCrypto) {
 
 	if kernel.TLS_TX_ZEROCOPY {
 		syscall.SetsockoptInt(int(fd), unix.SOL_TLS, _TLS_TX_ZEROCOPY_RO, 1)
+	}
+
+	if kernel.TLS_TX_MAX_PAYLOAD {
+		limit := int(c.out.limit)
+		if c.out.version == VersionTLS13 {
+			limit--
+		}
+
+		syscall.SetsockoptInt(int(fd), unix.SOL_TLS, _TLS_TX_MAX_PAYLOAD_LEN, limit)
 	}
 }
 
