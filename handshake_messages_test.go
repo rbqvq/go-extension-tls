@@ -278,6 +278,10 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 		m.extensionList = append(m.extensionList, &EarlyDataExtension{})
 	}
 
+	if rand.Intn(10) > 5 {
+		m.encryptedClientHello = randomBytes(rand.Intn(50)+1, rand)
+		m.extensionList = append(m.extensionList, &EncryptedClientHelloExtension{})
+	}
 	for i := 0; i < rand.Intn(5); i++ {
 		var psk pskIdentity
 		psk.obfuscatedTicketAge = uint32(rand.Intn(500000))
@@ -288,10 +292,6 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	if rand.Intn(10) > 5 {
 		m.quicTransportParameters = randomBytes(rand.Intn(500), rand)
 		m.extensionList = append(m.extensionList, &QUICTransportParametersExtension{})
-	}
-	if rand.Intn(10) > 5 {
-		m.encryptedClientHello = randomBytes(rand.Intn(50)+1, rand)
-		m.extensionList = append(m.extensionList, &EncryptedClientHelloExtension{})
 	}
 
 	if len(m.pskIdentities) > 0 {
