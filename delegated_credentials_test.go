@@ -140,7 +140,6 @@ func init() {
 		Certificates: nil,
 		MinVersion:   VersionTLS10,
 		MaxVersion:   VersionTLS13,
-		CipherSuites: allCipherSuites(),
 		Extensions:   fullExtensions,
 	}
 }

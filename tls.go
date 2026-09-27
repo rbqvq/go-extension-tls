@@ -20,6 +20,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/mldsa"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -104,6 +105,8 @@ func Listen(network, laddr string, config *Config) (net.Listener, error) {
 }
 
 type timeoutError struct{}
+
+var _ error = timeoutError{}
 
 func (timeoutError) Error() string   { return "tls: DialWithDialer timed out" }
 func (timeoutError) Timeout() bool   { return true }
@@ -331,6 +334,14 @@ func X509KeyPair(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
 		if !priv.Public().(ed25519.PublicKey).Equal(pub) {
 			return fail(errors.New("tls: private key does not match public key"))
 		}
+	case *mldsa.PublicKey:
+		priv, ok := cert.PrivateKey.(*mldsa.PrivateKey)
+		if !ok {
+			return fail(errors.New("tls: private key type does not match public key type"))
+		}
+		if !priv.PublicKey().Equal(pub) {
+			return fail(errors.New("tls: private key does not match public key"))
+		}
 	default:
 		return fail(errors.New("tls: unknown public key algorithm"))
 	}
@@ -342,22 +353,23 @@ func X509KeyPair(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
 // PKCS #1 private keys by default, while OpenSSL 1.0.0 generates PKCS #8 keys.
 // OpenSSL ecparam generates SEC1 EC private keys for ECDSA. We try all three.
 func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {
-	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
+	key, err := x509.ParsePKCS8PrivateKey(der)
+	pkcs8Err := err // Return the PKCS#8 error if all parsing attempts fail.
+	if err != nil {
+		key, err = x509.ParsePKCS1PrivateKey(der)
+	}
+	if err != nil {
+		key, err = x509.ParseECPrivateKey(der)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("tls: failed to parse private key: %w", pkcs8Err)
+	}
+	switch key := key.(type) {
+	case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey, *mldsa.PrivateKey:
 		return key, nil
+	default:
+		return nil, errors.New("tls: found unknown private key type in PKCS#8 wrapping")
 	}
-	if key, err := x509.ParsePKCS8PrivateKey(der); err == nil {
-		switch key := key.(type) {
-		case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey:
-			return key, nil
-		default:
-			return nil, errors.New("tls: found unknown private key type in PKCS#8 wrapping")
-		}
-	}
-	if key, err := x509.ParseECPrivateKey(der); err == nil {
-		return key, nil
-	}
-
-	return nil, errors.New("tls: failed to parse private key")
 }
 
 // LoadX509Cert reads and parses a certificate from a file.

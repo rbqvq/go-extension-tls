@@ -8,6 +8,8 @@ package tls
 
 import "io"
 
+type KernelOptions struct{}
+
 type platform struct{}
 
 func (c *Conn) setup() error {

@@ -14,7 +14,10 @@ import (
 // defaultCurvePreferences is the default set of supported key exchanges, as
 // well as the preference order.
 func defaultCurvePreferences() []CurveID {
-	return []CurveID{X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519, CurveP256, CurveP384, CurveP521}
+	return []CurveID{
+		X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024,
+		X25519, CurveP256, CurveP384, CurveP521,
+	}
 }
 
 // defaultSupportedSignatureAlgorithms returns the signature and hash algorithms that
@@ -23,6 +26,9 @@ func defaultCurvePreferences() []CurveID {
 // Note that in TLS 1.2, the ECDSA algorithms are not constrained to P-256, etc.
 func defaultSupportedSignatureAlgorithms() []SignatureScheme {
 	return []SignatureScheme{
+		MLDSA44,
+		MLDSA65,
+		MLDSA87,
 		PSSWithSHA256,
 		ECDSAWithP256AndSHA256,
 		Ed25519,
@@ -69,10 +75,7 @@ func supportedCipherSuites(aesGCMPreferred bool) []uint16 {
 func defaultCipherSuites(aesGCMPreferred bool) []uint16 {
 	cipherSuites := supportedCipherSuites(aesGCMPreferred)
 	return slices.DeleteFunc(cipherSuites, func(c uint16) bool {
-		return extendedCipherSuites[c] ||
-			disabledCipherSuites[c] ||
-			rsaKexCiphers[c] ||
-			tdesCiphers[c]
+		return disabledCipherSuites[c] || extendedCipherSuites[c]
 	})
 }
 

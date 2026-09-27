@@ -8,7 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync/atomic"
+	"net"
 )
 
 // QUICEncryptionLevel represents a QUIC encryption level used to transmit
@@ -48,7 +48,7 @@ const (
 type QUICConn struct {
 	conn *Conn
 
-	sessionTicketSent atomic.Bool
+	sessionTicketSent bool
 }
 
 // A QUICConfig configures a [QUICConn].
@@ -61,6 +61,9 @@ type QUICConfig struct {
 	// stored in the client session cache.
 	// The application should use [QUICConn.StoreSession] to store sessions.
 	EnableSessionEvents bool
+
+	// ClientHelloInfoConn is the net.Conn to use for the ClientHelloInfo.Conn field.
+	ClientHelloInfoConn net.Conn
 }
 
 // A QUICEventKind is a type of operation on a QUIC connection.
@@ -182,21 +185,19 @@ type quicState struct {
 
 	enableSessionEvents bool
 
+	clientHelloInfoConn net.Conn
+
 	sessionState *SessionState
 }
 
 // QUICClient returns a new TLS client side connection using QUICTransport as the
 // underlying transport. The config cannot be nil.
-//
-// The config's MinVersion must be at least TLS 1.3.
 func QUICClient(config *QUICConfig) *QUICConn {
 	return newQUICConn(Client(nil, config.TLSConfig), config)
 }
 
 // QUICServer returns a new TLS server side connection using QUICTransport as the
 // underlying transport. The config cannot be nil.
-//
-// The config's MinVersion must be at least TLS 1.3.
 func QUICServer(config *QUICConfig) *QUICConn {
 	return newQUICConn(Server(nil, config.TLSConfig), config)
 }
@@ -206,6 +207,7 @@ func newQUICConn(conn *Conn, config *QUICConfig) *QUICConn {
 		signalc:             make(chan struct{}),
 		blockedc:            make(chan struct{}),
 		enableSessionEvents: config.EnableSessionEvents,
+		clientHelloInfoConn: config.ClientHelloInfoConn,
 	}
 	conn.quic.events = conn.quic.eventArr[:0]
 	return &QUICConn{
@@ -222,9 +224,6 @@ func (q *QUICConn) Start(ctx context.Context) error {
 		return quicError(errors.New("tls: Start called more than once"))
 	}
 	q.conn.quic.started = true
-	if q.conn.config.MinVersion < VersionTLS13 {
-		return quicError(errors.New("tls: Config MinVersion must be at least TLS 1.3"))
-	}
 	go q.conn.HandshakeContext(ctx)
 	if _, ok := <-q.conn.quic.blockedc; !ok {
 		return q.conn.handshakeErr
@@ -338,9 +337,10 @@ func (q *QUICConn) SendSessionTicket(opts QUICSessionTicketOptions) error {
 	if c.isClient {
 		return quicError(errors.New("tls: SendSessionTicket called on the client"))
 	}
-	if !q.sessionTicketSent.CompareAndSwap(false, true) {
+	if q.sessionTicketSent {
 		return quicError(errors.New("tls: SendSessionTicket called multiple times"))
 	}
+	q.sessionTicketSent = true
 
 	sessionState := q.conn.quic.sessionState
 	q.conn.quic.sessionState = nil

@@ -9,6 +9,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/mldsa"
 	"crypto/rsa"
 	"crypto/subtle"
 	"crypto/x509"
@@ -196,7 +197,7 @@ func (c *Conn) readClientHello(ctx context.Context) (*clientHelloMsg, *echServer
 	} else if len(clientVersions) == 0 {
 		clientVersions = supportedVersionsFromMax(clientHello.vers)
 	}
-	c.vers, ok = c.config.mutualVersion(roleServer, clientVersions)
+	c.vers, ok = c.config.mutualVersion(roleServer, c.quic != nil, clientVersions)
 	if !ok {
 		c.sendAlert(alertProtocolVersion)
 		return nil, nil, fmt.Errorf("tls: client offered only unsupported versions: %x", clientVersions)
@@ -275,7 +276,7 @@ func (hs *serverHandshakeState) processClientHello() error {
 	hs.hello.random = make([]byte, 32)
 	serverRandom := hs.hello.random
 	// Downgrade protection canaries. See RFC 8446, Section 4.1.3.
-	maxVers := c.config.maxSupportedVersion(roleServer)
+	maxVers := c.config.maxSupportedVersion(roleServer, c.quic != nil)
 	if maxVers >= VersionTLS12 && c.vers < maxVers || testingOnlyForceDowngradeCanary {
 		if c.vers == VersionTLS12 {
 			copy(serverRandom[24:], downgradeCanaryTLS12)
@@ -337,6 +338,7 @@ func (hs *serverHandshakeState) processClientHello() error {
 		}
 		return err
 	}
+
 	if hs.clientHello.scts {
 		hs.hello.scts = hs.cert.SignedCertificateTimestamps
 	}
@@ -364,6 +366,11 @@ func (hs *serverHandshakeState) processClientHello() error {
 			hs.ecSignOk = true
 		case *rsa.PublicKey:
 			hs.rsaSignOk = true
+		case *mldsa.PublicKey:
+			// ML-DSA can only be used with TLS 1.3.
+			c.sendAlert(alertInternalError)
+			return fmt.Errorf("tls: ML-DSA certificates require TLS 1.3, but client negotiated %s",
+				VersionName(c.vers))
 		default:
 			c.sendAlert(alertInternalError)
 			return fmt.Errorf("tls: unsupported signing key type (%T)", priv.Public())
@@ -482,7 +489,7 @@ func (hs *serverHandshakeState) pickCipherSuite() error {
 	for _, id := range hs.clientHello.cipherSuites {
 		if id == TLS_FALLBACK_SCSV {
 			// The client is doing a fallback connection. See RFC 7507.
-			if hs.clientHello.vers < c.config.maxSupportedVersion(roleServer) {
+			if hs.clientHello.vers < c.config.maxSupportedVersion(roleServer, c.quic != nil) {
 				c.sendAlert(alertInappropriateFallback)
 				return errors.New("tls: client using inappropriate protocol fallback")
 			}
@@ -653,6 +660,10 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 
 	certMsg := new(certificateMsg)
 	certMsg.certificates = hs.cert.Certificate
+	// Set localCertificate here, rather than at certificate selection time, so
+	// that it is only populated when a certificate is actually presented to the
+	// peer, and not on resumed connections.
+	c.localCertificate = hs.cert.Certificate
 	if _, err := hs.c.writeHandshakeRecord(certMsg, &hs.finishedHash); err != nil {
 		return err
 	}
@@ -691,7 +702,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		}
 		if c.vers >= VersionTLS12 {
 			certReq.hasSignatureAlgorithm = true
-			certReq.supportedSignatureAlgorithms = c.config.signatureAlgorithmsPreferences(c.vers)
+			certReq.supportedSignatureAlgorithms = c.config.signatureAlgorithmsPreferences(c.vers, c.vers)
 		}
 
 		// An empty list of certificateAuthorities signals to
@@ -996,6 +1007,11 @@ func (c *Conn) processCertsFromClient(certificate Certificate) error {
 	if len(certs) > 0 {
 		switch certs[0].PublicKey.(type) {
 		case *ecdsa.PublicKey, *rsa.PublicKey, ed25519.PublicKey:
+		case *mldsa.PublicKey:
+			if c.vers < VersionTLS13 {
+				c.sendAlert(alertIllegalParameter)
+				return errors.New("tls: client certificate uses ML-DSA, which requires TLS 1.3")
+			}
 		default:
 			c.sendAlert(alertUnsupportedCertificate)
 			return fmt.Errorf("tls: client certificate contains an unsupported public key of type %T", certs[0].PublicKey)
@@ -1198,6 +1214,10 @@ func clientHelloInfo(ctx context.Context, c *Conn, clientHello *clientHelloMsg) 
 		supportedVersions = supportedVersionsFromMax(clientHello.vers)
 	}
 
+	conn := c.conn
+	if c.quic != nil {
+		conn = c.quic.clientHelloInfoConn
+	}
 	return &ClientHelloInfo{
 		CipherSuites:         clientHello.cipherSuites,
 		ServerName:           clientHello.serverName,
@@ -1210,9 +1230,10 @@ func clientHelloInfo(ctx context.Context, c *Conn, clientHello *clientHelloMsg) 
 		Extensions:           clientHello.extensions,
 		CompressedExtensions: clientHello.echOuterExts,
 		ExtensionList:        clientHello.extensionList,
-		Conn:                 c.conn,
+		Conn:                 conn,
 		HelloRetryRequest:    c.didHRR,
 		config:               c.config,
+		isQUIC:               c.quic != nil,
 		ctx:                  ctx,
 	}
 }

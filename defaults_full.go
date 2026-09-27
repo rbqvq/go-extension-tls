@@ -9,17 +9,15 @@ import "slices"
 func fullCipherSuites(aesGCMPreferred bool) []uint16 {
 	cipherSuites := supportedCipherSuites(aesGCMPreferred)
 	return slices.DeleteFunc(cipherSuites, func(c uint16) bool {
-		return disabledCipherSuites[c] ||
-			rsaKexCiphers[c] ||
-			tdesCiphers[c]
+		return disabledCipherSuites[c]
 	})
 }
 
 func fullCurvePreferences() []CurveID {
 	return []CurveID{X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, CurveSM2MLKEM768,
 		X25519Kyber768Draft00, SecP256r1Kyber768Draft00, SecP384r1Kyber768OQS,
-		X25519, CurveP256, CurveP384, CurveP521, CurveSM2,
 		MLKEM768, MLKEM1024,
+		X25519, CurveP256, CurveP384, CurveP521, CurveSM2,
 		FFDHE2048, FFDHE3072, FFDHE4096, FFDHE6144, FFDHE8192,
 	}
 }

@@ -10,7 +10,7 @@ import (
 	"gitlab.com/go-extension/utils"
 )
 
-// Convert exported fields only
+// Convert exported ConnectionState fields.
 func (cs ConnectionState) Compatible() tls.ConnectionState {
 	return tls.ConnectionState{
 		Version:                     cs.Version,
@@ -26,16 +26,18 @@ func (cs ConnectionState) Compatible() tls.ConnectionState {
 		OCSPResponse:                cs.OCSPResponse,
 		TLSUnique:                   cs.TLSUnique,
 		ECHAccepted:                 cs.ECHAccepted,
+		HelloRetryRequest:           cs.HelloRetryRequest,
+		LocalCertificate:            cs.LocalCertificate,
 	}
 }
 
-// Unsafe convert using reflect
+// Convert all ConnectionState fields by reflect (unsafe).
 func (cs ConnectionState) FullCompatible() (tlsState tls.ConnectionState) {
 	utils.Convert(&cs, &tlsState)
 	return
 }
 
-// Convert exported fields only
+// Convert exported ConnectionState fields.
 func ToConnectionState(tlsState tls.ConnectionState) ConnectionState {
 	return ConnectionState{
 		Version:                     tlsState.Version,
@@ -51,11 +53,13 @@ func ToConnectionState(tlsState tls.ConnectionState) ConnectionState {
 		OCSPResponse:                tlsState.OCSPResponse,
 		TLSUnique:                   tlsState.TLSUnique,
 		ECHAccepted:                 tlsState.ECHAccepted,
+		HelloRetryRequest:           tlsState.HelloRetryRequest,
+		LocalCertificate:            tlsState.LocalCertificate,
 		ekm:                         tlsState.ExportKeyingMaterial,
 	}
 }
 
-// Unsafe convert using reflect
+// Convert all ConnectionState fields by reflect (unsafe).
 func FullToConnectionState(tlsState tls.ConnectionState) (cs ConnectionState) {
 	utils.Convert(&tlsState, &cs)
 	return

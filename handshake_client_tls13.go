@@ -606,7 +606,7 @@ func (hs *clientHandshakeStateTLS13) processServerHello() error {
 		return nil
 	}
 
-	if int(hs.serverHello.selectedIdentity) >= len(hs.hello.pskIdentities) || (hs.echContext!= nil && hs.echContext.echRejected) {
+	if int(hs.serverHello.selectedIdentity) >= len(hs.hello.pskIdentities) || (hs.echContext != nil && hs.echContext.echRejected) {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: server selected an invalid PSK")
 	}
@@ -1142,6 +1142,7 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 	if err != nil {
 		return err
 	}
+	hs.c.localCertificate = cert.Certificate
 
 	var certificateCompressionAlgorithm CertificateCompressionAlgorithm
 	for _, algorithm := range c.config.certificateCompressionPreferences() {

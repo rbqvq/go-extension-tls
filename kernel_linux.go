@@ -18,6 +18,19 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type KernelOptions struct {
+	TX, RX bool
+
+	// RX_EXPECT_NO_PAD expects the sender to not pad records. (TLS 1.3 only)
+	//
+	// This allows the data to be decrypted directly into user space buffers with TLS 1.3.
+	// This optimization is safe to enable only if the remote end is trusted,
+	// otherwise it is an attack vector to doubling the TLS processing cost.
+	//
+	// See https://www.kernel.org/doc/html/v7.2/networking/tls.html
+	RX_EXPECT_NO_PAD bool
+}
+
 type platform struct {
 	spliceError error // for RX only
 }
@@ -137,7 +150,7 @@ func (c *Conn) setup() error {
 		return nil
 	}
 
-	if !c.config.KernelTX && !c.config.KernelRX {
+	if !c.config.KernelOptions.TX && !c.config.KernelOptions.RX {
 		return nil
 	}
 
@@ -163,10 +176,10 @@ func (c *Conn) setup() error {
 	}
 
 	var in, out kernelCrypto
-	if c.config.KernelRX {
+	if c.config.KernelOptions.RX {
 		in = c.in.kernelCipher(c.cipherSuite, true)
 	}
-	if c.config.KernelTX {
+	if c.config.KernelOptions.TX {
 		out = c.out.kernelCipher(c.cipherSuite, false)
 	}
 
@@ -197,7 +210,7 @@ func (c *Conn) setupRX(fd uintptr, crypto kernelCrypto) {
 	}
 	c.in.useKernel()
 
-	if c.config.KernelRXExpectNoPad && c.vers >= VersionTLS13 && kernel.TLS_RX_NOPADDING {
+	if c.config.KernelOptions.RX_EXPECT_NO_PAD && c.vers >= VersionTLS13 && kernel.TLS_RX_NOPADDING {
 		syscall.SetsockoptInt(int(fd), unix.SOL_TLS, _TLS_RX_EXPECT_NO_PAD, 1)
 	}
 }

@@ -149,7 +149,7 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 		if id == TLS_FALLBACK_SCSV {
 			// Use c.vers instead of max(supported_versions) because an attacker
 			// could defeat this by adding an arbitrary high version otherwise.
-			if c.vers < c.config.maxSupportedVersion(roleServer) {
+			if c.vers < c.config.maxSupportedVersion(roleServer, c.quic != nil) {
 				c.sendAlert(alertInappropriateFallback)
 				return errors.New("tls: client using inappropriate protocol fallback")
 			}
@@ -247,6 +247,9 @@ func (hs *serverHandshakeStateTLS13) processClientHello() error {
 	})
 	sort.SliceStable(preferredGroups, func(i, j int) bool {
 		return isPQKeyExchange(preferredGroups[i]) && !isPQKeyExchange(preferredGroups[j])
+	})
+	sort.SliceStable(preferredGroups, func(i, j int) bool {
+		return isHybridKeyExchange(preferredGroups[i]) && !isHybridKeyExchange(preferredGroups[j])
 	})
 	selectedGroup := preferredGroups[0]
 
@@ -625,11 +628,11 @@ func (hs *serverHandshakeStateTLS13) pickCertificate() error {
 		return err
 	}
 	hs.cert = certificate
+	hs.c.localCertificate = certificate.Certificate
 
 	if hs.pickDelegatedCredential() {
 		return nil
 	}
-
 	hs.sigAlg, err = selectSignatureScheme(c.vers, certificate, hs.clientHello.supportedSignatureAlgorithms)
 	if err != nil {
 		// getCertificate returned a certificate that is unsupported or
@@ -1019,10 +1022,10 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 
 		certReq.supportedCertificateCompressionAlgorithms = c.config.certificateCompressionPreferences()
 
-		supportedSignatureAlgorithms := slices.DeleteFunc(c.config.signatureAlgorithmsPreferences(c.vers), func(s SignatureScheme) bool { return isDisabledSignatureAlgorithm(VersionTLS13, s, false) })
+		supportedSignatureAlgorithms := slices.DeleteFunc(c.config.signatureAlgorithmsPreferences(c.vers, c.vers), func(s SignatureScheme) bool { return isDisabledSignatureAlgorithm(VersionTLS13, s, false) })
 		certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms
 
-		supportedSignatureAlgorithmsCert := slices.DeleteFunc(c.config.signatureAlgorithmsCertPreferences(), func(s SignatureScheme) bool { return isDisabledSignatureAlgorithm(0, s, true) })
+		supportedSignatureAlgorithmsCert := slices.DeleteFunc(c.config.signatureAlgorithmsCertPreferences(c.vers, c.vers), func(s SignatureScheme) bool { return isDisabledSignatureAlgorithm(0, s, true) })
 		certReq.supportedSignatureAlgorithmsCert = supportedSignatureAlgorithmsCert
 
 		supportedSignatureAlgorithmsDC := slices.DeleteFunc(c.config.delegatedCredentialPreferences(), func(s SignatureScheme) bool { return isDisabledSignatureAlgorithm(VersionTLS13, s, false) })

@@ -16,6 +16,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type KernelOptions struct {
+	TX, RX bool
+}
+
 type platform struct{}
 
 const (
@@ -110,7 +114,7 @@ func (c *Conn) setup() error {
 		return nil
 	}
 
-	if !c.config.KernelTX && !c.config.KernelRX {
+	if !c.config.KernelOptions.TX && !c.config.KernelOptions.RX {
 		return nil
 	}
 
@@ -136,10 +140,10 @@ func (c *Conn) setup() error {
 	}
 
 	var in, out kernelCrypto
-	if c.config.KernelRX {
+	if c.config.KernelOptions.RX {
 		in = c.in.kernelCipher(c.cipherSuite, true)
 	}
-	if c.config.KernelTX {
+	if c.config.KernelOptions.TX {
 		out = c.out.kernelCipher(c.cipherSuite, false)
 	}
 

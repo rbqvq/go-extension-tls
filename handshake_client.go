@@ -11,6 +11,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/hpke"
+	"crypto/mldsa"
 	"crypto/rsa"
 	"crypto/subtle"
 	"crypto/x509"
@@ -97,7 +98,7 @@ func (c *Conn) makeClientHello() (*clientHelloMsg, []*keySharePrivateKeys, *echC
 		return nil, nil, nil, errors.New("tls: NextProtos values too large")
 	}
 
-	supportedVersions := config.supportedVersions(roleClient)
+	supportedVersions := config.supportedVersions(roleClient, c.quic != nil)
 	if len(supportedVersions) == 0 {
 		return nil, nil, nil, errors.New("tls: no supported versions satisfy MinVersion and MaxVersion")
 	}
@@ -220,8 +221,8 @@ CipherSuiteLoop:
 	}
 
 	if maxVersion >= VersionTLS12 {
-		hello.supportedSignatureAlgorithms = config.signatureAlgorithmsPreferences(minVersion)
-		hello.supportedSignatureAlgorithmsCert = config.signatureAlgorithmsCertPreferences()
+		hello.supportedSignatureAlgorithms = config.signatureAlgorithmsPreferences(minVersion, maxVersion)
+		hello.supportedSignatureAlgorithmsCert = config.signatureAlgorithmsCertPreferences(minVersion, maxVersion)
 
 		if maxVersion >= VersionTLS13 {
 			hello.supportedSignatureAlgorithmsDC = config.delegatedCredentialPreferences()
@@ -240,7 +241,7 @@ CipherSuiteLoop:
 		hello.supportedCurves = append(hello.supportedCurves, curveID)
 	}
 	if len(hello.supportedCurves) == 0 {
-		return nil, nil, nil, errors.New("tls: no supported elliptic curves for ECDHE")
+		return nil, nil, nil, errors.New("tls: no supported key exchange methods (CurveIDs)")
 	}
 
 	var keyGenerator keyGenerator = defaultKeyGenerator
@@ -474,7 +475,7 @@ func (c *Conn) clientHandshake(ctx context.Context) (err error) {
 		// If we are negotiating a protocol version that's lower than what we
 		// support, check for the server downgrade canaries.
 		// See RFC 8446, Section 4.1.3.
-		maxVers := c.config.maxSupportedVersion(roleClient)
+		maxVers := c.config.maxSupportedVersion(roleClient, c.quic != nil)
 		tls12Downgrade := string(serverHello.random[24:]) == downgradeCanaryTLS12
 		tls11Downgrade := string(serverHello.random[24:]) == downgradeCanaryTLS11
 		if maxVers == VersionTLS13 && c.vers <= VersionTLS12 && (tls12Downgrade || tls11Downgrade) ||
@@ -584,7 +585,7 @@ func (c *Conn) loadSession(outer *clientHelloMsg, ech *echClientContext) (
 		hello = ech.innerHello
 	}
 
-	if c.config.maxSupportedVersion(c.isClient) >= VersionTLS13 {
+	if c.config.maxSupportedVersion(c.isClient, c.quic != nil) >= VersionTLS13 {
 		// Require DHE on resumption as it guarantees forward secrecy against
 		// compromise of the session ticket key. See RFC 8446, Section 4.2.9.
 		hello.pskModes = []uint8{pskModeDHE}
@@ -716,7 +717,7 @@ func (c *Conn) pickTLSVersion(serverHello *serverHelloMsg) error {
 		peerVersion = serverHello.supportedVersion
 	}
 
-	vers, ok := c.config.mutualVersion(roleClient, []uint16{peerVersion})
+	vers, ok := c.config.mutualVersion(roleClient, c.quic != nil, []uint16{peerVersion})
 	if !ok {
 		c.sendAlert(alertProtocolVersion)
 		return fmt.Errorf("tls: server selected unsupported protocol version %x", peerVersion)
@@ -945,6 +946,10 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		if err != nil {
 			return err
 		}
+	}
+
+	if chainToSend != nil {
+		hs.c.localCertificate = chainToSend.Certificate
 	}
 
 	shd, ok := msg.(*serverHelloDoneMsg)
@@ -1383,7 +1388,11 @@ func (c *Conn) verifyServerCertificate(certificates [][]byte) error {
 
 	switch certs[0].PublicKey.(type) {
 	case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey:
-		break
+	case *mldsa.PublicKey:
+		if c.vers < VersionTLS13 {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: server's certificate uses ML-DSA, which requires TLS 1.3")
+		}
 	default:
 		c.sendAlert(alertUnsupportedCertificate)
 		return fmt.Errorf("tls: server's certificate contains an unsupported type of public key: %T", certs[0].PublicKey)
