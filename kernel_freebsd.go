@@ -316,13 +316,6 @@ func (c *Conn) ReadFrom(r io.Reader) (int64, error) {
 	c.out.Lock()
 	defer c.out.Unlock()
 
-	if !c.out.usingKernel() {
-		c.out.Unlock()
-		n, err := io.Copy(&wrappedConn{c}, r)
-		c.out.Lock()
-		return n, err
-	}
-
 	if err := c.out.err; err != nil {
 		return 0, err
 	}
@@ -331,7 +324,19 @@ func (c *Conn) ReadFrom(r io.Reader) (int64, error) {
 		return 0, errShutdown
 	}
 
-	return io.Copy(c.conn, r)
+	if !c.out.usingKernel() {
+		c.out.Unlock()
+		n, err := io.Copy(&wrappedConn{c}, r)
+		c.out.Lock()
+		return n, err
+	}
+
+	conn, ok := c.conn.(*net.TCPConn)
+	if !ok {
+		return io.Copy(c.conn, r)
+	}
+
+	return conn.ReadFrom(r)
 }
 
 // FreeBSD does not implement WriteTo.

@@ -434,7 +434,12 @@ func (c *Conn) ReadFrom(r io.Reader) (int64, error) {
 		return n, err
 	}
 
-	return io.Copy(c.conn, r)
+	conn, ok := c.conn.(*net.TCPConn)
+	if !ok {
+		return io.Copy(c.conn, r)
+	}
+
+	return conn.ReadFrom(r)
 }
 
 func (c *Conn) WriteTo(w io.Writer) (int64, error) {
