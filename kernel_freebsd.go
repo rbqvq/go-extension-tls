@@ -331,12 +331,7 @@ func (c *Conn) ReadFrom(r io.Reader) (int64, error) {
 		return n, err
 	}
 
-	conn, ok := c.conn.(*net.TCPConn)
-	if !ok {
-		return io.Copy(c.conn, r)
-	}
-
-	return conn.ReadFrom(r)
+	return ioCopy(c.conn, r)
 }
 
 // FreeBSD does not implement WriteTo.

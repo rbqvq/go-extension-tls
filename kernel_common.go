@@ -17,3 +17,11 @@ type wrappedConn struct {
 func (c *halfConn) useKernel() {
 	c.cipher = new(kernelCipher)
 }
+
+func ioCopy(dst io.Writer, src io.Reader) (int64, error) {
+	if rt, ok := dst.(io.ReaderFrom); ok {
+		return rt.ReadFrom(src)
+	}
+
+	return io.Copy(dst, src)
+}

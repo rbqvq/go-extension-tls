@@ -15,6 +15,7 @@ import (
 
 	"github.com/blang/semver/v4"
 	"github.com/pmorjan/kmod"
+	exio "gitlab.com/go-extension/io"
 	"golang.org/x/sys/unix"
 )
 
@@ -434,12 +435,7 @@ func (c *Conn) ReadFrom(r io.Reader) (int64, error) {
 		return n, err
 	}
 
-	conn, ok := c.conn.(*net.TCPConn)
-	if !ok {
-		return io.Copy(c.conn, r)
-	}
-
-	return conn.ReadFrom(r)
+	return ioCopy(c.conn, r)
 }
 
 func (c *Conn) WriteTo(w io.Writer) (int64, error) {
@@ -483,11 +479,24 @@ func (c *Conn) WriteTo(w io.Writer) (int64, error) {
 		}
 	}
 
+	var r io.Reader = c.conn
+	lw, ok := w.(*exio.LimitedWriter)
+	if ok {
+		r = &io.LimitedReader{R: c.conn, N: lw.N}
+		w = lw.W
+	}
+
 	for {
 		// TODO: replace io.Copy to custom splice impl to fix -EINVAL handle.
-		n, err := io.Copy(w, c.conn)
+		n, err := ioCopy(w, r)
 		written += n
+		if lw != nil {
+			lw.N -= n
+		}
+
 		switch {
+		case err == nil, errors.Is(err, io.EOF):
+			return written, err
 		case errors.Is(err, syscall.EINVAL):
 			// splice receive control msg or bad protocol version will return -EINVAL, but [internal/poll.Splice] cannot handle it correctly
 			// If first call spliceDrain return -EINVAL (bad protocol version), it will fallback to generic copy and never reached here
@@ -506,6 +515,9 @@ func (c *Conn) WriteTo(w io.Writer) (int64, error) {
 			if c.input.Len() > 0 {
 				n, err := c.input.WriteTo(w)
 				written += n
+				if lw != nil {
+					lw.N -= n
+				}
 
 				if err != nil {
 					return written, err
