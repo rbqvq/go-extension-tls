@@ -1310,6 +1310,10 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		return len(data), nil
 	}
 
+	if len(data) == 0 {
+		return 0, nil
+	}
+
 	if c.out.usingKernel() {
 		return c.writeKernelRecord(typ, data)
 	}

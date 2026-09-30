@@ -437,6 +437,10 @@ func (c *Conn) quicSetWriteSecret(level QUICEncryptionLevel, suite uint16, secre
 }
 
 func (c *Conn) quicWriteCryptoData(level QUICEncryptionLevel, data []byte) {
+	if len(data) == 0 {
+		return
+	}
+
 	var last *QUICEvent
 	if len(c.quic.events) > 0 {
 		last = &c.quic.events[len(c.quic.events)-1]
