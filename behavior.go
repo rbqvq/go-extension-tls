@@ -4,6 +4,8 @@
 
 package tls
 
+import "net"
+
 // A UselessRecordCount structure is a counter to configure a TLS client or server behavior.
 type UselessRecordCount struct {
 	WarningAlerts    int
@@ -13,6 +15,9 @@ type UselessRecordCount struct {
 
 // A Behavior structure is used to configure a TLS client or server behavior.
 type Behavior struct {
+	// Transport is a function that is called to control the transport behavior of the TLS connection.
+	Transport func(net.Conn)
+
 	// MaxUselessRecords is used to control the maximum of useless records received.
 	// An alert will be thrown when this value is exceeded.
 	// If the value is <= 0, it means no limit.
@@ -32,7 +37,7 @@ type Behavior struct {
 	// versions of the protocol to ensure middlebox compatibility.
 	ChangeCipherSpec ChangeCipherSpecBehavior
 
-	// SendTicketOnCompleted controls whether the session ticket is sent after 
+	// SendTicketOnCompleted controls whether the session ticket is sent after
 	// the TLS 1.3 handshake is completed.
 	SendTicketOnCompleted bool
 }
