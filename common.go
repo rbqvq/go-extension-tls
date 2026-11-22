@@ -2198,14 +2198,19 @@ func supportedSignatureAlgorithmsDC() []SignatureScheme {
 func isDisabledSignatureAlgorithm(version uint16, s SignatureScheme, isCert bool) bool {
 	switch s {
 	case MLDSA44, MLDSA65, MLDSA87:
+		// Omit ML-DSA from signature_algorithms_cert in Go 1.27 to work
+		// around non-compliant middleboxes. See https://go.dev/issue/82536.
+		if isCert {
+			return true
+		}
 		// ML-DSA codepoints are only defined for TLS 1.3.
 		if version < VersionTLS13 {
 			return true
 		}
 	}
 
-	// For the _cert extension we include all algorithms, including SHA-1 and
-	// PKCS#1 v1.5, because it's more likely that something on our side will be
+	// For the _cert extension we also include SHA-1 and PKCS#1 v1.5,
+	// because it's more likely that something on our side will be
 	// willing to accept a *-with-SHA1 certificate (e.g. with a custom
 	// VerifyConnection or by a direct match with the CertPool), than that the
 	// peer would have a better certificate but is just choosing not to send it.
@@ -2230,7 +2235,7 @@ func isDisabledSignatureAlgorithm(version uint16, s SignatureScheme, isCert bool
 	return false
 }
 
-// supportedSignatureAlgorithmsCert returns the supported algorithms for
+// supportedSignatureAlgorithmsCert returns the algorithms to advertise for
 // signatures in certificates.
 func supportedSignatureAlgorithmsCert(minVers, maxVers uint16) []SignatureScheme {
 	sigAlgs := defaultSupportedSignatureAlgorithms()
