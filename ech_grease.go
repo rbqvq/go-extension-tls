@@ -54,47 +54,31 @@ func generateAndUpdateOuterECHExtension(rand io.Reader, outer *clientHelloMsg, e
 	if echConfig == nil {
 		return nil
 	}
-
 	suite := echConfig.cipherSuite()
 
-	var dummyPublicKey []byte
-	switch suite.KEM {
-	case hpke.DHKEM(ecdh.X25519()):
-		dummyPublicKey = []byte{
-			143, 38, 37, 36, 12, 6, 229, 30, 140, 27, 167, 73, 26, 100, 203, 107, 216,
-			81, 163, 222, 52, 211, 54, 210, 46, 37, 78, 216, 157, 97, 241, 244,
-		}
-	default:
-		return fmt.Errorf("tls: dummy ech: invalid kem %#x", suite.KEM)
+	dummyKey, err := suite.KEM.GenerateKey()
+	if err != nil {
+		return fmt.Errorf("tls: grease ech: %s", err)
 	}
+	dummyPublicKey := dummyKey.PublicKey().Bytes()
 
-	var length uint16
+	var overhead uint16
 	switch suite.AEAD {
 	case hpke.AES128GCM(), hpke.AES256GCM(), hpke.ChaCha20Poly1305():
-		length = echConfig.innerLen() + 16
+		overhead = 16
 	default:
-		return fmt.Errorf("tls: dummy ech: invalid aead %#x", suite.AEAD.ID())
+		return fmt.Errorf("tls: grease ech: invalid aead %#x", suite.AEAD.ID())
 	}
+	length := echConfig.innerLen() + overhead
 
 	payload := make([]byte, length)
 	if _, err := io.ReadFull(rand, payload); err != nil {
 		return fmt.Errorf("tls: grease ech: %s", err)
 	}
 
-	echPK, err := suite.KEM.NewPublicKey(dummyPublicKey)
+	outer.encryptedClientHello, err = generateOuterECHExt(echConfig.configId(), suite.KDF.ID(), suite.AEAD.ID(), dummyPublicKey, payload)
 	if err != nil {
 		return err
 	}
-
-	encapKey, _, err := hpke.NewSender(echPK, suite.KDF, suite.AEAD, nil)
-	if err != nil {
-		return err
-	}
-
-	outer.encryptedClientHello, err = generateOuterECHExt(echConfig.configId(), suite.KDF.ID(), suite.AEAD.ID(), encapKey, payload)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
